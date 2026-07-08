@@ -116,12 +116,12 @@ function hasPatientMetadata(patient: PatientMetadata | null | undefined): boolea
     return false;
   }
 
-  return Boolean(
-    patient.display_name ||
-      patient.age !== null && patient.age !== undefined ||
-      patient.sex ||
-      patient.birth_date,
-  );
+  const hasDisplayName = Boolean(patient.display_name);
+  const hasAge = patient.age !== null && patient.age !== undefined;
+  const hasSex = Boolean(patient.sex);
+  const hasBirthDate = Boolean(patient.birth_date);
+
+  return hasDisplayName || hasAge || hasSex || hasBirthDate;
 }
 
 function rememberPatientMetadata(response: LabAnalysisResponse): void {
