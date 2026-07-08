@@ -6,7 +6,7 @@ import ErrorState from '../components/ui/ErrorState';
 import LoadingState from '../components/ui/LoadingState';
 import SectionCard from '../components/ui/SectionCard';
 import {
-  createDemoClinicalHypothesis,
+  createClinicalReviewPrompts,
   getClinicalHypothesesForAnalysisRun,
   type ClinicalHypothesis,
 } from '../services/clinicalHypothesesClient';
@@ -18,10 +18,6 @@ function statusLabel(status: string | null | undefined) {
 function statusClassName(status: string | null | undefined) {
   const normalizedStatus = (status ?? '').toLowerCase();
 
-  if (normalizedStatus.includes('low') || normalizedStatus.includes('high')) {
-    return 'border-amber-200 bg-amber-50 text-amber-700';
-  }
-
   if (normalizedStatus.includes('approved')) {
     return 'border-emerald-200 bg-emerald-50 text-emerald-700';
   }
@@ -30,7 +26,19 @@ function statusClassName(status: string | null | undefined) {
     return 'border-rose-200 bg-rose-50 text-rose-700';
   }
 
-  return 'border-blue-200 bg-blue-50 text-blue-700';
+  if (
+    normalizedStatus.includes('extra') ||
+    normalizedStatus.includes('test') ||
+    normalizedStatus.includes('review')
+  ) {
+    return 'border-amber-200 bg-amber-50 text-amber-700';
+  }
+
+  if (normalizedStatus.includes('pending')) {
+    return 'border-blue-200 bg-blue-50 text-blue-700';
+  }
+
+  return 'border-slate-200 bg-slate-50 text-slate-700';
 }
 
 function severityClassName(severity: string | null) {
@@ -64,8 +72,31 @@ function formatConfidence(confidence: number | null) {
   return `${Math.round(confidence * 100)}%`;
 }
 
+function getPendingCount(prompts: ClinicalHypothesis[]) {
+  return prompts.filter((item) =>
+    item.status.toLowerCase().includes('pending'),
+  ).length;
+}
+
+function getEvidenceLinkedCount(prompts: ClinicalHypothesis[]) {
+  return prompts.filter((item) => item.evidence_json.length > 0).length;
+}
+
+function getNeedsDoctorReviewCount(prompts: ClinicalHypothesis[]) {
+  return prompts.filter((item) => item.needs_doctor_review).length;
+}
+
+function getPriorityPromptCount(prompts: ClinicalHypothesis[]) {
+  return prompts.filter((item) =>
+    item.evidence_json.some(
+      (evidence) =>
+        evidence.result_status === 'low' || evidence.result_status === 'high',
+    ),
+  ).length;
+}
+
 export default function ClinicalHypothesesPage() {
-  const [hypotheses, setHypotheses] = useState<ClinicalHypothesis[]>([]);
+  const [prompts, setPrompts] = useState<ClinicalHypothesis[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState('');
@@ -74,49 +105,57 @@ export default function ClinicalHypothesesPage() {
   const analysisRunId = localStorage.getItem('medicore:lastAnalysisRunId');
   const labReportId = localStorage.getItem('medicore:lastLabReportId');
 
-  async function loadHypotheses() {
+  async function loadPrompts() {
     try {
       setIsLoading(true);
       setError('');
 
       if (!analysisRunId) {
-        setHypotheses([]);
+        setPrompts([]);
         return;
       }
 
       const data = await getClinicalHypothesesForAnalysisRun(analysisRunId);
-      setHypotheses(data);
+      setPrompts(data);
     } catch (loadError) {
       setError(
         loadError instanceof Error
           ? loadError.message
-          : 'Unable to load clinical hypotheses.',
+          : 'Unable to load clinical review prompts.',
       );
     } finally {
       setIsLoading(false);
     }
   }
 
-  async function handleCreateDemoHypothesis() {
+  async function handleCreateReviewPrompts() {
     try {
       setIsCreating(true);
       setError('');
       setMessage('');
 
       if (!analysisRunId) {
-        throw new Error('Run backend mock analysis first.');
+        throw new Error('Upload or run an analysis first.');
       }
 
-      await createDemoClinicalHypothesis(analysisRunId, labReportId);
+      const createdOrExistingPrompts = await createClinicalReviewPrompts(
+        analysisRunId,
+        labReportId,
+      );
 
       const data = await getClinicalHypothesesForAnalysisRun(analysisRunId);
-      setHypotheses(data);
-      setMessage('Clinical review prompt created from backend results.');
+      setPrompts(data);
+
+      setMessage(
+        `${createdOrExistingPrompts.length} clinical review prompt${
+          createdOrExistingPrompts.length === 1 ? ' is' : 's are'
+        } ready for physician review.`,
+      );
     } catch (createError) {
       setError(
         createError instanceof Error
           ? createError.message
-          : 'Unable to create clinical hypothesis.',
+          : 'Unable to create clinical review prompts.',
       );
     } finally {
       setIsCreating(false);
@@ -124,7 +163,7 @@ export default function ClinicalHypothesesPage() {
   }
 
   useEffect(() => {
-    loadHypotheses();
+    loadPrompts();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [analysisRunId]);
 
@@ -132,7 +171,7 @@ export default function ClinicalHypothesesPage() {
     return (
       <LoadingState
         title="Loading clinical review prompts"
-        description="Fetching clinical hypotheses from the backend."
+        description="Fetching review prompts from the backend."
       />
     );
   }
@@ -141,30 +180,23 @@ export default function ClinicalHypothesesPage() {
     return (
       <EmptyState
         title="No analysis run found"
-        description="Run backend mock analysis first, then return here to create clinical review prompts."
-        actionLabel="Open mock analysis"
+        description="Upload or run an analysis first, then return here to create clinical review prompts."
+        actionLabel="Open lab analysis"
         to="/analysis/mock"
       />
     );
   }
 
-  const pendingCount = hypotheses.filter((item) =>
-    item.status.toLowerCase().includes('pending'),
-  ).length;
-
-  const evidenceLinkedCount = hypotheses.filter(
-    (item) => item.evidence_json.length > 0,
-  ).length;
-
-  const needsReviewCount = hypotheses.filter(
-    (item) => item.needs_doctor_review,
-  ).length;
+  const pendingCount = getPendingCount(prompts);
+  const evidenceLinkedCount = getEvidenceLinkedCount(prompts);
+  const needsDoctorReviewCount = getNeedsDoctorReviewCount(prompts);
+  const priorityPromptCount = getPriorityPromptCount(prompts);
 
   return (
     <div className="space-y-8">
       <div>
         <p className="text-sm font-semibold uppercase text-cyan-700">
-          Clinical Hypotheses
+          Clinical Review Prompts
         </p>
 
         <h2 className="mt-2 text-3xl font-semibold text-slate-950">
@@ -172,8 +204,8 @@ export default function ClinicalHypothesesPage() {
         </h2>
 
         <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-500">
-          Backend-connected physician review workspace for structured hypothesis
-          prompts, evidence signals, and doctor-review actions.
+          Backend-connected physician review workspace for structured lab
+          signal prompts, evidence links, and doctor-review actions.
         </p>
 
         <p className="mt-3 inline-flex rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-800">
@@ -195,22 +227,23 @@ export default function ClinicalHypothesesPage() {
             </p>
 
             <h2 className="mt-1 text-xl font-semibold text-slate-950">
-              Create clinical review prompt
+              Create clinical review prompts
             </h2>
 
             <p className="mt-2 text-sm text-slate-600">
-              Creates a demo clinical hypothesis from the latest backend lab
-              result. This is a review prompt only, not a diagnosis.
+              Creates one physician-review prompt for each LOW or HIGH lab
+              signal. Prompts stay blocked from patient-facing use until a
+              physician reviews them.
             </p>
           </div>
 
           <button
             type="button"
-            onClick={handleCreateDemoHypothesis}
+            onClick={handleCreateReviewPrompts}
             disabled={isCreating}
             className="rounded-lg bg-slate-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {isCreating ? 'Creating...' : 'Create Review Prompt'}
+            {isCreating ? 'Creating...' : 'Create Review Prompts'}
           </button>
         </div>
 
@@ -221,10 +254,12 @@ export default function ClinicalHypothesesPage() {
         )}
 
         {error && (
-          <ErrorState
-            title="Clinical hypothesis error"
-            description={error}
-          />
+          <div className="mt-4">
+            <ErrorState
+              title="Clinical review prompt error"
+              description={error}
+            />
+          </div>
         )}
       </section>
 
@@ -234,10 +269,10 @@ export default function ClinicalHypothesesPage() {
             Total review prompts
           </p>
           <p className="mt-3 text-3xl font-semibold text-slate-950">
-            {hypotheses.length}
+            {prompts.length}
           </p>
           <p className="mt-2 text-sm leading-6 text-slate-500">
-            Backend clinical hypotheses
+            Backend clinical review prompts
           </p>
         </div>
 
@@ -255,13 +290,13 @@ export default function ClinicalHypothesesPage() {
 
         <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
           <p className="text-sm font-medium text-slate-600">
-            Needs doctor review
+            Priority lab prompts
           </p>
           <p className="mt-3 text-3xl font-semibold text-slate-950">
-            {needsReviewCount}
+            {priorityPromptCount}
           </p>
           <p className="mt-2 text-sm leading-6 text-slate-500">
-            Blocked from patient-facing use
+            LOW or HIGH lab signals converted into review prompts
           </p>
         </div>
 
@@ -273,37 +308,37 @@ export default function ClinicalHypothesesPage() {
             {evidenceLinkedCount}
           </p>
           <p className="mt-2 text-sm leading-6 text-slate-500">
-            Connected to lab result signals
+            Connected to structured lab result signals
           </p>
         </div>
       </div>
 
       <SectionCard
-        title="Hypothesis queue"
+        title="Review prompt queue"
         description="Review prompts only. These are not diagnoses or treatment recommendations."
       >
-        {hypotheses.length === 0 ? (
+        {prompts.length === 0 ? (
           <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-6">
             <h3 className="font-semibold text-slate-950">
               No clinical review prompts yet
             </h3>
 
             <p className="mt-2 text-sm leading-6 text-slate-600">
-              Create a review prompt from the latest backend analysis result.
+              Create review prompts from LOW or HIGH backend lab signals.
             </p>
 
             <button
               type="button"
-              onClick={handleCreateDemoHypothesis}
+              onClick={handleCreateReviewPrompts}
               disabled={isCreating}
               className="mt-4 rounded-lg bg-slate-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {isCreating ? 'Creating...' : 'Create Review Prompt'}
+              {isCreating ? 'Creating...' : 'Create Review Prompts'}
             </button>
           </div>
         ) : (
           <div className="space-y-4">
-            {hypotheses.map((item) => (
+            {prompts.map((item) => (
               <article
                 key={item.id}
                 className="rounded-lg border border-slate-200 bg-slate-50 p-5"
@@ -321,7 +356,7 @@ export default function ClinicalHypothesesPage() {
 
                   <div className="flex flex-wrap gap-2 lg:justify-end">
                     <span
-                      className={`rounded-lg border px-2.5 py-1 text-xs font-semibold ${statusClassName(
+                      className={`whitespace-nowrap rounded-lg border px-2.5 py-1 text-xs font-semibold ${statusClassName(
                         item.status,
                       )}`}
                     >
@@ -329,11 +364,11 @@ export default function ClinicalHypothesesPage() {
                     </span>
 
                     <span
-                      className={`rounded-lg border px-2.5 py-1 text-xs font-semibold ${severityClassName(
+                      className={`whitespace-nowrap rounded-lg border px-2.5 py-1 text-xs font-semibold ${severityClassName(
                         item.severity,
                       )}`}
                     >
-                      {(item.severity ?? 'low').toUpperCase()} severity
+                      {(item.severity ?? 'low').toUpperCase()} priority
                     </span>
                   </div>
                 </div>
@@ -346,7 +381,8 @@ export default function ClinicalHypothesesPage() {
 
                     <p className="mt-2 text-sm leading-6 text-slate-600">
                       Physician should review the structured lab signal,
-                      clinical context, and whether follow-up is appropriate.
+                      clinical context, reference range, and whether follow-up
+                      is appropriate.
                     </p>
                   </div>
 
@@ -411,13 +447,13 @@ export default function ClinicalHypothesesPage() {
         title="Evidence signal cards"
         description="Evidence-linked lab signals for physician review prompts."
       >
-        {hypotheses.length === 0 ? (
+        {prompts.length === 0 ? (
           <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-            No evidence signals yet. Create a review prompt first.
+            No evidence signals yet. Create review prompts first.
           </div>
         ) : (
           <div className="grid gap-4 md:grid-cols-2">
-            {hypotheses.flatMap((item) =>
+            {prompts.flatMap((item) =>
               item.evidence_json.map((evidence, index) => (
                 <article
                   key={`${item.id}-evidence-${index}`}
@@ -437,7 +473,7 @@ export default function ClinicalHypothesesPage() {
                     </div>
 
                     <span
-                      className={`rounded-lg border px-2.5 py-1 text-xs font-semibold ${statusClassName(
+                      className={`whitespace-nowrap rounded-lg border px-2.5 py-1 text-xs font-semibold ${statusClassName(
                         evidence.result_status,
                       )}`}
                     >
@@ -460,7 +496,7 @@ export default function ClinicalHypothesesPage() {
         )}
       </SectionCard>
 
-      <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
+      <div className="grid gap-6 xl:grid-cols-[1fr_1fr]">
         <SectionCard
           title="Safe navigation"
           description="Links to related backend-connected review workspaces."
@@ -468,28 +504,28 @@ export default function ClinicalHypothesesPage() {
           <div className="grid gap-3 sm:grid-cols-2">
             <Link
               to="/analysis/results"
-              className="block rounded-lg border border-slate-200 bg-white p-4 transition hover:border-blue-200 hover:bg-blue-50"
+              className="rounded-lg border border-slate-200 bg-slate-50 p-4 transition hover:border-blue-200 hover:bg-blue-50"
             >
-              <span className="font-semibold text-slate-950">
+              <p className="font-semibold text-slate-950">
                 View analysis results
-              </span>
+              </p>
 
-              <span className="mt-2 block text-sm leading-6 text-slate-500">
-                Return to backend-connected lab result table.
-              </span>
+              <p className="mt-2 text-sm leading-6 text-slate-600">
+                Review structured backend lab result rows.
+              </p>
             </Link>
 
             <Link
               to="/doctor-review"
-              className="block rounded-lg border border-slate-200 bg-white p-4 transition hover:border-blue-200 hover:bg-blue-50"
+              className="rounded-lg border border-slate-200 bg-slate-50 p-4 transition hover:border-blue-200 hover:bg-blue-50"
             >
-              <span className="font-semibold text-slate-950">
+              <p className="font-semibold text-slate-950">
                 Open doctor review
-              </span>
+              </p>
 
-              <span className="mt-2 block text-sm leading-6 text-slate-500">
-                Continue to the physician review workspace.
-              </span>
+              <p className="mt-2 text-sm leading-6 text-slate-600">
+                Continue with physician approval controls.
+              </p>
             </Link>
           </div>
         </SectionCard>
@@ -498,33 +534,421 @@ export default function ClinicalHypothesesPage() {
           title="Safety framing"
           description="Review prompts stay blocked from patient-facing use until approved."
         >
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="rounded-lg border border-blue-100 bg-blue-50 p-4">
-              <p className="text-sm leading-6 text-slate-700">
-                Hypotheses are review prompts, not diagnoses.
-              </p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="rounded-lg border border-blue-100 bg-blue-50 p-4 text-sm leading-6 text-slate-700">
+              Prompts are review prompts, not diagnoses.
             </div>
 
-            <div className="rounded-lg border border-cyan-100 bg-cyan-50 p-4">
-              <p className="text-sm leading-6 text-slate-700">
-                Evidence comes from deterministic lab result labels.
-              </p>
+            <div className="rounded-lg border border-cyan-100 bg-cyan-50 p-4 text-sm leading-6 text-slate-700">
+              Evidence comes from deterministic lab result labels.
             </div>
 
-            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-              <p className="text-sm leading-6 text-slate-700">
-                AI does not approve patient-facing content.
-              </p>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-700">
+              LOW/HIGH signals are routed to physician review.
             </div>
 
-            <div className="rounded-lg border border-slate-200 bg-white p-4">
-              <p className="text-sm leading-6 text-slate-700">
-                Final clinical decisions belong to a physician.
-              </p>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-700">
+              Final clinical decisions belong to a physician.
             </div>
           </div>
         </SectionCard>
       </div>
+
+      <div className="rounded-lg border border-blue-100 bg-blue-50 p-4 text-sm leading-6 text-blue-800">
+        This page creates structured review prompts from backend lab signal
+        statuses. It does not provide diagnosis, treatment, or final clinical
+        decisions.
+      </div>
     </div>
   );
 }
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+
+ 
+ 
+ 
+
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 

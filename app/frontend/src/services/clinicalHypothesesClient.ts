@@ -89,28 +89,39 @@ function getAuthHeaders() {
   };
 }
 
-function getPrimaryResult(results: LabAnalysisResult[]) {
-  const abnormalResult = results.find(
-    (result) =>
-      result.result_status === 'low' || result.result_status === 'high',
-  );
+function getParameterName(result: LabAnalysisResult) {
+  return result.canonical_name ?? result.raw_parameter_name ?? 'Lab signal';
+}
 
-  return abnormalResult ?? results[0];
+function getResultValue(result: LabAnalysisResult) {
+  if (result.normalized_value === null || result.normalized_value === undefined) {
+    return null;
+  }
+
+  return String(result.normalized_value);
+}
+
+function isPriorityLabSignal(result: LabAnalysisResult) {
+  return result.result_status === 'low' || result.result_status === 'high';
+}
+
+function getPriorityResults(results: LabAnalysisResult[]) {
+  return results.filter(isPriorityLabSignal);
 }
 
 function buildEvidenceItem(result: LabAnalysisResult): ClinicalEvidenceItem {
   return {
     parameter_code: result.parameter_code,
-    parameter_name: result.canonical_name ?? result.raw_parameter_name,
-    value: result.normalized_value,
+    parameter_name: getParameterName(result),
+    value: getResultValue(result),
     unit: result.unit,
     result_status: result.result_status,
     note: result.reason,
   };
 }
 
-function buildDemoTitle(result: LabAnalysisResult) {
-  const parameterName = result.canonical_name ?? result.raw_parameter_name;
+function buildReviewPromptTitle(result: LabAnalysisResult) {
+  const parameterName = getParameterName(result);
 
   if (result.result_status === 'low') {
     return `${parameterName} below reference range — physician review prompt`;
@@ -120,21 +131,86 @@ function buildDemoTitle(result: LabAnalysisResult) {
     return `${parameterName} above reference range — physician review prompt`;
   }
 
-  return `${parameterName} review prompt`;
+  return `${parameterName} physician review prompt`;
 }
 
-function buildDemoSummary(result: LabAnalysisResult) {
-  const parameterName = result.canonical_name ?? result.raw_parameter_name;
+function buildReviewPromptSummary(result: LabAnalysisResult) {
+  const parameterName = getParameterName(result);
+  const value = getResultValue(result) ?? '-';
+  const unit = result.unit ?? '';
 
-  return `${parameterName} result is ${result.normalized_value} ${result.unit}. ${result.reason} This is a structured review prompt only and is not a diagnosis.`;
+  return `${parameterName} result is ${value} ${unit}. ${result.reason} This is a structured review prompt only and is not a diagnosis.`;
 }
 
 function buildSeverity(result: LabAnalysisResult) {
-  if (result.result_status === 'low' || result.result_status === 'high') {
+  if (result.result_status === 'high') {
+    return 'high';
+  }
+
+  if (result.result_status === 'low') {
     return 'medium';
   }
 
   return 'low';
+}
+
+function evidenceMatchesResult(
+  evidence: ClinicalEvidenceItem,
+  result: LabAnalysisResult,
+) {
+  const resultValue = getResultValue(result);
+  const resultName = getParameterName(result);
+
+  const sameCode =
+    evidence.parameter_code !== null &&
+    result.parameter_code !== null &&
+    evidence.parameter_code === result.parameter_code;
+
+  const sameName =
+    evidence.parameter_name !== null &&
+    evidence.parameter_name.toLowerCase() === resultName.toLowerCase();
+
+  const sameStatus = evidence.result_status === result.result_status;
+  const sameValue = evidence.value === resultValue;
+
+  return (sameCode || sameName) && sameStatus && sameValue;
+}
+
+function promptAlreadyExistsForResult(
+  prompts: ClinicalHypothesis[],
+  result: LabAnalysisResult,
+) {
+  return prompts.some((prompt) =>
+    prompt.evidence_json.some((evidence) =>
+      evidenceMatchesResult(evidence, result),
+    ),
+  );
+}
+
+function buildClinicalReviewPromptPayload(
+  result: LabAnalysisResult,
+  analysisRunId: string,
+  labReportId: string | null,
+): CreateClinicalHypothesisPayload {
+  return {
+    patient_id: DEMO_PATIENT_ID,
+    lab_report_id: labReportId,
+    analysis_run_id: analysisRunId,
+    title: buildReviewPromptTitle(result),
+    summary: buildReviewPromptSummary(result),
+    hypothesis_type: 'lab_signal_review',
+    confidence: result.classification_confidence ?? 0.75,
+    severity: buildSeverity(result),
+    source: 'frontend_review_prompt',
+    evidence_json: [buildEvidenceItem(result)],
+    metadata_json: {
+      generated_from: 'frontend_review_prompt_button',
+      result_status: result.result_status,
+      parameter_code: result.parameter_code,
+      safety_note:
+        'This is a physician-review prompt only and is not a diagnosis.',
+    },
+  };
 }
 
 export async function getClinicalHypothesesForAnalysisRun(
@@ -151,7 +227,7 @@ export async function getClinicalHypothesesForAnalysisRun(
     const errorText = await response.text();
 
     throw new Error(
-      `Clinical hypotheses fetch failed: ${response.status} ${errorText}`,
+      `Clinical review prompts fetch failed: ${response.status} ${errorText}`,
     );
   }
 
@@ -172,7 +248,7 @@ export async function getPendingClinicalHypotheses(): Promise<
     const errorText = await response.text();
 
     throw new Error(
-      `Pending clinical hypotheses fetch failed: ${response.status} ${errorText}`,
+      `Pending clinical review prompts fetch failed: ${response.status} ${errorText}`,
     );
   }
 
@@ -192,41 +268,73 @@ export async function createClinicalHypothesis(
     const errorText = await response.text();
 
     throw new Error(
-      `Clinical hypothesis creation failed: ${response.status} ${errorText}`,
+      `Clinical review prompt creation failed: ${response.status} ${errorText}`,
     );
   }
 
   return response.json();
 }
 
+export async function createClinicalReviewPrompts(
+  analysisRunId: string,
+  labReportId: string | null,
+): Promise<ClinicalHypothesis[]> {
+  const [results, existingPrompts] = await Promise.all([
+    getAnalysisRunResults(analysisRunId),
+    getClinicalHypothesesForAnalysisRun(analysisRunId).catch(() => []),
+  ]);
+
+  if (results.length === 0) {
+    throw new Error('No lab result found for this analysis run.');
+  }
+
+  const priorityResults = getPriorityResults(results);
+  const resultsToCreateFrom =
+    priorityResults.length > 0 ? priorityResults : [results[0]];
+
+  const createdOrExistingPrompts: ClinicalHypothesis[] = [];
+
+  for (const result of resultsToCreateFrom) {
+    const existingPrompt = existingPrompts.find((prompt) =>
+      prompt.evidence_json.some((evidence) =>
+        evidenceMatchesResult(evidence, result),
+      ),
+    );
+
+    if (existingPrompt) {
+      createdOrExistingPrompts.push(existingPrompt);
+      continue;
+    }
+
+    if (promptAlreadyExistsForResult(createdOrExistingPrompts, result)) {
+      continue;
+    }
+
+    const createdPrompt = await createClinicalHypothesis(
+      buildClinicalReviewPromptPayload(result, analysisRunId, labReportId),
+    );
+
+    createdOrExistingPrompts.push(createdPrompt);
+  }
+
+  if (createdOrExistingPrompts.length === 0) {
+    throw new Error('No clinical review prompt could be created.');
+  }
+
+  return createdOrExistingPrompts;
+}
+
+/**
+ * Backward-compatible wrapper.
+ * Existing pages can keep calling this, but it now creates one prompt
+ * for every LOW/HIGH lab signal instead of only the first abnormal result.
+ */
 export async function createDemoClinicalHypothesis(
   analysisRunId: string,
   labReportId: string | null,
 ): Promise<ClinicalHypothesis> {
-  const results = await getAnalysisRunResults(analysisRunId);
-  const primaryResult = getPrimaryResult(results);
-
-  if (!primaryResult) {
-    throw new Error('No lab result found for this analysis run.');
-  }
-
-  return createClinicalHypothesis({
-    patient_id: DEMO_PATIENT_ID,
-    lab_report_id: labReportId,
-    analysis_run_id: analysisRunId,
-    title: buildDemoTitle(primaryResult),
-    summary: buildDemoSummary(primaryResult),
-    hypothesis_type: 'lab_signal_review',
-    confidence: primaryResult.classification_confidence ?? 0.75,
-    severity: buildSeverity(primaryResult),
-    source: 'frontend_demo',
-    evidence_json: [buildEvidenceItem(primaryResult)],
-    metadata_json: {
-      generated_from: 'frontend_demo_button',
-      safety_note:
-        'This is a physician-review prompt only and is not a diagnosis.',
-    },
-  });
+  const prompts = await createClinicalReviewPrompts(analysisRunId, labReportId);
+  return prompts[0];
 }
 
 export async function applyDoctorReview(

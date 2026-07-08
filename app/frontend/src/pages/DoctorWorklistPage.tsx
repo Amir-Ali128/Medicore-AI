@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import EmptyState from '../components/ui/EmptyState';
@@ -32,7 +32,8 @@ function statusClassName(status: string | null | undefined) {
 
   if (
     normalizedStatus.includes('test') ||
-    normalizedStatus.includes('review')
+    normalizedStatus.includes('review') ||
+    normalizedStatus.includes('extra')
   ) {
     return 'border-amber-200 bg-amber-50 text-amber-700';
   }
@@ -85,6 +86,36 @@ function uniqueById(items: ClinicalHypothesis[]) {
   return Array.from(map.values());
 }
 
+function getEvidenceLabel(item: ClinicalHypothesis) {
+  const firstEvidence = item.evidence_json[0];
+
+  if (!firstEvidence) {
+    return 'No evidence';
+  }
+
+  return (
+    firstEvidence.parameter_name ??
+    firstEvidence.parameter_code ??
+    'Lab signal'
+  );
+}
+
+function getEvidenceValue(item: ClinicalHypothesis) {
+  const firstEvidence = item.evidence_json[0];
+
+  if (!firstEvidence) {
+    return '-';
+  }
+
+  return `${firstEvidence.value ?? '-'} ${firstEvidence.unit ?? ''}`.trim();
+}
+
+function getSignalStatus(item: ClinicalHypothesis) {
+  const firstEvidence = item.evidence_json[0];
+
+  return firstEvidence?.result_status ?? item.status;
+}
+
 export default function DoctorWorklistPage() {
   const [tasks, setTasks] = useState<ClinicalHypothesis[]>([]);
   const [pendingTasks, setPendingTasks] = useState<ClinicalHypothesis[]>([]);
@@ -125,6 +156,14 @@ export default function DoctorWorklistPage() {
     loadWorklist();
   }, [analysisRunId]);
 
+  const selectedTask = useMemo(
+    () =>
+      pendingTasks[0] ??
+      tasks.find((task) => task.needs_doctor_review) ??
+      tasks[0],
+    [pendingTasks, tasks],
+  );
+
   if (isLoading) {
     return (
       <LoadingState
@@ -147,8 +186,8 @@ export default function DoctorWorklistPage() {
     return (
       <EmptyState
         title="No worklist tasks"
-        description="Create a clinical review prompt first, then return here."
-        actionLabel="Open clinical hypotheses"
+        description="Create clinical review prompts first, then return here."
+        actionLabel="Open clinical review prompts"
         to="/clinical-hypotheses"
       />
     );
@@ -168,11 +207,12 @@ export default function DoctorWorklistPage() {
     (total, task) => total + task.evidence_json.length,
     0,
   );
-
-  const selectedTask =
-    pendingTasks[0] ??
-    tasks.find((task) => task.needs_doctor_review) ??
-    tasks[0];
+  const highPriorityCount = tasks.filter(
+    (task) => task.severity === 'high',
+  ).length;
+  const mediumPriorityCount = tasks.filter(
+    (task) => task.severity === 'medium',
+  ).length;
 
   const summaryCards = [
     {
@@ -249,21 +289,21 @@ export default function DoctorWorklistPage() {
         ))}
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[1.25fr_0.75fr]">
+      <div className="grid gap-6 xl:grid-cols-[1.35fr_0.95fr]">
         <SectionCard
           title="Priority task queue"
-          description="Backend clinical hypotheses shown as doctor worklist tasks."
+          description="Backend clinical review prompts shown as doctor worklist tasks."
         >
           <div className="overflow-hidden rounded-lg border border-slate-200">
             <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-slate-200">
+              <table className="min-w-[980px] divide-y divide-slate-200">
                 <thead className="bg-slate-50">
                   <tr>
                     <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-slate-500">
                       Task
                     </th>
                     <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-slate-500">
-                      Type
+                      Signal
                     </th>
                     <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-slate-500">
                       Priority
@@ -286,23 +326,37 @@ export default function DoctorWorklistPage() {
                 <tbody className="divide-y divide-slate-200 bg-white">
                   {tasks.map((task) => (
                     <tr key={task.id}>
-                      <td className="min-w-72 px-4 py-4">
+                      <td className="min-w-80 px-4 py-4 align-top">
                         <p className="font-medium text-slate-950">
                           {task.title}
                         </p>
 
-                        <p className="mt-1 text-sm leading-6 text-slate-500">
+                        <p className="mt-1 line-clamp-3 text-sm leading-6 text-slate-500">
                           {task.summary}
                         </p>
                       </td>
 
-                      <td className="px-4 py-4 text-slate-600">
-                        {task.hypothesis_type ?? 'clinical_review'}
+                      <td className="min-w-40 px-4 py-4 align-top text-slate-600">
+                        <p className="font-medium text-slate-800">
+                          {getEvidenceLabel(task)}
+                        </p>
+
+                        <p className="mt-1 text-sm text-slate-500">
+                          {getEvidenceValue(task)}
+                        </p>
+
+                        <span
+                          className={`mt-2 inline-flex whitespace-nowrap rounded-lg border px-2.5 py-1 text-xs font-semibold ${statusClassName(
+                            getSignalStatus(task),
+                          )}`}
+                        >
+                          {statusLabel(getSignalStatus(task))}
+                        </span>
                       </td>
 
-                      <td className="px-4 py-4">
+                      <td className="px-4 py-4 align-top">
                         <span
-                          className={`rounded-lg border px-2.5 py-1 text-xs font-semibold ${priorityClassName(
+                          className={`inline-flex whitespace-nowrap rounded-lg border px-2.5 py-1 text-xs font-semibold ${priorityClassName(
                             task,
                           )}`}
                         >
@@ -310,9 +364,9 @@ export default function DoctorWorklistPage() {
                         </span>
                       </td>
 
-                      <td className="px-4 py-4">
+                      <td className="px-4 py-4 align-top">
                         <span
-                          className={`rounded-lg border px-2.5 py-1 text-xs font-semibold ${statusClassName(
+                          className={`inline-flex min-w-28 justify-center whitespace-nowrap rounded-lg border px-2.5 py-1 text-xs font-semibold ${statusClassName(
                             task.status,
                           )}`}
                         >
@@ -320,18 +374,18 @@ export default function DoctorWorklistPage() {
                         </span>
                       </td>
 
-                      <td className="px-4 py-4 text-slate-600">
+                      <td className="min-w-40 px-4 py-4 align-top text-slate-600">
                         {formatDate(task.created_at)}
                       </td>
 
-                      <td className="px-4 py-4 text-slate-600">
+                      <td className="px-4 py-4 align-top text-slate-600">
                         {task.evidence_json.length}
                       </td>
 
-                      <td className="px-4 py-4">
+                      <td className="px-4 py-4 align-top">
                         <Link
                           to="/doctor-review"
-                          className="rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-2 text-sm font-medium text-cyan-800 transition hover:bg-cyan-100"
+                          className="inline-flex whitespace-nowrap rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-2 text-sm font-medium text-cyan-800 transition hover:bg-cyan-100"
                         >
                           Open
                         </Link>
@@ -361,7 +415,7 @@ export default function DoctorWorklistPage() {
               </div>
 
               <span
-                className={`w-fit rounded-lg border px-2.5 py-1 text-xs font-semibold ${statusClassName(
+                className={`w-fit whitespace-nowrap rounded-lg border px-2.5 py-1 text-xs font-semibold ${statusClassName(
                   selectedTask.status,
                 )}`}
               >
@@ -372,11 +426,25 @@ export default function DoctorWorklistPage() {
             <div className="mt-5 grid gap-3">
               <div className="rounded-lg border border-slate-200 bg-white p-4">
                 <p className="text-xs font-semibold uppercase text-slate-500">
+                  Linked signal
+                </p>
+
+                <p className="mt-2 font-medium text-slate-950">
+                  {getEvidenceLabel(selectedTask)}
+                </p>
+
+                <p className="mt-1 text-sm text-slate-600">
+                  {getEvidenceValue(selectedTask)}
+                </p>
+              </div>
+
+              <div className="rounded-lg border border-slate-200 bg-white p-4">
+                <p className="text-xs font-semibold uppercase text-slate-500">
                   Priority
                 </p>
 
                 <span
-                  className={`mt-2 inline-flex rounded-lg border px-2.5 py-1 text-xs font-semibold ${priorityClassName(
+                  className={`mt-2 inline-flex whitespace-nowrap rounded-lg border px-2.5 py-1 text-xs font-semibold ${priorityClassName(
                     selectedTask,
                   )}`}
                 >
@@ -419,7 +487,7 @@ export default function DoctorWorklistPage() {
                 to="/doctor-review"
                 className="inline-flex w-fit rounded-lg border border-cyan-200 bg-white px-3 py-2 text-sm font-medium text-cyan-800 transition hover:bg-cyan-50"
               >
-                Open related route
+                Open doctor review
               </Link>
             </div>
           </article>
@@ -432,7 +500,7 @@ export default function DoctorWorklistPage() {
       >
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
           <article className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-            <span className="rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700">
+            <span className="inline-flex whitespace-nowrap rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700">
               PENDING
             </span>
 
@@ -445,12 +513,12 @@ export default function DoctorWorklistPage() {
             </p>
 
             <p className="mt-2 text-sm leading-6 text-slate-600">
-              Clinical prompts waiting for physician action.
+              Clinical review prompts waiting for physician action.
             </p>
           </article>
 
           <article className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-            <span className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
+            <span className="inline-flex whitespace-nowrap rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
               APPROVED
             </span>
 
@@ -468,7 +536,7 @@ export default function DoctorWorklistPage() {
           </article>
 
           <article className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-            <span className="rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1 text-xs font-semibold text-rose-700">
+            <span className="inline-flex whitespace-nowrap rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1 text-xs font-semibold text-rose-700">
               REJECTED
             </span>
 
@@ -486,7 +554,7 @@ export default function DoctorWorklistPage() {
           </article>
 
           <article className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-            <span className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700">
+            <span className="inline-flex whitespace-nowrap rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700">
               REVIEW
             </span>
 
@@ -504,7 +572,7 @@ export default function DoctorWorklistPage() {
           </article>
 
           <article className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-            <span className="rounded-lg border border-cyan-200 bg-cyan-50 px-2.5 py-1 text-xs font-semibold text-cyan-700">
+            <span className="inline-flex whitespace-nowrap rounded-lg border border-cyan-200 bg-cyan-50 px-2.5 py-1 text-xs font-semibold text-cyan-700">
               EVIDENCE
             </span>
 
@@ -529,132 +597,95 @@ export default function DoctorWorklistPage() {
           description="Operational labels based on backend task status."
         >
           <div className="grid gap-3 sm:grid-cols-2">
-            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-              <div className="flex items-start justify-between gap-3">
-                <h3 className="font-semibold text-slate-950">
-                  Pending queue
-                </h3>
+            <div className="rounded-lg border border-blue-100 bg-blue-50 p-4">
+              <p className="text-xs font-semibold uppercase text-blue-700">
+                Current queue
+              </p>
 
-                <span className="rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700">
-                  ACTIVE
-                </span>
-              </div>
-
-              <p className="mt-3 text-sm leading-6 text-slate-600">
-                Pending prompts should be reviewed by a physician before any
-                patient-facing visibility.
+              <p className="mt-2 text-sm leading-6 text-slate-700">
+                {pendingCount} pending task{pendingCount === 1 ? '' : 's'} in
+                the doctor review queue.
               </p>
             </div>
 
-            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-              <div className="flex items-start justify-between gap-3">
-                <h3 className="font-semibold text-slate-950">
-                  Reviewed queue
-                </h3>
+            <div className="rounded-lg border border-amber-100 bg-amber-50 p-4">
+              <p className="text-xs font-semibold uppercase text-amber-700">
+                Action state
+              </p>
 
-                <span className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
-                  TRACKED
-                </span>
-              </div>
+              <p className="mt-2 text-sm leading-6 text-slate-700">
+                Pending prompts remain blocked from patient-facing use until
+                physician review is recorded.
+              </p>
+            </div>
 
-              <p className="mt-3 text-sm leading-6 text-slate-600">
-                Reviewed prompts remain visible in the current analysis-run
-                worklist when available.
+            <div className="rounded-lg border border-rose-100 bg-rose-50 p-4">
+              <p className="text-xs font-semibold uppercase text-rose-700">
+                High priority
+              </p>
+
+              <p className="mt-2 text-sm leading-6 text-slate-700">
+                {highPriorityCount} high-priority prompt
+                {highPriorityCount === 1 ? '' : 's'} currently shown.
+              </p>
+            </div>
+
+            <div className="rounded-lg border border-slate-200 bg-white p-4">
+              <p className="text-xs font-semibold uppercase text-slate-500">
+                Medium priority
+              </p>
+
+              <p className="mt-2 text-sm leading-6 text-slate-700">
+                {mediumPriorityCount} medium-priority prompt
+                {mediumPriorityCount === 1 ? '' : 's'} currently shown.
               </p>
             </div>
           </div>
         </SectionCard>
 
         <SectionCard
-          title="Safe task actions"
-          description="Navigation controls for the backend-connected review flow."
+          title="Evidence preview"
+          description="Linked lab evidence from current worklist tasks."
         >
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <Link
-              to="/doctor-review"
-              className="block rounded-lg border border-slate-200 bg-white p-4 transition hover:border-cyan-200 hover:bg-cyan-50"
-            >
-              <span className="font-semibold text-slate-950">
-                Open doctor review
-              </span>
+          <div className="grid gap-3 md:grid-cols-2">
+            {tasks.flatMap((task) =>
+              task.evidence_json.map((evidence, index) => (
+                <article
+                  key={`${task.id}-${index}`}
+                  className="rounded-lg border border-slate-200 bg-slate-50 p-4"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="font-semibold text-slate-950">
+                        {evidence.parameter_name ??
+                          evidence.parameter_code ??
+                          'Lab signal'}
+                      </p>
 
-              <span className="mt-2 block text-sm leading-6 text-slate-500">
-                Approve, reject, or request extra tests.
-              </span>
-            </Link>
+                      <p className="mt-1 text-sm text-slate-600">
+                        {evidence.value} {evidence.unit}
+                      </p>
+                    </div>
 
-            <Link
-              to="/clinical-hypotheses"
-              className="block rounded-lg border border-slate-200 bg-white p-4 transition hover:border-cyan-200 hover:bg-cyan-50"
-            >
-              <span className="font-semibold text-slate-950">
-                Create review prompt
-              </span>
+                    <span
+                      className={`whitespace-nowrap rounded-lg border px-2.5 py-1 text-xs font-semibold ${statusClassName(
+                        evidence.result_status,
+                      )}`}
+                    >
+                      {statusLabel(evidence.result_status)}
+                    </span>
+                  </div>
 
-              <span className="mt-2 block text-sm leading-6 text-slate-500">
-                Generate a prompt from backend lab results.
-              </span>
-            </Link>
-
-            <Link
-              to="/analysis/results"
-              className="block rounded-lg border border-slate-200 bg-white p-4 transition hover:border-cyan-200 hover:bg-cyan-50"
-            >
-              <span className="font-semibold text-slate-950">
-                View lab results
-              </span>
-
-              <span className="mt-2 block text-sm leading-6 text-slate-500">
-                Open structured backend analysis results.
-              </span>
-            </Link>
-
-            <Link
-              to="/analysis/mock"
-              className="block rounded-lg border border-slate-200 bg-white p-4 transition hover:border-cyan-200 hover:bg-cyan-50"
-            >
-              <span className="font-semibold text-slate-950">
-                Run analysis
-              </span>
-
-              <span className="mt-2 block text-sm leading-6 text-slate-500">
-                Start a new backend mock analysis.
-              </span>
-            </Link>
+                  <p className="mt-3 rounded-lg border border-blue-100 bg-white p-3 text-sm leading-6 text-slate-600">
+                    {evidence.note ??
+                      'Structured evidence signal prepared for physician review.'}
+                  </p>
+                </article>
+              )),
+            )}
           </div>
         </SectionCard>
       </div>
-
-      <SectionCard
-        title="Safety framing"
-        description="Worklist items remain physician-review tasks."
-      >
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div className="rounded-lg border border-blue-100 bg-blue-50 p-4">
-            <p className="text-sm leading-6 text-slate-700">
-              Worklist tasks are review prompts, not diagnoses.
-            </p>
-          </div>
-
-          <div className="rounded-lg border border-cyan-100 bg-cyan-50 p-4">
-            <p className="text-sm leading-6 text-slate-700">
-              Tasks do not approve clinical content automatically.
-            </p>
-          </div>
-
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-            <p className="text-sm leading-6 text-slate-700">
-              Patient-facing content remains blocked until doctor approval.
-            </p>
-          </div>
-
-          <div className="rounded-lg border border-slate-200 bg-white p-4">
-            <p className="text-sm leading-6 text-slate-700">
-              Final clinical decisions belong to a physician.
-            </p>
-          </div>
-        </div>
-      </SectionCard>
     </div>
   );
 }

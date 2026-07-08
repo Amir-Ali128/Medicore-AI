@@ -3,10 +3,10 @@ import { NavLink } from 'react-router-dom';
 const navigationItems = [
   { label: 'Dashboard', to: '/' },
   { label: 'Patient Detail', to: '/patients/demo' },
-  { label: 'Backend Analysis', to: '/analysis/mock' },
+  { label: 'Lab Analysis', to: '/analysis/mock' },
   { label: 'Extraction Review', to: '/extraction-review' },
   { label: 'Results', to: '/analysis/results' },
-  { label: 'Clinical Hypotheses', to: '/clinical-hypotheses' },
+  { label: 'Clinical Review Prompts', to: '/clinical-hypotheses' },
   { label: 'Doctor Review', to: '/doctor-review' },
   { label: 'Doctor Worklist', to: '/doctor-worklist' },
   { label: 'Timeline', to: '/timeline' },

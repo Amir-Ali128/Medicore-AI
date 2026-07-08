@@ -27,6 +27,14 @@ function statusClassName(status: string | null | undefined) {
     return 'border-rose-200 bg-rose-50 text-rose-700';
   }
 
+  if (
+    normalizedStatus.includes('extra') ||
+    normalizedStatus.includes('test') ||
+    normalizedStatus.includes('review')
+  ) {
+    return 'border-amber-200 bg-amber-50 text-amber-700';
+  }
+
   if (normalizedStatus.includes('pending')) {
     return 'border-blue-200 bg-blue-50 text-blue-700';
   }
@@ -63,6 +71,16 @@ function formatConfidence(confidence: number | null) {
   }
 
   return `${Math.round(confidence * 100)}%`;
+}
+
+function getEvidenceItems(hypotheses: ClinicalHypothesis[]) {
+  return hypotheses.flatMap((item) =>
+    item.evidence_json.map((evidence) => ({
+      ...evidence,
+      relatedTitle: item.title,
+      hypothesisId: item.id,
+    })),
+  );
 }
 
 export default function DoctorReviewPage() {
@@ -123,7 +141,7 @@ export default function DoctorReviewPage() {
 
       if (errorMessage.includes('Failed to fetch')) {
         setMessage(
-          `Doctor review action was sent. Removed from pending queue locally.`,
+          'Doctor review action was sent. Removed from pending queue locally.',
         );
 
         removeHypothesisFromScreen(clinicalHypothesisId);
@@ -148,17 +166,14 @@ export default function DoctorReviewPage() {
     return (
       <LoadingState
         title="Loading doctor review"
-        description="Fetching pending clinical hypotheses from the backend."
+        description="Fetching pending clinical review prompts from the backend."
       />
     );
   }
 
   if (error && hypotheses.length === 0) {
     return (
-      <ErrorState
-        title="Unable to load doctor review"
-        description={error}
-      />
+      <ErrorState title="Unable to load doctor review" description={error} />
     );
   }
 
@@ -166,22 +181,15 @@ export default function DoctorReviewPage() {
     return (
       <EmptyState
         title="No pending doctor reviews"
-        description="Create a clinical review prompt first, or all current prompts may already be reviewed."
-        actionLabel="Open clinical hypotheses"
+        description="Create clinical review prompts first, or all current prompts may already be reviewed."
+        actionLabel="Open clinical review prompts"
         to="/clinical-hypotheses"
       />
     );
   }
 
   const firstReview = hypotheses[0];
-
-  const evidenceItems = hypotheses.flatMap((item) =>
-    item.evidence_json.map((evidence) => ({
-      ...evidence,
-      relatedTitle: item.title,
-      hypothesisId: item.id,
-    })),
-  );
+  const evidenceItems = getEvidenceItems(hypotheses);
 
   return (
     <div className="space-y-8">
@@ -206,8 +214,8 @@ export default function DoctorReviewPage() {
       </div>
 
       <section className="rounded-xl border border-emerald-200 bg-emerald-50 p-5">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div>
+        <div className="flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
+          <div className="max-w-3xl">
             <p className="text-sm font-semibold uppercase text-emerald-700">
               Backend actions enabled
             </p>
@@ -216,13 +224,14 @@ export default function DoctorReviewPage() {
               Review selected prompt
             </h2>
 
-            <p className="mt-2 text-sm text-slate-600">
+            <p className="mt-2 text-sm leading-6 text-slate-600">
               Approve, reject, or request extra tests for the first pending
-              clinical hypothesis.
+              clinical review prompt. Actions are recorded through the backend
+              review endpoint.
             </p>
           </div>
 
-          <div className="flex flex-col gap-2 sm:flex-row">
+          <div className="flex w-full flex-col gap-2 sm:flex-row sm:flex-wrap xl:w-auto xl:justify-end">
             <button
               type="button"
               disabled={isReviewing}
@@ -233,7 +242,7 @@ export default function DoctorReviewPage() {
                   'Approved after physician review in demo workflow.',
                 )
               }
-              className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60"
+              className="min-w-36 rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60"
             >
               Approve
             </button>
@@ -248,7 +257,7 @@ export default function DoctorReviewPage() {
                   'Additional follow-up testing requested before patient-facing visibility.',
                 )
               }
-              className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60"
+              className="min-w-44 rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60"
             >
               Request extra test
             </button>
@@ -263,7 +272,7 @@ export default function DoctorReviewPage() {
                   'Rejected after physician review in demo workflow.',
                 )
               }
-              className="rounded-lg bg-rose-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-rose-800 disabled:cursor-not-allowed disabled:opacity-60"
+              className="min-w-32 rounded-lg bg-rose-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-rose-800 disabled:cursor-not-allowed disabled:opacity-60"
             >
               Reject
             </button>
@@ -301,7 +310,7 @@ export default function DoctorReviewPage() {
               </div>
 
               <span
-                className={`w-fit rounded-lg border px-2.5 py-1 text-xs font-semibold ${statusClassName(
+                className={`w-fit whitespace-nowrap rounded-lg border px-2.5 py-1 text-xs font-semibold ${statusClassName(
                   firstReview.status,
                 )}`}
               >
@@ -371,7 +380,7 @@ export default function DoctorReviewPage() {
 
               <div className="flex flex-wrap gap-2 lg:justify-end">
                 <span
-                  className={`w-fit rounded-lg border px-2.5 py-1 text-xs font-semibold ${statusClassName(
+                  className={`whitespace-nowrap rounded-lg border px-2.5 py-1 text-xs font-semibold ${statusClassName(
                     firstReview.status,
                   )}`}
                 >
@@ -379,11 +388,11 @@ export default function DoctorReviewPage() {
                 </span>
 
                 <span
-                  className={`w-fit rounded-lg border px-2.5 py-1 text-xs font-semibold ${severityClassName(
+                  className={`whitespace-nowrap rounded-lg border px-2.5 py-1 text-xs font-semibold ${severityClassName(
                     firstReview.severity,
                   )}`}
                 >
-                  {(firstReview.severity ?? 'low').toUpperCase()} severity
+                  {(firstReview.severity ?? 'low').toUpperCase()} priority
                 </span>
               </div>
             </div>
@@ -467,7 +476,7 @@ export default function DoctorReviewPage() {
                     </div>
 
                     <span
-                      className={`rounded-lg border px-2.5 py-1 text-xs font-semibold ${statusClassName(
+                      className={`whitespace-nowrap rounded-lg border px-2.5 py-1 text-xs font-semibold ${statusClassName(
                         evidence.result_status,
                       )}`}
                     >
@@ -491,12 +500,12 @@ export default function DoctorReviewPage() {
 
         <SectionCard
           title="Doctor action state"
-          description="These actions now send POST requests to the backend review endpoint."
+          description="These actions send POST requests to the backend review endpoint."
         >
           <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
             <p className="text-sm leading-6 text-slate-700">
-              Use the buttons at the top of this page to approve, reject, or
-              request extra tests for the selected pending prompt.
+              Use the action buttons to approve, reject, or request extra tests
+              for the selected pending prompt.
             </p>
 
             <p className="mt-3 text-sm leading-6 text-slate-700">
@@ -557,7 +566,7 @@ export default function DoctorReviewPage() {
               className="block rounded-lg border border-slate-200 bg-white p-4 transition hover:border-blue-200 hover:bg-blue-50"
             >
               <span className="font-semibold text-slate-950">
-                Open clinical hypotheses
+                Open clinical review prompts
               </span>
 
               <span className="mt-2 block text-sm leading-6 text-slate-500">
