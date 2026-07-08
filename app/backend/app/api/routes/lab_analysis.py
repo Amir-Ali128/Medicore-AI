@@ -518,43 +518,27 @@ def _raise_pipeline_error(exc: ValueError) -> None:
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=message) from None
 
 
+
 def _parse_patient_metadata_from_text(text: str) -> PatientMetadataOutput:
     """Extract display-only patient metadata from a text-based PDF report.
 
-    The values are returned in the API response for UI display. They are not
-    written into the demo Patient table in this MVP flow.
+    The values are returned in the API response for UI display only.
+    They are not written into the demo Patient table in this MVP flow.
     """
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    display_name: str | None = None
-    birth_date: date | None = None
-    age: int | None = None
-    sex: str | None = None
+    joined_text = re.sub(r"\s+", " ", text).strip()
+    normalized_joined_text = _normalize_text(joined_text)
 
-    for line in lines:
-        if display_name is None:
-            name_match = re.search(
-                r"Hastan[ıi]n\s+Ad[ıi],\s*Soyad[ıi]\s+(.+)$",
-                line,
-                flags=re.IGNORECASE,
-            )
+    display_name = _extract_patient_display_name(joined_text)
 
-            if name_match is not None:
-                display_name = _clean_patient_metadata_value(name_match.group(1))
+    if display_name is None:
+        display_name = _extract_patient_display_name(normalized_joined_text)
 
-        if birth_date is None or age is None or sex is None:
-            demographics_match = re.search(
-                r"D\.?\s*Tarihi\s*\(Yaş[ıi]\)\s*/\s*Cinsiyeti\s+"
-                r"(\d{2}\.\d{2}\.\d{4})\s*"
-                r"(?:\((\d{1,3})\))?\s*/\s*([A-Za-zÇĞİÖŞÜçğıöşü]+)",
-                line,
-                flags=re.IGNORECASE,
-            )
+    birth_date, age, sex = _extract_patient_demographics(joined_text)
 
-            if demographics_match is not None:
-                birth_date = _parse_turkish_date(demographics_match.group(1))
-                age_text = demographics_match.group(2)
-                age = int(age_text) if age_text is not None else None
-                sex = _normalize_patient_sex(demographics_match.group(3))
+    if birth_date is None and age is None and sex is None:
+        birth_date, age, sex = _extract_patient_demographics(
+            normalized_joined_text,
+        )
 
     return PatientMetadataOutput(
         display_name=display_name,
@@ -564,30 +548,118 @@ def _parse_patient_metadata_from_text(text: str) -> PatientMetadataOutput:
     )
 
 
+def _extract_patient_display_name(text: str) -> str | None:
+    label_patterns = [
+        r"Hastan[ıi]n\s+Ad[ıi],?\s*Soyad[ıi]",
+        r"Hastanin\s+Adi,?\s*Soyadi",
+        r"Patient\s+Name",
+    ]
+
+    stop_pattern = (
+        r"TC\s+Kimlik|"
+        r"T\.?C\.?\s+Kimlik|"
+        r"D\.?\s*Tarihi|"
+        r"Dogum\s+Tarihi|"
+        r"Doğum\s+Tarihi|"
+        r"Dosya\s+Numaras[ıi]|"
+        r"Dosya\s+Numarasi|"
+        r"Kay[ıi]t\s+Numaras[ıi]|"
+        r"Kayit\s+Numarasi|"
+        r"Kurumu|"
+        r"Doktoru|"
+        r"Tetkik\s+Istem|"
+        r"Tetkik\s+İstem|"
+        r"Numune\s+Alma|"
+        r"Numune\s+Kabul|"
+        r"Uzman\s+Onay|"
+        r"TETKIK\s+ADI|"
+        r"TETKİK\s+ADI"
+    )
+
+    for label_pattern in label_patterns:
+        match = re.search(
+            rf"{label_pattern}\s*[:\-]?\s+(.+?)(?=\s+(?:{stop_pattern})|$)",
+            text,
+            flags=re.IGNORECASE,
+        )
+
+        if match is None:
+            continue
+
+        cleaned = _clean_patient_metadata_value(match.group(1))
+
+        if cleaned is not None:
+            return cleaned
+
+    return None
+
+
+def _extract_patient_demographics(
+    text: str,
+) -> tuple[date | None, int | None, str | None]:
+    patterns = [
+        r"D\.?\s*Tarihi\s*\(Yaş[ıi]\)\s*/\s*Cinsiyeti\s+"
+        r"(\d{2}\.\d{2}\.\d{4})\s*"
+        r"(?:\((\d{1,3})\))?\s*/\s*([A-Za-zÇĞİÖŞÜçğıöşü]+)",
+        r"D\.?\s*Tarihi\s*\(Yasi\)\s*/\s*Cinsiyeti\s+"
+        r"(\d{2}\.\d{2}\.\d{4})\s*"
+        r"(?:\((\d{1,3})\))?\s*/\s*([A-Za-zÇĞİÖŞÜçğıöşü]+)",
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+
+        if match is None:
+            continue
+
+        birth_date = _parse_turkish_date(match.group(1))
+        age_text = match.group(2)
+        age = int(age_text) if age_text is not None else None
+        sex = _normalize_patient_sex(match.group(3))
+
+        return birth_date, age, sex
+
+    return None, None, None
+
+
 def _clean_patient_metadata_value(value: str) -> str | None:
     cleaned = re.sub(r"\s{2,}", " ", value).strip(" :-\t")
 
     if not cleaned or cleaned == "-":
         return None
 
-    # Defensive cleanup in case PDF extraction puts the next label on same line.
     stop_markers = [
         "TC Kimlik",
+        "T.C. Kimlik",
         "D.Tarihi",
+        "D. Tarihi",
         "Dosya Numarası",
         "Dosya Numarasi",
         "Kayıt Numarası",
         "Kayit Numarasi",
         "Kurumu",
         "Doktoru",
+        "Tetkik İstem",
+        "Tetkik Istem",
+        "Numune Alma",
+        "Numune Kabul",
+        "Uzman Onay",
+        "TETKİK ADI",
+        "TETKIK ADI",
     ]
 
     for marker_text in stop_markers:
         marker_index = cleaned.lower().find(marker_text.lower())
+
         if marker_index > 0:
             cleaned = cleaned[:marker_index].strip(" :-\t")
 
-    return cleaned or None
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip(" :-\t")
+
+    if not cleaned or len(cleaned) > 80:
+        return None
+
+    return cleaned
 
 
 def _parse_turkish_date(value: str) -> date | None:
@@ -671,6 +743,7 @@ async def analyze_uploaded_pdf_report(
 
 
     extracted_text = _extract_text_from_pdf(file_bytes)
+    patient_metadata = _parse_patient_metadata_from_text(extracted_text)
 
 
 
@@ -680,11 +753,6 @@ async def analyze_uploaded_pdf_report(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="No selectable text could be extracted from this PDF. Scanned/image PDFs need OCR.",
         )
-
-
-
-
-    patient_metadata = _parse_patient_metadata_from_text(extracted_text)
 
 
 
