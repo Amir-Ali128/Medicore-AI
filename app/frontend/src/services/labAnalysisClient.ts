@@ -6,12 +6,24 @@ const API_BASE_URL =
 export const LAST_ANALYSIS_RUN_ID_KEY = 'medicore:lastAnalysisRunId';
 export const LAST_LAB_REPORT_ID_KEY = 'medicore:lastLabReportId';
 
+export const LAST_PATIENT_DISPLAY_NAME_KEY = 'medicore:lastPatientDisplayName';
+export const LAST_PATIENT_AGE_KEY = 'medicore:lastPatientAge';
+export const LAST_PATIENT_SEX_KEY = 'medicore:lastPatientSex';
+export const LAST_PATIENT_BIRTH_DATE_KEY = 'medicore:lastPatientBirthDate';
+
 export type LabResultStatus =
   | 'normal'
   | 'low'
   | 'high'
   | 'unknown'
   | 'needs_review';
+
+export type PatientMetadata = {
+  display_name: string | null;
+  age: number | null;
+  sex: string | null;
+  birth_date: string | null;
+};
 
 export type LabAnalysisResult = {
   lab_result_id: string;
@@ -37,6 +49,7 @@ export type LabAnalysisResponse = {
   analysis_run_id: string;
   lab_report_id: string;
   patient_id: string;
+  patient?: PatientMetadata | null;
   results: LabAnalysisResult[];
   counts: {
     total: number;
@@ -76,9 +89,41 @@ async function readErrorMessage(response: Response): Promise<string> {
   return response.text();
 }
 
+function rememberPatientMetadata(response: LabAnalysisResponse): void {
+  const patient = response.patient;
+
+  if (patient?.display_name) {
+    localStorage.setItem(
+      LAST_PATIENT_DISPLAY_NAME_KEY,
+      patient.display_name,
+    );
+  } else {
+    localStorage.removeItem(LAST_PATIENT_DISPLAY_NAME_KEY);
+  }
+
+  if (patient?.age !== null && patient?.age !== undefined) {
+    localStorage.setItem(LAST_PATIENT_AGE_KEY, String(patient.age));
+  } else {
+    localStorage.removeItem(LAST_PATIENT_AGE_KEY);
+  }
+
+  if (patient?.sex) {
+    localStorage.setItem(LAST_PATIENT_SEX_KEY, patient.sex);
+  } else {
+    localStorage.removeItem(LAST_PATIENT_SEX_KEY);
+  }
+
+  if (patient?.birth_date) {
+    localStorage.setItem(LAST_PATIENT_BIRTH_DATE_KEY, patient.birth_date);
+  } else {
+    localStorage.removeItem(LAST_PATIENT_BIRTH_DATE_KEY);
+  }
+}
+
 export function rememberLatestAnalysis(response: LabAnalysisResponse): void {
   localStorage.setItem(LAST_ANALYSIS_RUN_ID_KEY, response.analysis_run_id);
   localStorage.setItem(LAST_LAB_REPORT_ID_KEY, response.lab_report_id);
+  rememberPatientMetadata(response);
 }
 
 export async function runBackendMockAnalysis(): Promise<LabAnalysisResponse> {
