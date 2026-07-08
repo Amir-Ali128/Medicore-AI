@@ -112,11 +112,15 @@ async function readErrorMessage(response: Response): Promise<string> {
 }
 
 function hasPatientMetadata(patient: PatientMetadata | null | undefined): boolean {
+  if (!patient) {
+    return false;
+  }
+
   return Boolean(
-    patient?.display_name ||
-      patient?.age !== null && patient?.age !== undefined ||
-      patient?.sex ||
-      patient?.birth_date,
+    patient.display_name ||
+      patient.age !== null && patient.age !== undefined ||
+      patient.sex ||
+      patient.birth_date,
   );
 }
 
