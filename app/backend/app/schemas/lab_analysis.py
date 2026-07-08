@@ -42,6 +42,18 @@ class MockLabReportInput(BaseModel):
 
 
 # --------------------------------------------------------------------------
+# Output (patient metadata extracted from PDF)
+# --------------------------------------------------------------------------
+class PatientMetadataOutput(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    display_name: str | None = None
+    age: int | None = None
+    sex: str | None = None
+    birth_date: date | None = None
+
+
+# --------------------------------------------------------------------------
 # Output (structured analysis)
 # --------------------------------------------------------------------------
 class StructuredLabResultOutput(BaseModel):
@@ -83,5 +95,10 @@ class AnalysisPipelineResult(BaseModel):
     analysis_run_id: uuid.UUID
     lab_report_id: uuid.UUID
     patient_id: uuid.UUID
+
+    # Extracted from the uploaded PDF when available.
+    # These fields are for UI display only.
+    patient: PatientMetadataOutput = Field(default_factory=PatientMetadataOutput)
+
     results: list[StructuredLabResultOutput] = Field(default_factory=list)
     counts: AnalysisCounts = Field(default_factory=AnalysisCounts)
