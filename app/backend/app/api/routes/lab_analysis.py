@@ -520,11 +520,7 @@ def _raise_pipeline_error(exc: ValueError) -> None:
 
 
 def _parse_patient_metadata_from_text(text: str) -> PatientMetadataOutput:
-    """Extract display-only patient metadata from a text-based PDF report.
-
-    The values are returned in the API response for UI display only.
-    They are not written into the demo Patient table in this MVP flow.
-    """
+    """Extract display-only patient metadata from a text-based PDF report."""
     display_name = _extract_patient_display_name(text)
 
     joined_text = re.sub(r"\s+", " ", text).strip()
@@ -548,45 +544,35 @@ def _parse_patient_metadata_from_text(text: str) -> PatientMetadataOutput:
 def _extract_patient_display_name(text: str) -> str | None:
     """Robustly extract patient name from Turkish lab PDFs.
 
-    Handles all of these common PDF text extraction shapes:
-    - "Hastanın Adı, Soyadı EMİR CAN ALİ"
-    - "Hastanın Adı, SoyadıEMİR CAN ALİ"
-    - "Hastanın Adı, Soyadı" on one line and the name on the next line
-    - normalized variants such as "Hastanin Adi, Soyadi EMIR CAN ALI"
+    _normalize_text converts comma to dot, so label regex accepts both comma
+    and dot between "Adi/Adı" and "Soyadi/Soyadı".
     """
     lines = [line.strip() for line in text.splitlines() if line.strip()]
 
     for index, line in enumerate(lines):
         normalized_line = _normalize_text(line)
 
-        if not _line_has_patient_name_label(normalized_line):
-            continue
+        for candidate_line in (line, normalized_line):
+            if not _line_has_patient_name_label(candidate_line):
+                continue
 
-        candidate = _extract_patient_name_from_labeled_line(line)
+            candidate = _extract_patient_name_from_labeled_line(candidate_line)
 
-        if candidate is not None:
-            return candidate
+            if candidate is not None:
+                return candidate
 
-        candidate = _extract_patient_name_from_labeled_line(normalized_line)
+            for next_line in lines[index + 1 : index + 5]:
+                cleaned = _clean_patient_metadata_value(next_line)
 
-        if candidate is not None:
-            return candidate
+                if cleaned is not None and _looks_like_patient_name(cleaned):
+                    return cleaned
 
-        # Some PDFs put the label on one line and the value on the next line.
-        for next_line in lines[index + 1 : index + 5]:
-            cleaned = _clean_patient_metadata_value(next_line)
-
-            if cleaned is not None and _looks_like_patient_name(cleaned):
-                return cleaned
-
-    # Last-resort scan on the whole joined text. This catches PDFs where pypdf
-    # flattens the full page into one long line.
     joined_text = re.sub(r"\s+", " ", text).strip()
     normalized_joined_text = _normalize_text(joined_text)
 
     for candidate_text in (joined_text, normalized_joined_text):
         label_match = re.search(
-            r"Hastan(?:ın|in)\s+Ad(?:ı|i),?\s*Soyad(?:ı|i)",
+            r"Hastan(?:ın|in)\s+Ad(?:ı|i)[,.]?\s*Soyad(?:ı|i)",
             candidate_text,
             flags=re.IGNORECASE,
         )
@@ -596,7 +582,7 @@ def _extract_patient_display_name(text: str) -> str | None:
 
         tail = candidate_text[label_match.end() :].strip(" :-\t")
         stop_match = re.search(
-            r"\s+(?:TC\s+Kimlik|T\.?C\.?\s+Kimlik|D\.?\s*Tarihi|"
+            r"\s*(?:TC\s+Kimlik|T\.?C\.?\s+Kimlik|D\.?\s*Tarihi|"
             r"Dogum\s+Tarihi|Doğum\s+Tarihi|Dosya\s+Numarasi|"
             r"Dosya\s+Numarası|Kayit\s+Numarasi|Kayıt\s+Numarası|"
             r"Kurumu|Doktoru|Tetkik\s+Istem|Tetkik\s+İstem|"
@@ -609,17 +595,17 @@ def _extract_patient_display_name(text: str) -> str | None:
         raw_candidate = tail[: stop_match.start()] if stop_match else tail
         cleaned = _clean_patient_metadata_value(raw_candidate)
 
-        if cleaned is not None:
+        if cleaned is not None and _looks_like_patient_name(cleaned):
             return cleaned
 
     return None
 
 
-def _line_has_patient_name_label(normalized_line: str) -> bool:
+def _line_has_patient_name_label(line: str) -> bool:
     return (
         re.search(
-            r"Hastanin\s+Adi,?\s*Soyadi",
-            normalized_line,
+            r"Hastan(?:ın|in)\s+Ad(?:ı|i)[,.]?\s*Soyad(?:ı|i)",
+            line,
             flags=re.IGNORECASE,
         )
         is not None
@@ -627,9 +613,7 @@ def _line_has_patient_name_label(normalized_line: str) -> bool:
 
 
 def _extract_patient_name_from_labeled_line(line: str) -> str | None:
-    # Important: no required whitespace after "Soyadı/Soyadi".
-    # Some PDF extraction outputs "SoyadıEMİR CAN ALİ".
-    label_pattern = r"Hastan(?:ın|in)\s+Ad(?:ı|i),?\s*Soyad(?:ı|i)"
+    label_pattern = r"Hastan(?:ın|in)\s+Ad(?:ı|i)[,.]?\s*Soyad(?:ı|i)"
     label_match = re.search(label_pattern, line, flags=re.IGNORECASE)
 
     if label_match is None:
@@ -706,7 +690,7 @@ def _clean_patient_metadata_value(value: str) -> str | None:
         normalized_marker = _normalize_text(marker_text).lower()
         marker_index = normalized_cleaned.find(normalized_marker)
 
-        if marker_index > 0:
+        if marker_index >= 0:
             cleaned = cleaned[:marker_index].strip(" :-\t")
             normalized_cleaned = normalized_cleaned[:marker_index].strip(" :-\t")
 
@@ -723,6 +707,7 @@ def _looks_like_patient_name(value: str) -> bool:
         return False
 
     normalized = _normalize_text(value).strip()
+    upper_normalized = normalized.upper()
 
     forbidden = [
         "TC KIMLIK",
@@ -734,9 +719,10 @@ def _looks_like_patient_name(value: str) -> bool:
         "TETKIK",
         "NUMUNE",
         "UZMAN",
+        "REFERANS",
+        "SONUC",
+        "BIRIM",
     ]
-
-    upper_normalized = normalized.upper()
 
     if any(marker in upper_normalized for marker in forbidden):
         return False
