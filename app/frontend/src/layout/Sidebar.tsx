@@ -1,0 +1,78 @@
+import { NavLink } from 'react-router-dom';
+
+const navigationItems = [
+  { label: 'Dashboard', to: '/' },
+  { label: 'Patient Detail', to: '/patients/demo' },
+  { label: 'Backend Analysis', to: '/analysis/mock' },
+  { label: 'Extraction Review', to: '/extraction-review' },
+  { label: 'Results', to: '/analysis/results' },
+  { label: 'Clinical Hypotheses', to: '/clinical-hypotheses' },
+  { label: 'Doctor Review', to: '/doctor-review' },
+  { label: 'Doctor Worklist', to: '/doctor-worklist' },
+  { label: 'Timeline', to: '/timeline' },
+];
+
+const getLinkClassName = ({ isActive }: { isActive: boolean }) =>
+  [
+    'block rounded-lg px-4 py-3 text-sm font-medium transition',
+    isActive
+      ? 'bg-blue-50 text-blue-700 ring-1 ring-blue-100'
+      : 'text-slate-600 hover:bg-slate-100 hover:text-slate-950',
+  ].join(' ');
+
+export default function Sidebar() {
+  return (
+    <>
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-72 flex-col border-r border-slate-200 bg-white px-5 py-6 lg:flex">
+        <div className="mb-8">
+          <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-blue-600 text-lg font-bold text-white shadow-sm">
+            M
+          </div>
+
+          <p className="mt-4 text-xs font-semibold uppercase text-cyan-700">
+            Clinical Review
+          </p>
+        </div>
+
+        <nav className="space-y-2">
+          {navigationItems.map((item) => (
+            <NavLink key={item.to} to={item.to} className={getLinkClassName}>
+              {item.label}
+            </NavLink>
+          ))}
+        </nav>
+
+        <div className="mt-auto rounded-lg border border-emerald-100 bg-emerald-50 p-4">
+          <p className="text-xs font-semibold uppercase text-emerald-800">
+            Backend Workspace
+          </p>
+
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            Connected to backend workflow data.
+          </p>
+        </div>
+      </aside>
+
+      <div className="border-b border-slate-200 bg-white px-4 py-3 lg:hidden">
+        <nav className="flex gap-2 overflow-x-auto">
+          {navigationItems.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              className={({ isActive }) =>
+                [
+                  'shrink-0 rounded-lg px-3 py-2 text-sm font-medium',
+                  isActive
+                    ? 'bg-blue-50 text-blue-700'
+                    : 'text-slate-600 hover:bg-slate-100',
+                ].join(' ')
+              }
+            >
+              {item.label}
+            </NavLink>
+          ))}
+        </nav>
+      </div>
+    </>
+  );
+}
