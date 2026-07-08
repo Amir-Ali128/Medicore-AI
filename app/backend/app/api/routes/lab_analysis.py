@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import io
 import re
+import uuid
 from datetime import date
 from typing import Any
 from uuid import UUID
@@ -51,9 +52,125 @@ DEMO_PATIENT_ID = UUID("3fa85f64-5717-4562-b3fc-2c963f66afa6")
 DEMO_UPLOADED_BY_USER_ID = UUID("3fa85f64-5717-4562-b3fc-2c963f66afa6")
 
 
+
+async def _ensure_render_demo_clinical_parameters(session: Any) -> None:
+    """Upsert demo clinical parameter rows missing from fresh Render databases.
+
+    The PDF parser sends these raw names as parameter codes so AliasEngine can
+    resolve them deterministically without fuzzy/uncertain matching.
+    """
+    parameters = [
+        ("GFR", "GFR", "mL/dk/1.73m2"),
+        ("TRIGLISERIT", "Trigliserit", "mg/dL"),
+        ("FT3", "FT3", "pmol/L"),
+        ("FT4", "FT4", "pmol/L"),
+        ("VITAMIN_B1", "Vitamin B1", "ug/L"),
+        ("SEDIMENTASYON", "Sedimentasyon", "mm/S"),
+        ("NOTROFIL_MUTLAK", "Nötrofil Mutlak", "K/mm3"),
+        ("LENFOSIT_MUTLAK", "Lenfosit Mutlak", "K/mm3"),
+        ("MONOSIT_MUTLAK", "Monosit Mutlak", "K/mm3"),
+        ("EOZINOFIL_MUTLAK", "Eozinofil Mutlak", "K/mm3"),
+        ("BAZOFIL_MUTLAK", "Bazofil Mutlak", "K/mm3"),
+    ]
+
+    for parameter_code, canonical_name, default_unit in parameters:
+        existing = await session.execute(
+            sql_text(
+                """
+                SELECT id
+                FROM clinical_parameters
+                WHERE parameter_code = :parameter_code
+                   OR canonical_name = :canonical_name
+                LIMIT 1
+                """
+            ),
+            {
+                "parameter_code": parameter_code,
+                "canonical_name": canonical_name,
+            },
+        )
+
+        existing_id = existing.scalar_one_or_none()
+
+        if existing_id is None:
+            await session.execute(
+                sql_text(
+                    """
+                    INSERT INTO clinical_parameters (
+                        id,
+                        parameter_code,
+                        canonical_name,
+                        default_unit,
+                        active_phase1,
+                        analysis_level,
+                        metadata_json,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (
+                        :id,
+                        :parameter_code,
+                        :canonical_name,
+                        :default_unit,
+                        true,
+                        (
+                            SELECT enumlabel::analysis_level
+                            FROM pg_enum
+                            JOIN pg_type ON pg_enum.enumtypid = pg_type.oid
+                            WHERE pg_type.typname = 'analysis_level'
+                              AND enumlabel <> 'L0'
+                            ORDER BY enumsortorder
+                            LIMIT 1
+                        ),
+                        '{"source":"render_upload_bootstrap"}'::jsonb,
+                        NOW(),
+                        NOW()
+                    )
+                    """
+                ),
+                {
+                    "id": str(uuid.uuid5(uuid.NAMESPACE_DNS, f"medicore-demo:{parameter_code}")),
+                    "parameter_code": parameter_code,
+                    "canonical_name": canonical_name,
+                    "default_unit": default_unit,
+                },
+            )
+        else:
+            await session.execute(
+                sql_text(
+                    """
+                    UPDATE clinical_parameters
+                    SET
+                        parameter_code = :parameter_code,
+                        canonical_name = :canonical_name,
+                        default_unit = COALESCE(default_unit, :default_unit),
+                        active_phase1 = true,
+                        analysis_level = (
+                            SELECT enumlabel::analysis_level
+                            FROM pg_enum
+                            JOIN pg_type ON pg_enum.enumtypid = pg_type.oid
+                            WHERE pg_type.typname = 'analysis_level'
+                              AND enumlabel <> 'L0'
+                            ORDER BY enumsortorder
+                            LIMIT 1
+                        ),
+                        updated_at = NOW()
+                    WHERE id = :id
+                    """
+                ),
+                {
+                    "id": existing_id,
+                    "parameter_code": parameter_code,
+                    "canonical_name": canonical_name,
+                    "default_unit": default_unit,
+                },
+            )
+
+
 async def _ensure_demo_patient_and_user() -> None:
     """Create demo patient/user in fresh Render databases if missing."""
     async with AsyncSessionFactory() as session:
+        await _ensure_render_demo_clinical_parameters(session)
         patient = await session.get(Patient, DEMO_PATIENT_ID)
 
         if patient is None:
@@ -155,7 +272,7 @@ LAB_PARAMETER_ALIASES: dict[str, dict[str, Any]] = {
         "aliases": ["HDL-KOLESTEROL", "HDL KOLESTEROL", "HDL CHOLESTEROL", "HDL"],
         "default_unit": "mg/dL",
     },
-    "Trigliserit": {
+    "TRIGLISERIT": {
         "aliases": ["TRIGLISERIT", "TRIGLYCERIDE", "TRIGLYCERIDES", "TRIG"],
         "default_unit": "mg/dL",
     },
@@ -217,11 +334,11 @@ LAB_PARAMETER_ALIASES: dict[str, dict[str, Any]] = {
         "aliases": ["25-OH VITAMIN D, TOTAL, LC MS/MS", "25-OH VITAMIN D", "25 OH VITAMIN D", "VITAMIN D"],
         "default_unit": "ng/mL",
     },
-    "Vitamin B1": {
+    "VITAMIN_B1": {
         "aliases": ["VITAMIN B1, TAM KAN", "VITAMIN B1", "B1"],
         "default_unit": "ug/L",
     },
-    "Sedimentasyon": {
+    "SEDIMENTASYON": {
         "aliases": ["SEDIMANTASYON HIZI (1 SAAT)", "SEDIMANTASYON HIZI", "ESR"],
         "default_unit": "mm/S",
     },
@@ -271,7 +388,7 @@ LAB_PARAMETER_ALIASES: dict[str, dict[str, Any]] = {
 
 
     # Absolute differentials
-    "Nötrofil Mutlak": {
+    "NOTROFIL_MUTLAK": {
         "aliases": ["PARCALI MUTLAK DEGERI", "PARCALI MUTLAK DEĞERİ", "NOTROFIL MUTLAK DEGERI", "NEUTROPHIL ABSOLUTE"],
         "default_unit": "K/mm3",
     },
@@ -279,7 +396,7 @@ LAB_PARAMETER_ALIASES: dict[str, dict[str, Any]] = {
         "aliases": ["PARCALI %", "NOTROFIL %", "NEUTROPHIL %", "NEU%"],
         "default_unit": "%",
     },
-    "Lenfosit Mutlak": {
+    "LENFOSIT_MUTLAK": {
         "aliases": ["LENFOSIT MUTLAK DEGERI", "LENFOSİT MUTLAK DEĞERİ", "LYMPHOCYTE ABSOLUTE"],
         "default_unit": "K/mm3",
     },
@@ -287,7 +404,7 @@ LAB_PARAMETER_ALIASES: dict[str, dict[str, Any]] = {
         "aliases": ["LENFOSIT %", "LENFOSİT %", "LYMPHOCYTE %", "LYM%"],
         "default_unit": "%",
     },
-    "Monosit Mutlak": {
+    "MONOSIT_MUTLAK": {
         "aliases": ["MONOSIT MUTLAK DEGERI", "MONOSİT MUTLAK DEĞERİ", "MONOCYTE ABSOLUTE"],
         "default_unit": "K/mm3",
     },
@@ -295,7 +412,7 @@ LAB_PARAMETER_ALIASES: dict[str, dict[str, Any]] = {
         "aliases": ["MONOSIT %", "MONOSİT %", "MONOCYTE %", "MONO%"],
         "default_unit": "%",
     },
-    "Eozinofil Mutlak": {
+    "EOZINOFIL_MUTLAK": {
         "aliases": ["EOZINOFIL MUTLAK DEGERI", "EOZİNOFİL MUTLAK DEĞERİ", "EOSINOPHIL ABSOLUTE"],
         "default_unit": "K/mm3",
     },
@@ -303,7 +420,7 @@ LAB_PARAMETER_ALIASES: dict[str, dict[str, Any]] = {
         "aliases": ["EOZINOFIL %", "EOZİNOFİL %", "EOSINOPHIL %", "EOS%"],
         "default_unit": "%",
     },
-    "Bazofil Mutlak": {
+    "BAZOFIL_MUTLAK": {
         "aliases": ["BAZOFIL MUTLAK DEGERI", "BAZOFİL MUTLAK DEĞERİ", "BASOPHIL ABSOLUTE"],
         "default_unit": "K/mm3",
     },
@@ -550,12 +667,17 @@ def _forced_demo_reference(parameter_name: str) -> tuple[str, float, float] | No
         "Total Kolesterol": ("mg/dL", 0.0, 200.0),
         "HDL": ("mg/dL", 40.0, 999.0),
         "Trigliserit": ("mg/dL", 0.0, 150.0),
+        "TRIGLISERIT": ("mg/dL", 0.0, 150.0),
         "LDL": ("mg/dL", 0.0, 130.0),
         "Total Bilirubin": ("mg/dL", 0.20, 1.25),
         "Direkt Bilirubin": ("mg/dL", 0.0, 0.30),
         "FOLIK_ASIT": ("ng/mL", 3.89, 26.80),
         "Lökosit": ("K/mm3", 4.50, 11.00),
         "P_LCR": ("%", 19.40, 43.70),
+        "FT3": ("pmol/L", 3.93, 7.70),
+        "FT4": ("pmol/L", 12.0, 22.0),
+        "VITAMIN_B1": ("ug/L", 25.0, 75.0),
+        "SEDIMENTASYON": ("mm/S", 0.0, 15.0),
     }
     return forced.get(parameter_name)
 
