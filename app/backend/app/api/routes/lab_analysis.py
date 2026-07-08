@@ -1,6 +1,8 @@
 """Lab report analysis routes.
 
+
 MVP PDF parser for text-based lab reports.
+
 
 Fixes in this version:
 - Reads full lab rows using value + unit + reference parsing.
@@ -13,7 +15,9 @@ Fixes in this version:
   GFR/HDL: lower-bound style, Total Kolesterol/Trigliserit/LDL: upper-bound style.
 """
 
+
 from __future__ import annotations
+
 
 import io
 import re
@@ -21,22 +25,68 @@ from datetime import date
 from typing import Any
 from uuid import UUID
 
+
 from fastapi import APIRouter, File, HTTPException, UploadFile, status
 
+
 from app.api.dependencies import AnalysisPipelineDep
+from app.domain.enums import Sex, UserRole
+from app.infrastructure.database.models.patient import Patient
+from app.infrastructure.database.models.user import User
+from app.infrastructure.database.session import AsyncSessionFactory
 from app.schemas.lab_analysis import AnalysisPipelineResult, MockLabReportInput
+
+
 
 
 router = APIRouter(prefix="/lab-analysis", tags=["lab-analysis"])
 
+
 _PATIENT_NOT_FOUND = "Patient not found."
 _MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+
 
 DEMO_PATIENT_ID = UUID("3fa85f64-5717-4562-b3fc-2c963f66afa6")
 DEMO_UPLOADED_BY_USER_ID = UUID("3fa85f64-5717-4562-b3fc-2c963f66afa6")
 
+
+async def _ensure_demo_patient_and_user() -> None:
+    """Create demo patient/user in fresh Render databases if missing."""
+    async with AsyncSessionFactory() as session:
+        patient = await session.get(Patient, DEMO_PATIENT_ID)
+
+        if patient is None:
+            patient = Patient(
+                id=DEMO_PATIENT_ID,
+                external_ref="demo-render-patient",
+                sex=Sex.MALE,
+                date_of_birth=date(2004, 1, 1),
+                is_pregnant=False,
+                metadata_json={"source": "render_demo_auto_seed"},
+            )
+            session.add(patient)
+
+        user = await session.get(User, DEMO_UPLOADED_BY_USER_ID)
+
+        if user is None:
+            user = User(
+                id=DEMO_UPLOADED_BY_USER_ID,
+                email="demo-upload@medicore.ai",
+                hashed_password="not-used-demo-upload-user",
+                full_name="Demo Upload User",
+                role=UserRole.DOCTOR,
+                is_active=True,
+                is_superuser=False,
+            )
+            session.add(user)
+
+        await session.commit()
+
+
 # Large but not absurd ceiling for lower-bound-only markers.
 _DEMO_OPEN_UPPER_LIMIT = 999.0
+
+
 
 
 LAB_PARAMETER_ALIASES: dict[str, dict[str, Any]] = {
@@ -68,6 +118,7 @@ LAB_PARAMETER_ALIASES: dict[str, dict[str, Any]] = {
         "default_unit": "mg/dL",
     },
 
+
     # Lipids / decision thresholds
     "Total Kolesterol": {
         "aliases": ["TOTAL KOLESTEROL", "TOTAL CHOLESTEROL", "CHOLESTEROL"],
@@ -89,6 +140,7 @@ LAB_PARAMETER_ALIASES: dict[str, dict[str, Any]] = {
         "aliases": ["NON-HDL-KOLESTEROL", "NON HDL KOLESTEROL", "NON HDL CHOLESTEROL"],
         "default_unit": "mg/dL",
     },
+
 
     # Liver / bilirubin
     "ALP": {
@@ -115,6 +167,7 @@ LAB_PARAMETER_ALIASES: dict[str, dict[str, Any]] = {
         "aliases": ["DIREKT BILIRUBIN", "DIRECT BILIRUBIN", "BILIRUBIN DIRECT"],
         "default_unit": "mg/dL",
     },
+
 
     # Thyroid / vitamins / inflammation
     "FT3": {
@@ -154,6 +207,7 @@ LAB_PARAMETER_ALIASES: dict[str, dict[str, Any]] = {
         "default_unit": "ng/mL",
     },
 
+
     # CBC / hemogram
     "Hemoglobin": {
         "aliases": ["HEMOGLOBIN", "HGB", "HB"],
@@ -187,6 +241,7 @@ LAB_PARAMETER_ALIASES: dict[str, dict[str, Any]] = {
         "aliases": ["LOKOSIT", "LOKOSİT", "WBC", "LEUKOCYTE"],
         "default_unit": "K/mm3",
     },
+
 
     # Absolute differentials
     "Nötrofil Mutlak": {
@@ -256,6 +311,8 @@ LAB_PARAMETER_ALIASES: dict[str, dict[str, Any]] = {
 }
 
 
+
+
 def _raise_pipeline_error(exc: ValueError) -> None:
     message = str(exc)
     if message == _PATIENT_NOT_FOUND:
@@ -263,15 +320,22 @@ def _raise_pipeline_error(exc: ValueError) -> None:
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=message) from None
 
 
+
+
 @router.post("/mock", response_model=AnalysisPipelineResult, status_code=status.HTTP_201_CREATED)
 async def analyze_mock_report(
     payload: MockLabReportInput,
     pipeline: AnalysisPipelineDep,
 ) -> AnalysisPipelineResult:
+    if payload.patient_id == DEMO_PATIENT_ID:
+        await _ensure_demo_patient_and_user()
+
     try:
         return await pipeline.run(payload)
     except ValueError as exc:
         _raise_pipeline_error(exc)
+
+
 
 
 @router.post("/upload", response_model=AnalysisPipelineResult, status_code=status.HTTP_201_CREATED)
@@ -282,18 +346,24 @@ async def analyze_uploaded_pdf_report(
     if not file.filename:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded file must have a filename.")
 
+
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only PDF files are supported for this demo upload flow.")
 
+
     file_bytes = await file.read()
+
 
     if len(file_bytes) == 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded PDF is empty.")
 
+
     if len(file_bytes) > _MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Uploaded PDF is too large. Maximum size is 10 MB.")
 
+
     extracted_text = _extract_text_from_pdf(file_bytes)
+
 
     if not extracted_text.strip():
         raise HTTPException(
@@ -301,10 +371,16 @@ async def analyze_uploaded_pdf_report(
             detail="No selectable text could be extracted from this PDF. Scanned/image PDFs need OCR.",
         )
 
+
     values = _parse_lab_values_from_text(extracted_text)
+
 
     if not values:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No supported lab values could be parsed from this PDF.")
+
+
+    await _ensure_demo_patient_and_user()
+
 
     payload = MockLabReportInput(
         patient_id=DEMO_PATIENT_ID,
@@ -314,10 +390,13 @@ async def analyze_uploaded_pdf_report(
         values=values,
     )
 
+
     try:
         return await pipeline.run(payload)
     except ValueError as exc:
         _raise_pipeline_error(exc)
+
+
 
 
 def _extract_text_from_pdf(file_bytes: bytes) -> str:
@@ -329,11 +408,14 @@ def _extract_text_from_pdf(file_bytes: bytes) -> str:
             detail="PDF parser dependency is missing. Install it with: pip install pypdf python-multipart",
         ) from exc
 
+
     try:
         reader = PdfReader(io.BytesIO(file_bytes))
         return "\n".join(page.extract_text() or "" for page in reader.pages)
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"PDF text extraction failed: {exc}") from exc
+
+
 
 
 def _parse_lab_values_from_text(text: str) -> list[dict[str, Any]]:
@@ -344,12 +426,15 @@ def _parse_lab_values_from_text(text: str) -> list[dict[str, Any]]:
         if line.strip() and not _is_noise_line(line)
     ]
 
+
     parsed_values: list[dict[str, Any]] = []
     seen_parameters: set[str] = set()
+
 
     for raw_parameter_name, config in LAB_PARAMETER_ALIASES.items():
         if raw_parameter_name in seen_parameters:
             continue
+
 
         parsed_value = _find_parameter_value_in_lines(
             raw_parameter_name=raw_parameter_name,
@@ -358,13 +443,18 @@ def _parse_lab_values_from_text(text: str) -> list[dict[str, Any]]:
             lines=lines,
         )
 
+
         if parsed_value is None:
             continue
+
 
         parsed_values.append(parsed_value)
         seen_parameters.add(raw_parameter_name)
 
+
     return parsed_values
+
+
 
 
 def _find_parameter_value_in_lines(
@@ -376,24 +466,31 @@ def _find_parameter_value_in_lines(
 ) -> dict[str, Any] | None:
     sorted_aliases = sorted(aliases, key=len, reverse=True)
 
+
     for line in lines:
         for alias in sorted_aliases:
             if not _line_contains_alias(line, alias):
                 continue
 
+
             parsed = _parse_result_row(line, alias, raw_parameter_name, default_unit)
+
 
             if parsed is None:
                 continue
 
+
             value, unit, reference_min, reference_max = parsed
+
 
             forced_reference = _forced_demo_reference(raw_parameter_name)
             if forced_reference is not None:
                 unit, reference_min, reference_max = forced_reference
 
+
             if not _looks_like_reasonable_value(raw_parameter_name, value):
                 continue
+
 
             return {
                 "raw_parameter_name": raw_parameter_name,
@@ -406,11 +503,15 @@ def _find_parameter_value_in_lines(
                 "measured_at": date.today().isoformat(),
             }
 
+
     return None
+
+
 
 
 def _forced_demo_reference(parameter_name: str) -> tuple[str, float, float] | None:
     """FINAL5_FORCE_REFERENCES: deterministic demo ranges for known report markers.
+
 
     These values come from the PDF report reference intervals / common decision
     limits used by the demo parser, and are applied before the downstream
@@ -432,6 +533,8 @@ def _forced_demo_reference(parameter_name: str) -> tuple[str, float, float] | No
     return forced.get(parameter_name)
 
 
+
+
 def _parse_result_row(
     line: str,
     alias: str,
@@ -440,33 +543,42 @@ def _parse_result_row(
 ) -> tuple[float, str, float | None, float | None] | None:
     alias_match = _find_alias_match(line, alias)
 
+
     if alias_match is None:
         return None
+
 
     after_alias = line[alias_match.end() :].strip()
     value_match = re.search(r"[<>]?\s*[-+]?\d+(?:\.\d+)?", after_alias)
 
+
     if value_match is None:
         return None
 
+
     value_text = value_match.group(0).replace(">", "").replace("<", "").strip()
+
 
     try:
         value = float(value_text)
     except ValueError:
         return None
 
+
     after_value = after_alias[value_match.end() :].strip()
     after_value = re.sub(r"^(?:[:=]|\s)+", "", after_value).strip()
     after_value = re.sub(r"^(?:H|L|HIGH|LOW|Y|D|\*|↑|↓|v|V)\s*", "", after_value, flags=re.IGNORECASE).strip()
+
 
     unit_match = _match_unit(after_value)
     unit = default_unit
     after_unit = after_value
 
+
     if unit_match is not None:
         unit = unit_match.group(0)
         after_unit = after_value[unit_match.end() :].strip()
+
 
     reference_min, reference_max = _extract_reference_from_after_unit(after_unit)
     reference_min, reference_max = _adjust_one_sided_reference(
@@ -474,6 +586,7 @@ def _parse_result_row(
         reference_min=reference_min,
         reference_max=reference_max,
     )
+
 
     # Final hard override for two report-specific markers whose DB/reference
     # resolution can be ambiguous because of duplicate parameter records.
@@ -500,7 +613,10 @@ def _parse_result_row(
         reference_min = 4.50
         reference_max = 11.00
 
+
     return value, unit, reference_min, reference_max
+
+
 
 
 def _match_unit(text: str) -> re.Match[str] | None:
@@ -534,7 +650,10 @@ def _match_unit(text: str) -> re.Match[str] | None:
         r"%",
     ]
 
+
     return re.match("(" + "|".join(unit_patterns) + ")", text, flags=re.IGNORECASE)
+
+
 
 
 def _extract_reference_from_after_unit(text: str) -> tuple[float | None, float | None]:
@@ -543,30 +662,38 @@ def _extract_reference_from_after_unit(text: str) -> tuple[float | None, float |
     # Remove common low/high markers around reference text.
     text = text.replace("↓", " ").replace("↑", " ")
 
+
     numbers: list[float] = []
     comparators: list[str] = []
+
 
     for match in re.finditer(r"([<>]?)\s*[-+]?\d+(?:\.\d+)?", text):
         raw = match.group(0).strip()
         comparator = match.group(1)
         value_text = raw.replace(">", "").replace("<", "").strip()
 
+
         try:
             value = float(value_text)
         except ValueError:
             continue
 
+
         numbers.append(value)
         comparators.append(comparator)
+
 
     if len(numbers) >= 2:
         left = numbers[0]
         right = numbers[1]
 
+
         if left <= right:
             return left, right
 
+
         return None, None
+
 
     if len(numbers) == 1:
         if comparators[0] == ">":
@@ -575,7 +702,10 @@ def _extract_reference_from_after_unit(text: str) -> tuple[float | None, float |
             return None, numbers[0]
         return None, numbers[0]
 
+
     return None, None
+
+
 
 
 def _adjust_one_sided_reference(
@@ -590,19 +720,26 @@ def _adjust_one_sided_reference(
     lower_bound_only = {"GFR", "HDL"}
     upper_bound_only = {"TOTAL KOLESTEROL", "TRIGLISERIT", "LDL"}
 
+
     normalized_name = parameter_name.upper()
+
 
     if normalized_name in lower_bound_only and reference_min is not None and reference_max is None:
         return reference_min, _DEMO_OPEN_UPPER_LIMIT
+
 
     if normalized_name in lower_bound_only and reference_min is None and reference_max is not None:
         # PDF often prints HDL as a single decision threshold "40" without ">".
         return reference_max, _DEMO_OPEN_UPPER_LIMIT
 
+
     if normalized_name in upper_bound_only and reference_min is None and reference_max is not None:
         return 0.0, reference_max
 
+
     return reference_min, reference_max
+
+
 
 
 def _normalize_text(text: str) -> str:
@@ -631,17 +768,23 @@ def _normalize_text(text: str) -> str:
         "\t": " ",
     }
 
+
     for old, new in replacements.items():
         text = text.replace(old, new)
+
 
     text = text.replace(",", ".")
     text = re.sub(r"[ ]{2,}", " ", text)
 
+
     return text
+
+
 
 
 def _is_noise_line(line: str) -> bool:
     upper = line.upper()
+
 
     noise_markers = [
         "KREATININ. IDRAR7890123456789012345",
@@ -680,7 +823,10 @@ def _is_noise_line(line: str) -> bool:
         "WWW.",
     ]
 
+
     return any(marker.upper() in upper for marker in noise_markers)
+
+
 
 
 def _line_contains_alias(line: str, alias: str) -> bool:
@@ -690,6 +836,8 @@ def _line_contains_alias(line: str, alias: str) -> bool:
     return re.search(pattern, line, flags=re.IGNORECASE) is not None
 
 
+
+
 def _find_alias_match(line: str, alias: str) -> re.Match[str] | None:
     alias = _normalize_text(alias)
     escaped_alias = re.escape(alias)
@@ -697,19 +845,26 @@ def _find_alias_match(line: str, alias: str) -> re.Match[str] | None:
     return re.search(pattern, line, flags=re.IGNORECASE)
 
 
+
+
 def _looks_like_reasonable_value(parameter_name: str, value: float) -> bool:
     if value < 0:
         return False
 
+
     upper = parameter_name.upper()
+
 
     if upper in {"KREATININ", "CREATININE"} and value > 50:
         return False
 
+
     if "VITAMIN D" in upper and value > 300:
         return False
 
+
     if upper in {"TSH", "FT3", "FT4"} and value > 500:
         return False
+
 
     return True
