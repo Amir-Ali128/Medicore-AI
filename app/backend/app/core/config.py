@@ -31,7 +31,11 @@ class Settings(BaseSettings):
     debug: bool = False
     api_v1_prefix: str = "/api/v1"
 
-    # --- PostgreSQL ------------------------------------------------------
+    # --- Render / direct database URL -----------------------------------
+    # Render provides DATABASE_URL. Prefer this when present.
+    database_url: str | None = None
+
+    # --- PostgreSQL fallback --------------------------------------------
     postgres_host: str = "localhost"
     postgres_port: int = 5432
     postgres_user: str = "medicore"
@@ -45,26 +49,39 @@ class Settings(BaseSettings):
     db_max_overflow: int = 10
 
     # --- Reference data import ------------------------------------------
-    # Default provenance tag written to imported records (source column).
     csv_import_default_source: str = "reference_full_demographic_FINAL_v11"
 
     # --- Claude extraction (Module I) -----------------------------------
-    # Read from the environment; never hardcode secrets. The extraction
-    # service raises a clear error if the model is not configured.
     anthropic_api_key: str | None = None
     claude_extraction_model: str | None = None
 
     # --- Claude clinical hypothesis copilot (Module J) ------------------
-    # Read from the environment; never hardcode secrets. The hypothesis
-    # service raises a clear error if the model is not configured.
     claude_hypothesis_model: str | None = None
+
+    @staticmethod
+    def _with_driver(url: str, driver: str) -> str:
+        """Convert Render/Postgres URL into SQLAlchemy driver URL."""
+        if url.startswith(f"postgresql+{driver}://"):
+            return url
+
+        if url.startswith("postgresql://"):
+            return url.replace("postgresql://", f"postgresql+{driver}://", 1)
+
+        if url.startswith("postgres://"):
+            return url.replace("postgres://", f"postgresql+{driver}://", 1)
+
+        return url
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def async_database_url(self) -> str:
-        """SQLAlchemy async URL (asyncpg) used by the FastAPI application."""
+        """SQLAlchemy async URL used by the FastAPI application."""
+        if self.database_url:
+            return self._with_driver(self.database_url, "asyncpg")
+
         user = quote_plus(self.postgres_user)
         password = quote_plus(self.postgres_password)
+
         return (
             f"postgresql+asyncpg://{user}:{password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
@@ -73,9 +90,13 @@ class Settings(BaseSettings):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def sync_database_url(self) -> str:
-        """SQLAlchemy sync URL (psycopg) used by Alembic migrations."""
+        """SQLAlchemy sync URL used by Alembic migrations."""
+        if self.database_url:
+            return self._with_driver(self.database_url, "psycopg")
+
         user = quote_plus(self.postgres_user)
         password = quote_plus(self.postgres_password)
+
         return (
             f"postgresql+psycopg://{user}:{password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
