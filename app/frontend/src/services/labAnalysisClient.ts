@@ -25,6 +25,28 @@ export type PatientMetadata = {
   birth_date: string | null;
 };
 
+export type LabReportMetadata = {
+  patient_display_name?: string | null;
+  patient_age?: number | null;
+  patient_sex?: string | null;
+  patient_birth_date?: string | null;
+  patient_metadata_source?: string | null;
+  [key: string]: unknown;
+};
+
+export type LabReportSummary = {
+  id: string;
+  patient_id: string;
+  uploaded_by_user_id: string | null;
+  source_type: string;
+  file_name: string | null;
+  report_date: string | null;
+  status: string;
+  metadata_json: LabReportMetadata;
+  created_at: string;
+  updated_at: string;
+};
+
 export type LabAnalysisResult = {
   lab_result_id: string;
   raw_parameter_name: string;
@@ -89,6 +111,15 @@ async function readErrorMessage(response: Response): Promise<string> {
   return response.text();
 }
 
+function hasPatientMetadata(patient: PatientMetadata | null | undefined): boolean {
+  return Boolean(
+    patient?.display_name ||
+      patient?.age !== null && patient?.age !== undefined ||
+      patient?.sex ||
+      patient?.birth_date,
+  );
+}
+
 function rememberPatientMetadata(response: LabAnalysisResponse): void {
   const patient = response.patient;
 
@@ -124,6 +155,41 @@ export function rememberLatestAnalysis(response: LabAnalysisResponse): void {
   localStorage.setItem(LAST_ANALYSIS_RUN_ID_KEY, response.analysis_run_id);
   localStorage.setItem(LAST_LAB_REPORT_ID_KEY, response.lab_report_id);
   rememberPatientMetadata(response);
+}
+
+export async function saveLabReportPatientMetadata(
+  labReportId: string,
+  patient: PatientMetadata | null | undefined,
+): Promise<LabReportSummary | null> {
+  if (!hasPatientMetadata(patient)) {
+    return null;
+  }
+
+  const response = await fetch(
+    `${API_BASE_URL}/lab-reports/${labReportId}/patient-metadata`,
+    {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        ...authHeaders(),
+      },
+      body: JSON.stringify({
+        display_name: patient?.display_name ?? null,
+        age: patient?.age ?? null,
+        sex: patient?.sex ?? null,
+        birth_date: patient?.birth_date ?? null,
+      }),
+    },
+  );
+
+  if (!response.ok) {
+    const errorText = await readErrorMessage(response);
+    throw new Error(
+      `Patient metadata save failed: ${response.status} ${errorText}`,
+    );
+  }
+
+  return response.json();
 }
 
 export async function runBackendMockAnalysis(): Promise<LabAnalysisResponse> {
@@ -184,6 +250,8 @@ export async function uploadLabReportPdf(
   }
 
   const result = (await response.json()) as LabAnalysisResponse;
+
+  await saveLabReportPatientMetadata(result.lab_report_id, result.patient);
   rememberLatestAnalysis(result);
 
   return result;
