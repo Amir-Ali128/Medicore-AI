@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.api.routes import (
+    admin_seed,
     analysis_runs,
     auth,
     clinical_copilot,
@@ -16,6 +17,7 @@ from app.api.routes import (
 
 api_router = APIRouter()
 
+api_router.include_router(admin_seed.router)
 api_router.include_router(auth.router)
 api_router.include_router(lab_analysis.router)
 api_router.include_router(lab_reports.router)
