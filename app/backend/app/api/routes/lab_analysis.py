@@ -704,6 +704,11 @@ def _clean_patient_name_candidate(value: str) -> str | None:
     cleaned = _fold_patient_text(value)
     cleaned = cleaned.strip(" .,:;-/\t")
 
+    # PDF label residue cleanup:
+    # Some reports leave the final letter of "Soyadi/Soyadı" at the beginning
+    # of the extracted name, e.g. "i EMIR CAN ALI" or "I AFSIN ALI".
+    cleaned = re.sub(r"^(?:i|I)\s+(?=[A-Z])", "", cleaned).strip(" .,:;-/\t")
+
     if not cleaned or cleaned == "-":
         return None
 
