@@ -27,6 +27,7 @@ from uuid import UUID
 
 
 from fastapi import APIRouter, File, HTTPException, UploadFile, status
+from sqlalchemy import text as sql_text
 
 
 from app.api.dependencies import AnalysisPipelineDep
@@ -79,6 +80,32 @@ async def _ensure_demo_patient_and_user() -> None:
                 is_superuser=False,
             )
             session.add(user)
+
+        # Render bootstrap guard:
+        # Fresh Render DBs can contain imported clinical parameters that are still
+        # inactive/L0. The Phase 1 analysis pipeline rejects those before it can
+        # classify values, causing every PDF result to become NEEDS_REVIEW.
+        await session.execute(
+            sql_text(
+                """
+                UPDATE clinical_parameters
+                SET
+                    active_phase1 = true,
+                    analysis_level = (
+                        SELECT enumlabel::analysis_level
+                        FROM pg_enum
+                        JOIN pg_type ON pg_enum.enumtypid = pg_type.oid
+                        WHERE pg_type.typname = 'analysis_level'
+                          AND enumlabel <> 'L0'
+                        ORDER BY enumsortorder
+                        LIMIT 1
+                    ),
+                    updated_at = NOW()
+                WHERE active_phase1 IS NOT TRUE
+                   OR analysis_level = 'L0'::analysis_level
+                """
+            )
+        )
 
         await session.commit()
 
