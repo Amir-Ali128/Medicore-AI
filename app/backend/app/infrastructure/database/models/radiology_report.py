@@ -44,6 +44,9 @@ class RadiologyReport(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     measurements_json: Mapped[list[dict[str, Any]]] = mapped_column(
         JSONB, default=list, server_default="[]", nullable=False
     )
+    dexa_metrics_json: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, default=list, server_default="[]", nullable=False
+    )
     critical_findings_json: Mapped[list[str]] = mapped_column(
         JSONB, default=list, server_default="[]", nullable=False
     )
