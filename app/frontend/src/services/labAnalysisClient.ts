@@ -26,6 +26,8 @@ export type PatientMetadata = {
   age: number | null;
   sex: string | null;
   birth_date: string | null;
+  height_cm?: number | string | null;
+  weight_kg?: number | string | null;
 };
 
 export type LabReportMetadata = {
@@ -36,6 +38,7 @@ export type LabReportMetadata = {
   patient_metadata_source?: string | null;
   chief_complaint?: string | null;
   clinical_history?: string | null;
+  clinical_context?: ClinicalIntakeInput | null;
   [key: string]: unknown;
 };
 
@@ -97,10 +100,73 @@ export type ManualLabValueInput = {
   measured_at: string | null;
 };
 
+export type ClinicalAttachmentCategory =
+  | 'laboratory'
+  | 'xray'
+  | 'ultrasound'
+  | 'ct'
+  | 'mri'
+  | 'pet_ct'
+  | 'pathology'
+  | 'dicom'
+  | 'other';
+
+export type ClinicalAttachmentInput = {
+  file_name: string;
+  category: ClinicalAttachmentCategory;
+  content_type: string | null;
+  size_bytes: number;
+  last_modified_ms: number | null;
+};
+
+export type ClinicalIntakeInput = {
+  patient_information: {
+    full_name: string | null;
+    age: number | null;
+    sex: string | null;
+    height_cm: number | null;
+    weight_kg: number | null;
+  };
+  presenting_complaint: {
+    reason_for_visit: string | null;
+    chief_complaint: string | null;
+    complaint_duration: string | null;
+    severity_score: number | null;
+    associated_symptoms: string | null;
+  };
+  clinical_history_details: {
+    history_of_present_illness: string | null;
+    current_medical_conditions: string | null;
+    past_medical_history: string | null;
+    family_history: string | null;
+    medications: string | null;
+    allergies: string | null;
+    tobacco_alcohol: string | null;
+    past_surgeries: string | null;
+  };
+  physical_exam: {
+    blood_pressure_systolic: number | null;
+    blood_pressure_diastolic: number | null;
+    pulse_bpm: number | null;
+    temperature_c: number | null;
+    respiratory_rate: number | null;
+    oxygen_saturation_percent: number | null;
+    examination_findings: string | null;
+  };
+  imaging_results: {
+    xray: string | null;
+    ultrasound: string | null;
+    ct: string | null;
+    mri: string | null;
+    pet_ct: string | null;
+    pathology: string | null;
+  };
+  attachments: ClinicalAttachmentInput[];
+};
+
 export type ManualLabReportInput = {
   report_date: string;
-  chief_complaint: string | null;
-  clinical_history: string | null;
+  clinical_context: ClinicalIntakeInput;
   values: ManualLabValueInput[];
 };
 
@@ -217,6 +283,36 @@ export async function saveLabReportPatientMetadata(
   return response.json();
 }
 
+export async function saveLabReportClinicalContext(
+  labReportId: string,
+  clinicalContext: ClinicalIntakeInput | null | undefined,
+): Promise<LabReportSummary | null> {
+  if (!clinicalContext) {
+    return null;
+  }
+
+  const response = await fetch(
+    `${API_BASE_URL}/lab-reports/${labReportId}/clinical-context`,
+    {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        ...authHeaders(),
+      },
+      body: JSON.stringify(clinicalContext),
+    },
+  );
+
+  if (!response.ok) {
+    const errorText = await readErrorMessage(response);
+    throw new Error(
+      `Clinical context save failed: ${response.status} ${errorText}`,
+    );
+  }
+
+  return response.json();
+}
+
 async function submitStructuredLabReport(
   payload: Record<string, unknown>,
   errorPrefix: string,
@@ -283,14 +379,18 @@ export async function submitManualLabResults(
     };
   });
 
+  const context = input.clinical_context;
+
   return submitStructuredLabReport(
     {
       patient_id: DEMO_PATIENT_ID,
       uploaded_by_user_id: DEMO_UPLOADED_BY_USER_ID,
       file_name: `manual-entry-${input.report_date}.json`,
       report_date: input.report_date,
-      chief_complaint: input.chief_complaint,
-      clinical_history: input.clinical_history,
+      ...context,
+      chief_complaint: context.presenting_complaint.chief_complaint,
+      clinical_history:
+        context.clinical_history_details.history_of_present_illness,
       values,
     },
     'Manual result analysis failed',
@@ -299,6 +399,7 @@ export async function submitManualLabResults(
 
 export async function uploadLabReportPdf(
   file: File,
+  clinicalContext?: ClinicalIntakeInput,
 ): Promise<LabAnalysisResponse> {
   const formData = new FormData();
   formData.append('file', file);
@@ -318,7 +419,10 @@ export async function uploadLabReportPdf(
 
   const result = (await response.json()) as LabAnalysisResponse;
 
-  await saveLabReportPatientMetadata(result.lab_report_id, result.patient);
+  await Promise.all([
+    saveLabReportPatientMetadata(result.lab_report_id, result.patient),
+    saveLabReportClinicalContext(result.lab_report_id, clinicalContext),
+  ]);
   rememberLatestAnalysis(result);
 
   return result;
