@@ -1,13 +1,11 @@
 import { getAccessToken } from './authClient';
 import type { ClinicalHypothesis } from './clinicalHypothesesClient';
+import type { ClinicalIntakeInput } from './labAnalysisClient';
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000';
 
-export type ClaudeClinicalContext = {
-  chief_complaint: string | null;
-  clinical_history: string | null;
-};
+export type ClaudeClinicalContext = ClinicalIntakeInput;
 
 export type ClaudeSuggestedTest = {
   name: string;
@@ -68,6 +66,18 @@ async function readErrorMessage(response: Response): Promise<string> {
   return response.text();
 }
 
+function compactClinicalContext(
+  clinicalContext: ClaudeClinicalContext | undefined,
+): string | null {
+  if (!clinicalContext) return null;
+
+  try {
+    return JSON.stringify(clinicalContext);
+  } catch {
+    return null;
+  }
+}
+
 export async function evaluateClaudeAbnormalResults(
   analysisRunId: string,
   maxHypotheses: number,
@@ -87,8 +97,10 @@ export async function evaluateClaudeAbnormalResults(
         metadata_json: {
           source: 'lab_analysis_abnormal_evaluation',
           normal_results_excluded: true,
-          chief_complaint: clinicalContext?.chief_complaint ?? null,
-          clinical_history: clinicalContext?.clinical_history ?? null,
+          chief_complaint:
+            clinicalContext?.presenting_complaint.chief_complaint ?? null,
+          clinical_history: compactClinicalContext(clinicalContext),
+          clinical_context: clinicalContext ?? null,
           requested_output: {
             possible_conditions: true,
             recommended_laboratory_tests: true,
