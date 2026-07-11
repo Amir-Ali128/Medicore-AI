@@ -32,6 +32,39 @@ class RadiologyReportParserTests(unittest.TestCase):
         self.assertEqual(result["modality"], "XRAY")
         self.assertNotIn("Pnömotoraks", result["critical_findings"])
 
+    def test_extracts_labelled_dexa_metrics_and_score_bands(self) -> None:
+        report = """
+        DEXA KEMİK MİNERAL YOĞUNLUĞU
+        L1-L4 BMD: 0.812 g/cm² T-score: -2.6 Z-score: -1.4
+        Femur boynu BMD: 0.721 g/cm2 T skoru: -1.8 Z skoru: -0.9
+        Sonuç: Lomber bölgede düşük kemik mineral yoğunluğu.
+        """
+        result = analyze_radiology_report(report)
+
+        self.assertEqual(result["modality"], "DEXA")
+        self.assertEqual(result["body_part"], "BONE_DENSITY")
+        self.assertEqual(len(result["dexa_metrics"]), 2)
+        lumbar = result["dexa_metrics"][0]
+        self.assertEqual(lumbar["site"], "LUMBAR_SPINE_L1_L4")
+        self.assertEqual(lumbar["bmd"], 0.812)
+        self.assertEqual(lumbar["t_score"], -2.6)
+        self.assertEqual(lumbar["z_score"], -1.4)
+        self.assertEqual(lumbar["t_score_band"], "osteoporosis_range")
+        self.assertEqual(lumbar["z_score_band"], "within_expected_for_age")
+
+    def test_extracts_unlabelled_dexa_table_scores(self) -> None:
+        report = """
+        DXA Bone Density
+        AP Spine L1-L4 1.005 g/cm2 -0.8 -0.2
+        Femoral Neck 0.650 g/cm2 -2.7 -2.1
+        """
+        result = analyze_radiology_report(report)
+
+        self.assertEqual(result["modality"], "DEXA")
+        self.assertEqual(result["dexa_metrics"][0]["t_score_band"], "normal_range")
+        self.assertEqual(result["dexa_metrics"][1]["t_score_band"], "osteoporosis_range")
+        self.assertEqual(result["dexa_metrics"][1]["z_score_band"], "below_expected_for_age")
+
     def test_short_text_is_rejected(self) -> None:
         with self.assertRaises(ValueError):
             analyze_radiology_report("MR")

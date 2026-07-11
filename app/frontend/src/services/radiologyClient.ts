@@ -20,6 +20,18 @@ export type RadiologyMeasurement = {
   context: string;
 };
 
+export type DexaMetric = {
+  site: string;
+  bmd: number | null;
+  bmd_unit: string | null;
+  t_score: number | null;
+  z_score: number | null;
+  t_score_band: string | null;
+  z_score_band: string | null;
+  report_classification: string | null;
+  context: string;
+};
+
 export type RadiologyReport = {
   id: string;
   patient_id: string;
@@ -32,6 +44,7 @@ export type RadiologyReport = {
   original_text: string;
   findings: RadiologyFinding[];
   measurements: RadiologyMeasurement[];
+  dexa_metrics: DexaMetric[];
   critical_findings: string[];
   impression: string | null;
   summary: string;
@@ -72,6 +85,7 @@ async function parseReportResponse(response: Response): Promise<RadiologyReport>
     throw new Error(`Radyoloji analizi başarısız: ${response.status} ${message}`);
   }
   const report = (await response.json()) as RadiologyReport;
+  report.dexa_metrics ??= [];
   localStorage.setItem(LAST_RADIOLOGY_REPORT_ID_KEY, report.id);
   return report;
 }
@@ -130,5 +144,6 @@ export async function listPatientRadiologyReports(
     const message = await readErrorMessage(response);
     throw new Error(`Radyoloji geçmişi yüklenemedi: ${response.status} ${message}`);
   }
-  return response.json();
+  const reports = (await response.json()) as RadiologyReport[];
+  return reports.map((report) => ({ ...report, dexa_metrics: report.dexa_metrics ?? [] }));
 }

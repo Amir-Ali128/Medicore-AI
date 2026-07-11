@@ -1,4 +1,4 @@
-"""Pydantic schemas for Phase 2 radiology report text analysis."""
+"""Pydantic schemas for Phase 2 radiology and DXA report text analysis."""
 
 from __future__ import annotations
 
@@ -26,6 +26,20 @@ class RadiologyMeasurement(BaseModel):
 
     value: str
     unit: str
+    context: str
+
+
+class DexaMetric(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    site: str
+    bmd: float | None = None
+    bmd_unit: str | None = None
+    t_score: float | None = None
+    z_score: float | None = None
+    t_score_band: str | None = None
+    z_score_band: str | None = None
+    report_classification: str | None = None
     context: str
 
 
@@ -69,6 +83,10 @@ class RadiologyReportResponse(BaseModel):
     measurements: list[RadiologyMeasurement] = Field(
         default_factory=list,
         validation_alias=AliasChoices("measurements", "measurements_json"),
+    )
+    dexa_metrics: list[DexaMetric] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("dexa_metrics", "dexa_metrics_json"),
     )
     critical_findings: list[str] = Field(
         default_factory=list,
