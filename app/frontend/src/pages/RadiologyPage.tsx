@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 
+import DexaMetricsPanel from '../components/clinical/DexaMetricsPanel';
 import SectionCard from '../components/ui/SectionCard';
 import {
   createManualRadiologyReport,
@@ -18,10 +19,12 @@ const MODALITIES = [
   ['CT', 'BT / CT'],
   ['MRI', 'MR / MRI'],
   ['PET_CT', 'PET-BT'],
+  ['DEXA', 'DEXA / DXA Kemik Yoğunluğu'],
 ] as const;
 
 const BODY_PARTS = [
   ['OTHER', 'Otomatik belirle'],
+  ['BONE_DENSITY', 'Kemik yoğunluğu / Çoklu bölge'],
   ['BRAIN', 'Beyin / Kraniyal'],
   ['CHEST', 'Toraks / Akciğer'],
   ['ABDOMEN', 'Abdomen'],
@@ -69,6 +72,16 @@ function ReportResult({ report }: { report: RadiologyReport }) {
     [report],
   );
 
+  const summaryCards = [
+    ['Modalite', report.modality],
+    ['Bölge', report.body_part],
+    ['Bulgu cümlesi', String(report.findings.length)],
+    ['Ölçüm', String(report.measurements.length)],
+    ...(report.dexa_metrics.length > 0
+      ? [['DEXA satırı', String(report.dexa_metrics.length)]]
+      : []),
+  ];
+
   return (
     <div className="space-y-5">
       {report.critical_findings.length > 0 ? (
@@ -88,13 +101,8 @@ function ReportResult({ report }: { report: RadiologyReport }) {
         </div>
       )}
 
-      <div className="grid gap-4 md:grid-cols-4">
-        {[
-          ['Modalite', report.modality],
-          ['Bölge', report.body_part],
-          ['Bulgu cümlesi', String(report.findings.length)],
-          ['Ölçüm', String(report.measurements.length)],
-        ].map(([label, value]) => (
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+        {summaryCards.map(([label, value]) => (
           <div key={label} className="rounded-xl border border-slate-200 bg-white p-4">
             <p className="text-xs font-semibold uppercase text-slate-500">{label}</p>
             <p className="mt-2 text-lg font-semibold text-slate-950">{value}</p>
@@ -109,11 +117,15 @@ function ReportResult({ report }: { report: RadiologyReport }) {
         <p className="mt-3 text-sm leading-7 text-slate-700">{report.summary}</p>
         {report.impression ? (
           <div className="mt-4 rounded-lg border border-violet-200 bg-white p-4">
-            <p className="text-xs font-semibold uppercase text-slate-500">Rapor izlenimi / sonuç</p>
+            <p className="text-xs font-semibold uppercase text-slate-500">
+              Rapor izlenimi / sonuç
+            </p>
             <p className="mt-2 text-sm leading-6 text-slate-800">{report.impression}</p>
           </div>
         ) : null}
       </div>
+
+      <DexaMetricsPanel metrics={report.dexa_metrics} />
 
       {report.measurements.length > 0 ? (
         <section>
@@ -127,7 +139,9 @@ function ReportResult({ report }: { report: RadiologyReport }) {
                 <p className="font-semibold text-cyan-950">
                   {measurement.value} {measurement.unit}
                 </p>
-                <p className="mt-2 text-xs leading-5 text-slate-600">{measurement.context}</p>
+                <p className="mt-2 text-xs leading-5 text-slate-600">
+                  {measurement.context}
+                </p>
               </div>
             ))}
           </div>
@@ -206,6 +220,7 @@ export default function RadiologyPage() {
     event.preventDefault();
     setError('');
     setIsSubmitting(true);
+
     try {
       const metadata = {
         reportDate: reportDate || null,
@@ -243,23 +258,23 @@ export default function RadiologyPage() {
     <div className="space-y-6">
       <header>
         <p className="text-sm font-semibold uppercase tracking-wide text-cyan-700">
-          Faz 2 · Radyoloji
+          Faz 2 · Radyoloji ve DEXA
         </p>
         <h1 className="mt-2 text-3xl font-semibold text-slate-950">
           Radyoloji rapor analizi
         </h1>
         <p className="mt-3 max-w-4xl text-sm leading-6 text-slate-500">
-          Metin tabanlı radyoloji PDF&apos;lerini veya rapor metnini aynı MediCore hasta kaydına ekle. Sistem modaliteyi, bölgeyi, ölçümleri ve kritik terimleri yapılandırır.
+          Metin tabanlı radyoloji veya DEXA PDF&apos;lerini ve rapor metnini aynı MediCore hasta kaydına ekle. Sistem modaliteyi, bölgeyi, ölçümleri, kritik terimleri ve DEXA skorlarını yapılandırır.
         </p>
         <p className="mt-3 inline-flex rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900">
-          Bu modül görüntünün kendisini yorumlamaz ve otomatik tanı üretmez. Çıktılar orijinal raporla hekim tarafından doğrulanmalıdır.
+          Bu modül görüntünün kendisini yorumlamaz ve otomatik tanı üretmez. DEXA skor bantları dahil tüm çıktılar orijinal raporla hekim tarafından doğrulanmalıdır.
         </p>
       </header>
 
       <form onSubmit={submit} className="space-y-5">
         <SectionCard
           title="Rapor kaynağı"
-          description="PDF yükle veya radyoloji raporunun metnini yapıştır. Taranmış PDF için OCR sonraki sürümde eklenecek."
+          description="PDF yükle veya radyoloji/DEXA raporunun metnini yapıştır. Taranmış PDF için OCR sonraki sürümde eklenecek."
         >
           <div className="flex flex-wrap gap-2">
             {([
@@ -291,11 +306,18 @@ export default function RadiologyPage() {
                 className={INPUT_CLASS}
               />
             </label>
+
             <label className="text-sm font-medium text-slate-700">
               Modalite
               <select
                 value={modality}
-                onChange={(event) => setModality(event.target.value)}
+                onChange={(event) => {
+                  const nextModality = event.target.value;
+                  setModality(nextModality);
+                  if (nextModality === 'DEXA' && bodyPart === 'OTHER') {
+                    setBodyPart('BONE_DENSITY');
+                  }
+                }}
                 className={INPUT_CLASS}
               >
                 {MODALITIES.map(([value, label]) => (
@@ -303,6 +325,7 @@ export default function RadiologyPage() {
                 ))}
               </select>
             </label>
+
             <label className="text-sm font-medium text-slate-700">
               Vücut bölgesi
               <select
@@ -319,7 +342,7 @@ export default function RadiologyPage() {
 
           {mode === 'manual' ? (
             <label className="mt-5 block text-sm font-medium text-slate-700">
-              Radyoloji raporu
+              Radyoloji / DEXA raporu
               <textarea
                 rows={14}
                 minLength={10}
@@ -327,7 +350,7 @@ export default function RadiologyPage() {
                 required
                 value={reportText}
                 onChange={(event) => setReportText(event.target.value)}
-                placeholder="Bulgular ve sonuç/izlenim bölümlerini buraya yapıştır..."
+                placeholder="Bulgular, sonuç/izlenim veya DEXA BMD, T-score ve Z-score satırlarını buraya yapıştır..."
                 className={`${INPUT_CLASS} resize-y leading-6`}
               />
               <span className="mt-1 block text-right text-xs text-slate-400">
@@ -336,7 +359,7 @@ export default function RadiologyPage() {
             </label>
           ) : (
             <label className="mt-5 block rounded-xl border border-dashed border-cyan-300 bg-cyan-50/50 p-5 text-sm font-medium text-slate-700">
-              Metin tabanlı radyoloji PDF&apos;si
+              Metin tabanlı radyoloji / DEXA PDF&apos;si
               <input
                 type="file"
                 accept="application/pdf,.pdf"
@@ -345,7 +368,9 @@ export default function RadiologyPage() {
                 className="mt-3 block w-full text-sm"
               />
               {selectedFile ? (
-                <span className="mt-2 block text-xs text-cyan-800">{selectedFile.name}</span>
+                <span className="mt-2 block text-xs text-cyan-800">
+                  {selectedFile.name}
+                </span>
               ) : null}
             </label>
           )}
@@ -376,7 +401,7 @@ export default function RadiologyPage() {
       ) : null}
 
       <SectionCard
-        title="Radyoloji geçmişi"
+        title="Radyoloji ve DEXA geçmişi"
         description="Aynı demo hasta kaydına eklenen Faz 2 raporları."
         action={
           <button
@@ -391,7 +416,7 @@ export default function RadiologyPage() {
         {isHistoryLoading ? (
           <p className="text-sm text-slate-500">Raporlar yükleniyor…</p>
         ) : history.length === 0 ? (
-          <p className="text-sm text-slate-500">Henüz kaydedilmiş radyoloji raporu yok.</p>
+          <p className="text-sm text-slate-500">Henüz kaydedilmiş radyoloji veya DEXA raporu yok.</p>
         ) : (
           <div className="space-y-3">
             {history.map((report) => (
@@ -409,6 +434,11 @@ export default function RadiologyPage() {
                     <p className="mt-1 text-sm text-slate-500">
                       {formatDate(report.report_date)} · {report.file_name ?? 'Manuel rapor metni'}
                     </p>
+                    {report.dexa_metrics.length > 0 ? (
+                      <p className="mt-1 text-xs font-medium text-indigo-700">
+                        {report.dexa_metrics.length} DEXA ölçüm satırı çıkarıldı
+                      </p>
+                    ) : null}
                   </div>
                   <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
                     report.critical_findings.length > 0
