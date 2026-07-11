@@ -1,4 +1,9 @@
-"""Lab report read routes (summaries only; raw_payload is not exposed)."""
+"""Lab report read and clinical-context update routes.
+
+Raw lab payloads are not exposed. Structured patient and clinical context may be
+stored in metadata_json so PDF and manually entered reports share the same
+physician-review context.
+"""
 
 from __future__ import annotations
 
@@ -6,10 +11,18 @@ import uuid
 from datetime import date, datetime
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel, ConfigDict
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.dependencies import LabReportRepositoryDep, SessionDep
+from app.schemas.lab_analysis import (
+    ClinicalAttachmentInput,
+    ClinicalHistoryInput,
+    ImagingResultsInput,
+    PatientInformationInput,
+    PhysicalExamInput,
+    PresentingComplaintInput,
+)
 
 router = APIRouter(tags=["lab-reports"])
 
@@ -38,6 +51,23 @@ class LabReportPatientMetadataUpdate(BaseModel):
     birth_date: date | None = None
 
 
+class LabReportClinicalContextUpdate(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    patient_information: PatientInformationInput = Field(
+        default_factory=PatientInformationInput
+    )
+    presenting_complaint: PresentingComplaintInput = Field(
+        default_factory=PresentingComplaintInput
+    )
+    clinical_history_details: ClinicalHistoryInput = Field(
+        default_factory=ClinicalHistoryInput
+    )
+    physical_exam: PhysicalExamInput = Field(default_factory=PhysicalExamInput)
+    imaging_results: ImagingResultsInput = Field(default_factory=ImagingResultsInput)
+    attachments: list[ClinicalAttachmentInput] = Field(default_factory=list)
+
+
 @router.get("/lab-reports/{lab_report_id}", response_model=LabReportSummary)
 async def get_lab_report(
     lab_report_id: uuid.UUID,
@@ -45,9 +75,7 @@ async def get_lab_report(
 ) -> LabReportSummary:
     report = await repository.get_by_id(lab_report_id)
     if report is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Lab report not found."
-        )
+        raise HTTPException(status_code=404, detail="Lab report not found.")
     return report
 
 
@@ -64,18 +92,16 @@ async def update_lab_report_patient_metadata(
     """Persist display-only patient metadata extracted from an uploaded PDF."""
     report = await repository.get_by_id(lab_report_id)
     if report is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Lab report not found."
-        )
+        raise HTTPException(status_code=404, detail="Lab report not found.")
 
     metadata = dict(report.metadata_json or {})
     updates: dict[str, Any] = {
         "patient_display_name": payload.display_name,
         "patient_age": payload.age,
         "patient_sex": payload.sex,
-        "patient_birth_date": payload.birth_date.isoformat()
-        if payload.birth_date is not None
-        else None,
+        "patient_birth_date": (
+            payload.birth_date.isoformat() if payload.birth_date is not None else None
+        ),
         "patient_metadata_source": "pdf_upload",
     }
 
@@ -86,7 +112,49 @@ async def update_lab_report_patient_metadata(
     report.metadata_json = metadata
     await session.commit()
     await session.refresh(report)
+    return report
 
+
+@router.patch(
+    "/lab-reports/{lab_report_id}/clinical-context",
+    response_model=LabReportSummary,
+)
+async def update_lab_report_clinical_context(
+    lab_report_id: uuid.UUID,
+    payload: LabReportClinicalContextUpdate,
+    repository: LabReportRepositoryDep,
+    session: SessionDep,
+) -> LabReportSummary:
+    """Attach structured intake, examination, imaging, and file metadata."""
+    report = await repository.get_by_id(lab_report_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="Lab report not found.")
+
+    context = payload.model_dump(mode="json")
+    metadata = dict(report.metadata_json or {})
+    metadata["clinical_context"] = context
+    metadata["clinical_context_source"] = "analysis_workspace"
+
+    patient = context.get("patient_information") or {}
+    if patient.get("full_name"):
+        metadata["patient_display_name"] = patient["full_name"]
+    if patient.get("age") is not None:
+        metadata["patient_age"] = patient["age"]
+    if patient.get("sex"):
+        metadata["patient_sex"] = patient["sex"]
+    if patient.get("height_cm") is not None:
+        metadata["patient_height_cm"] = patient["height_cm"]
+    if patient.get("weight_kg") is not None:
+        metadata["patient_weight_kg"] = patient["weight_kg"]
+
+    complaint = context.get("presenting_complaint") or {}
+    history = context.get("clinical_history_details") or {}
+    metadata["chief_complaint"] = complaint.get("chief_complaint")
+    metadata["clinical_history"] = history.get("history_of_present_illness")
+
+    report.metadata_json = metadata
+    await session.commit()
+    await session.refresh(report)
     return report
 
 
