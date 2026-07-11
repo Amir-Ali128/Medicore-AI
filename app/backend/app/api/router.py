@@ -12,6 +12,7 @@ from app.api.routes import (
     lab_reports,
     lab_results,
     patient_timeline,
+    radiology_reports,
 )
 
 api_router = APIRouter()
@@ -27,3 +28,4 @@ api_router.include_router(extraction.router)
 api_router.include_router(clinical_copilot.router)
 api_router.include_router(extraction_review.router)
 api_router.include_router(patient_timeline.router)
+api_router.include_router(radiology_reports.router)
