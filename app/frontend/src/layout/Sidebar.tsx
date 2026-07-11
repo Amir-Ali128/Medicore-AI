@@ -4,6 +4,7 @@ const navigationItems = [
   { label: 'Dashboard', to: '/' },
   { label: 'Patient Detail', to: '/patients/demo' },
   { label: 'Lab Analysis', to: '/analysis/mock' },
+  { label: 'Radyoloji · Faz 2', to: '/radiology' },
   { label: 'Extraction Review', to: '/extraction-review' },
   { label: 'Results', to: '/analysis/results' },
   { label: 'Clinical Review Prompts', to: '/clinical-hypotheses' },
