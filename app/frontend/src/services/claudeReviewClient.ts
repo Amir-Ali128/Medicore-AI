@@ -9,15 +9,33 @@ export type ClaudeClinicalContext = {
   clinical_history: string | null;
 };
 
+export type ClaudeSuggestedTest = {
+  name: string;
+  rationale: string | null;
+  priority: 'routine' | 'soon' | 'urgent' | null;
+};
+
+export type ClaudeEvaluationMetadata = Record<string, unknown> & {
+  possible_conditions?: string[];
+  recommended_laboratory_tests?: ClaudeSuggestedTest[];
+  recommended_imaging_tests?: ClaudeSuggestedTest[];
+  limitations?: string[];
+  requires_physician_review?: boolean;
+};
+
+export type ClaudeEvaluationHypothesis = ClinicalHypothesis & {
+  metadata_json: ClaudeEvaluationMetadata;
+};
+
 export type ClaudeReviewGenerationResult = {
   analysis_run_id: string;
   lab_report_id: string | null;
   patient_id: string | null;
-  created_hypotheses: ClinicalHypothesis[];
+  created_hypotheses: ClaudeEvaluationHypothesis[];
   drafts_count: number;
   created_count: number;
   warnings: string[];
-  hypotheses?: ClinicalHypothesis[];
+  hypotheses?: ClaudeEvaluationHypothesis[];
   generated_count?: number;
 };
 
@@ -50,7 +68,7 @@ async function readErrorMessage(response: Response): Promise<string> {
   return response.text();
 }
 
-export async function generateClaudeAbnormalReview(
+export async function evaluateClaudeAbnormalResults(
   analysisRunId: string,
   maxHypotheses: number,
   clinicalContext?: ClaudeClinicalContext,
@@ -67,10 +85,15 @@ export async function generateClaudeAbnormalReview(
         min_confidence: null,
         language: 'tr',
         metadata_json: {
-          source: 'lab_analysis_abnormal_review',
+          source: 'lab_analysis_abnormal_evaluation',
           normal_results_excluded: true,
           chief_complaint: clinicalContext?.chief_complaint ?? null,
           clinical_history: clinicalContext?.clinical_history ?? null,
+          requested_output: {
+            possible_conditions: true,
+            recommended_laboratory_tests: true,
+            recommended_imaging_tests: true,
+          },
         },
       }),
     },
@@ -78,8 +101,11 @@ export async function generateClaudeAbnormalReview(
 
   if (!response.ok) {
     const detail = await readErrorMessage(response);
-    throw new Error(`Claude review failed: ${response.status} ${detail}`);
+    throw new Error(`Claude evaluation failed: ${response.status} ${detail}`);
   }
 
   return response.json();
 }
+
+/** Backward-compatible alias for older callers. */
+export const generateClaudeAbnormalReview = evaluateClaudeAbnormalResults;
