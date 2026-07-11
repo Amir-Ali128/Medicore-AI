@@ -13,7 +13,8 @@ Safety guards before persistence:
   * evidence must link to a real LabResult id from THIS analysis run,
   * drafts failing the confidence policy are skipped,
   * drafts containing final-diagnosis / treatment / medication language are
-    skipped.
+    skipped,
+  * persisted summaries are normalized into cautious physician-review wording.
 """
 
 from __future__ import annotations
@@ -46,6 +47,8 @@ from app.schemas.clinical_hypothesis import ClinicalHypothesisResponse
 
 _MAX_TOKENS = 8192
 _HYPOTHESIS_SOURCE = "claude_clinical_hypothesis"
+_PENDING_REVIEW_STATUS = "pending_review"
+_DOCTOR_REVIEW_QUEUE = "doctor_review"
 
 # Doctor actions the copilot may suggest (mapped to Module H ReviewAction).
 _ALLOWED_DOCTOR_ACTIONS: frozenset[str] = frozenset(
@@ -62,6 +65,11 @@ _BLOCKED_PHRASES: tuple[str, ...] = (
     "you should",
     "take medication",
     "final diagnosis",
+    "kesin tanı",
+    "tanısı konmuştur",
+    "tedavi başlanmalı",
+    "ilaç başlanmalı",
+    "reçete edilmeli",
 )
 
 _SYSTEM_PROMPT = (
@@ -120,7 +128,8 @@ class ClaudeClinicalHypothesisService:
         allowed_ids: set[str] = {str(r.id) for r in results}
 
         prompt_results = [
-            r for r in results
+            r
+            for r in results
             if request.include_normal_results or r.result_status != ResultStatus.NORMAL
         ]
 
@@ -129,7 +138,9 @@ class ClaudeClinicalHypothesisService:
             model=self._model,
             max_tokens=_MAX_TOKENS,
             system=_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": [{"type": "text", "text": user_prompt}]}],
+            messages=[
+                {"role": "user", "content": [{"type": "text", "text": user_prompt}]}
+            ],
         )
 
         payload = self._safe_json(self._collect_text(response))
@@ -143,7 +154,9 @@ class ClaudeClinicalHypothesisService:
         raw_hypotheses = payload.get("hypotheses")
         if not isinstance(raw_hypotheses, list):
             raw_hypotheses = []
-        warnings: list[str] = [str(w) for w in payload.get("warnings", []) if w is not None]
+        warnings: list[str] = [
+            str(w) for w in payload.get("warnings", []) if w is not None
+        ]
 
         created: list[ClinicalHypothesis] = []
         for raw in raw_hypotheses:
@@ -173,7 +186,10 @@ class ClaudeClinicalHypothesisService:
             # --- Issue 1: evidence must link to real LabResult ids -------
             valid_evidence: list[ClinicalHypothesisEvidenceDraft] = []
             for item in draft.evidence:
-                if item.lab_result_id is not None and str(item.lab_result_id) in allowed_ids:
+                if (
+                    item.lab_result_id is not None
+                    and str(item.lab_result_id) in allowed_ids
+                ):
                     valid_evidence.append(item)
                 else:
                     warnings.append(
@@ -194,7 +210,12 @@ class ClaudeClinicalHypothesisService:
                 )
                 continue
 
-            hypothesis = self._build_hypothesis(run, draft, valid_evidence)
+            hypothesis = self._build_hypothesis(
+                run,
+                draft,
+                valid_evidence,
+                language=request.language,
+            )
             self._hypotheses.create(hypothesis)
             created.append(hypothesis)
 
@@ -218,23 +239,28 @@ class ClaudeClinicalHypothesisService:
         run: Any,
         draft: ClinicalHypothesisDraft,
         evidence: list[ClinicalHypothesisEvidenceDraft],
+        *,
+        language: str,
     ) -> ClinicalHypothesis:
         allowed_actions = [
             action
             for action in draft.suggested_doctor_actions
             if action in _ALLOWED_DOCTOR_ACTIONS
         ]
+        if "approve" not in allowed_actions:
+            allowed_actions.insert(0, "approve")
+
         return ClinicalHypothesis(
             patient_id=run.patient_id,
             lab_report_id=run.lab_report_id,
             analysis_run_id=run.id,
             title=draft.title,
-            summary=draft.summary,
+            summary=self._build_review_summary(draft, language),
             hypothesis_type=draft.hypothesis_type,
             confidence=draft.confidence,
             severity=draft.severity,
             source=_HYPOTHESIS_SOURCE,
-            status="pending_review",
+            status=_PENDING_REVIEW_STATUS,
             needs_doctor_review=True,
             evidence_json=[item.model_dump(mode="json") for item in evidence],
             metadata_json={
@@ -242,8 +268,40 @@ class ClaudeClinicalHypothesisService:
                 "suggested_doctor_actions": allowed_actions,
                 "model": self._model,
                 "generated_by": "claude",
+                "approval_queue": _DOCTOR_REVIEW_QUEUE,
+                "approval_status": _PENDING_REVIEW_STATUS,
+                "requires_physician_approval": True,
+                "display_language": language,
             },
         )
+
+    @staticmethod
+    def _build_review_summary(
+        draft: ClinicalHypothesisDraft,
+        language: str,
+    ) -> str:
+        title = draft.title.strip().rstrip(".") or "klinik bir olasılık"
+        original_summary = draft.summary.strip()
+        normalized_language = (language or "tr").strip().lower()
+
+        if normalized_language.startswith("tr"):
+            opening = f"Bu hastada {title} düşünülebilir."
+            closing = (
+                "Bu değerlendirme kesin tanı değildir; doktor değerlendirmesi "
+                "ve onayı gerekir."
+            )
+        else:
+            opening = f"In this patient, {title} may be considered."
+            closing = (
+                "This is not a final diagnosis and requires physician review "
+                "and approval."
+            )
+
+        parts = [opening]
+        if original_summary and original_summary.casefold() != opening.casefold():
+            parts.append(original_summary)
+        parts.append(closing)
+        return " ".join(parts)
 
     # -- guards ----------------------------------------------------------
     @staticmethod
@@ -291,12 +349,21 @@ class ClaudeClinicalHypothesisService:
             "lab_results": lab_results,
         }
 
+        language_instruction = (
+            "When language is Turkish, use a concise possible condition/pattern "
+            "as the title and write the summary in Turkish. Phrase it cautiously "
+            "as a possibility for this patient, for example: 'Bu hastada <başlık> "
+            "düşünülebilir.' End by stating that physician review and approval are "
+            "required. Never state that the patient definitely has a condition. "
+        )
+
         instructions = (
             "Generate clinical hypotheses for physician review only, using ONLY "
             "the lab_results below. Do not diagnose, do not recommend treatment "
             "or medication, do not write patient-facing text. Each hypothesis "
             "must cite evidence referencing lab_result_id values from the input. "
-            "suggested_doctor_actions may only contain: approve, reject, edit, "
+            + language_instruction
+            + "suggested_doctor_actions may only contain: approve, reject, edit, "
             "request_extra_test, refer_specialist.\n"
             "Return ONLY valid JSON (no markdown) in EXACTLY this shape:\n"
             "{\n"
