@@ -3,8 +3,10 @@ import { Link, useNavigate } from 'react-router-dom';
 
 import SectionCard from '../components/ui/SectionCard';
 import {
-  generateClaudeAbnormalReview,
+  evaluateClaudeAbnormalResults,
+  type ClaudeEvaluationHypothesis,
   type ClaudeReviewGenerationResult,
+  type ClaudeSuggestedTest,
 } from '../services/claudeReviewClient';
 import {
   runBackendMockAnalysis,
@@ -255,6 +257,163 @@ function ResultGroup({
   );
 }
 
+function readStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function readSuggestedTests(value: unknown): ClaudeSuggestedTest[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.flatMap((item) => {
+    if (!item || typeof item !== 'object') return [];
+
+    const record = item as Record<string, unknown>;
+    const name = typeof record.name === 'string' ? record.name.trim() : '';
+
+    if (!name) return [];
+
+    const rationale =
+      typeof record.rationale === 'string' && record.rationale.trim()
+        ? record.rationale.trim()
+        : null;
+    const priority =
+      record.priority === 'routine' ||
+      record.priority === 'soon' ||
+      record.priority === 'urgent'
+        ? record.priority
+        : null;
+
+    return [{ name, rationale, priority }];
+  });
+}
+
+function SuggestedTestList({
+  title,
+  tests,
+}: {
+  title: string;
+  tests: ClaudeSuggestedTest[];
+}) {
+  if (tests.length === 0) return null;
+
+  return (
+    <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+      <h4 className="text-sm font-semibold text-slate-950">{title}</h4>
+      <ul className="mt-3 space-y-3">
+        {tests.map((test, index) => (
+          <li
+            key={`${test.name}-${index}`}
+            className="rounded-lg border border-slate-200 bg-white p-3"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-sm font-semibold text-slate-900">
+                {test.name}
+              </span>
+              {test.priority && (
+                <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold uppercase text-slate-600">
+                  {test.priority}
+                </span>
+              )}
+            </div>
+            {test.rationale && (
+              <p className="mt-2 text-xs leading-5 text-slate-600">
+                {test.rationale}
+              </p>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function ClaudeEvaluationCard({
+  hypothesis,
+}: {
+  hypothesis: ClaudeEvaluationHypothesis;
+}) {
+  const possibleConditions = readStringList(
+    hypothesis.metadata_json?.possible_conditions,
+  );
+  const laboratoryTests = readSuggestedTests(
+    hypothesis.metadata_json?.recommended_laboratory_tests,
+  );
+  const imagingTests = readSuggestedTests(
+    hypothesis.metadata_json?.recommended_imaging_tests,
+  );
+  const limitations = readStringList(hypothesis.metadata_json?.limitations);
+
+  return (
+    <article className="rounded-xl border border-violet-200 bg-white p-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h3 className="font-semibold text-slate-950">{hypothesis.title}</h3>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            {hypothesis.summary}
+          </p>
+        </div>
+        <span className="whitespace-nowrap rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-700">
+          DOKTOR DEĞERLENDİRMESİ
+        </span>
+      </div>
+
+      {hypothesis.confidence !== null && (
+        <p className="mt-3 text-xs font-medium text-slate-500">
+          Model confidence: {Math.round(hypothesis.confidence * 100)}%
+        </p>
+      )}
+
+      <div className="mt-5 grid gap-4 lg:grid-cols-3">
+        {possibleConditions.length > 0 && (
+          <div className="rounded-lg border border-violet-200 bg-violet-50/60 p-4">
+            <h4 className="text-sm font-semibold text-violet-950">
+              Olası hastalıklar / durumlar
+            </h4>
+            <ul className="mt-3 space-y-2 text-sm leading-5 text-slate-700">
+              {possibleConditions.map((condition) => (
+                <li key={condition}>• {condition}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        <SuggestedTestList
+          title="Önerilen laboratuvar tetkikleri"
+          tests={laboratoryTests}
+        />
+        <SuggestedTestList
+          title="Önerilen görüntüleme tetkikleri"
+          tests={imagingTests}
+        />
+      </div>
+
+      {limitations.length > 0 && (
+        <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4">
+          <h4 className="text-sm font-semibold text-amber-950">
+            Sınırlılıklar
+          </h4>
+          <ul className="mt-2 space-y-1 text-xs leading-5 text-amber-900">
+            {limitations.map((limitation) => (
+              <li key={limitation}>• {limitation}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <p className="mt-4 text-xs leading-5 text-slate-500">
+        Bu çıktı kesin tanı veya otomatik tetkik istemi değildir. Olası durumlar
+        ve tetkik seçenekleri doktor tarafından klinik bağlamla birlikte
+        değerlendirilmelidir.
+      </p>
+    </article>
+  );
+}
+
 export default function MockAnalysisPage() {
   const navigate = useNavigate();
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -270,7 +429,7 @@ export default function MockAnalysisPage() {
   const [busyAction, setBusyAction] = useState<
     'sample' | 'pdf' | 'manual' | null
   >(null);
-  const [isClaudeGenerating, setIsClaudeGenerating] = useState(false);
+  const [isClaudeEvaluating, setIsClaudeEvaluating] = useState(false);
   const [claudeResult, setClaudeResult] =
     useState<ClaudeReviewGenerationResult | null>(null);
   const [claudeError, setClaudeError] = useState('');
@@ -379,14 +538,14 @@ export default function MockAnalysisPage() {
     }
   }
 
-  async function handleGenerateClaudeReview() {
+  async function handleEvaluateClaudeResults() {
     if (!backendResult || visibleResults.length === 0) return;
 
     try {
-      setIsClaudeGenerating(true);
+      setIsClaudeEvaluating(true);
       setClaudeError('');
       setClaudeResult(
-        await generateClaudeAbnormalReview(
+        await evaluateClaudeAbnormalResults(
           backendResult.analysis_run_id,
           Math.min(visibleResults.length, 5),
           {
@@ -397,10 +556,10 @@ export default function MockAnalysisPage() {
       );
     } catch (error) {
       setClaudeError(
-        error instanceof Error ? error.message : 'Claude review failed.',
+        error instanceof Error ? error.message : 'Claude evaluation failed.',
       );
     } finally {
-      setIsClaudeGenerating(false);
+      setIsClaudeEvaluating(false);
     }
   }
 
@@ -419,8 +578,8 @@ export default function MockAnalysisPage() {
           values are separated below.
         </p>
         <p className="mt-3 inline-flex rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-800">
-          Claude output is for physician review only and is not a diagnosis or
-          treatment recommendation.
+          Claude output is for physician review only and is not a diagnosis,
+          automatic test order, or treatment recommendation.
         </p>
       </header>
 
@@ -493,15 +652,13 @@ export default function MockAnalysisPage() {
             </div>
 
             <div className="mt-5 rounded-lg border border-cyan-200 bg-cyan-50/50 p-4">
-              <div>
-                <p className="text-sm font-semibold text-slate-950">
-                  Klinik bilgiler
-                </p>
-                <p className="mt-1 text-xs leading-5 text-slate-500">
-                  Bu alanlar isteğe bağlıdır ve doktor değerlendirmesi için analiz
-                  kaydına eklenir.
-                </p>
-              </div>
+              <p className="text-sm font-semibold text-slate-950">
+                Klinik bilgiler
+              </p>
+              <p className="mt-1 text-xs leading-5 text-slate-500">
+                Bu alanlar isteğe bağlıdır ve Claude değerlendirmesine klinik
+                bağlam olarak eklenir.
+              </p>
 
               <div className="mt-4 grid gap-4">
                 <label className="text-sm font-medium text-slate-700">
@@ -643,11 +800,6 @@ export default function MockAnalysisPage() {
               <strong className="text-slate-950">Analysis completed.</strong>{' '}
               {visibleResults.length} non-normal result(s) are visible; normal
               rows are hidden.
-              {(chiefComplaint.trim() || clinicalHistory.trim()) && (
-                <span className="ml-1 text-cyan-700">
-                  Klinik bilgiler analiz kaydına eklendi.
-                </span>
-              )}
             </p>
             <button
               type="button"
@@ -726,37 +878,40 @@ export default function MockAnalysisPage() {
               Claude clinical copilot
             </p>
             <h2 className="mt-1 text-xl font-semibold text-slate-950">
-              Generate an abnormal-result review
+              Evaluate abnormal results
             </h2>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
-              Only non-normal structured results are sent to Claude. Entered
-              complaint and history are attached as physician-review context.
+              Claude evaluates non-normal structured results together with the
+              entered complaint and history. The output includes possible
+              conditions and laboratory or imaging tests a physician may
+              consider.
             </p>
           </div>
           <button
             type="button"
-            onClick={handleGenerateClaudeReview}
+            onClick={handleEvaluateClaudeResults}
             disabled={
               !backendResult ||
               visibleResults.length === 0 ||
-              isClaudeGenerating
+              isClaudeEvaluating
             }
             className="rounded-lg bg-violet-700 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-800 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {isClaudeGenerating
-              ? 'Generating Claude review...'
-              : 'Generate Claude Review'}
+            {isClaudeEvaluating
+              ? 'Claude is evaluating...'
+              : 'Evaluate with Claude'}
           </button>
         </div>
 
         {!backendResult && (
           <p className="mt-4 text-sm text-slate-600">
-            Complete an analysis before generating a Claude review.
+            Complete an analysis before evaluating the results with Claude.
           </p>
         )}
         {backendResult && visibleResults.length === 0 && (
           <p className="mt-4 text-sm text-slate-600">
-            Claude review is disabled because there are no non-normal results.
+            Claude evaluation is disabled because there are no non-normal
+            results.
           </p>
         )}
         {claudeError && (
@@ -768,41 +923,24 @@ export default function MockAnalysisPage() {
         {claudeResult && (
           <div className="mt-5 space-y-4">
             <div className="rounded-lg border border-violet-200 bg-white p-4 text-sm text-slate-700">
-              Claude created {claudeResult.created_count} physician-review
-              hypothesis/hypotheses.
+              Claude prepared {claudeResult.created_count} physician-review
+              evaluation(s).
             </div>
+
             {claudeResult.created_hypotheses.map((hypothesis) => (
-              <article
+              <ClaudeEvaluationCard
                 key={hypothesis.id}
-                className="rounded-xl border border-violet-200 bg-white p-5"
-              >
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                  <div>
-                    <h3 className="font-semibold text-slate-950">
-                      {hypothesis.title}
-                    </h3>
-                    <p className="mt-2 text-sm leading-6 text-slate-600">
-                      {hypothesis.summary}
-                    </p>
-                  </div>
-                  <span className="whitespace-nowrap rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-700">
-                    PHYSICIAN REVIEW
-                  </span>
-                </div>
-                {hypothesis.confidence !== null && (
-                  <p className="mt-3 text-xs font-medium text-slate-500">
-                    Model confidence:{' '}
-                    {Math.round(hypothesis.confidence * 100)}%
-                  </p>
-                )}
-              </article>
+                hypothesis={hypothesis}
+              />
             ))}
+
             {claudeResult.created_hypotheses.length === 0 && (
               <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-                Claude did not return a hypothesis that passed the safety and
+                Claude did not return an evaluation that passed the safety and
                 evidence checks.
               </div>
             )}
+
             {claudeResult.warnings.length > 0 && (
               <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
                 <p className="text-sm font-semibold text-amber-900">Warnings</p>
