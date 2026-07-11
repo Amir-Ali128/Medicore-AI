@@ -34,6 +34,8 @@ export type LabReportMetadata = {
   patient_sex?: string | null;
   patient_birth_date?: string | null;
   patient_metadata_source?: string | null;
+  chief_complaint?: string | null;
+  clinical_history?: string | null;
   [key: string]: unknown;
 };
 
@@ -97,6 +99,8 @@ export type ManualLabValueInput = {
 
 export type ManualLabReportInput = {
   report_date: string;
+  chief_complaint: string | null;
+  clinical_history: string | null;
   values: ManualLabValueInput[];
 };
 
@@ -285,6 +289,8 @@ export async function submitManualLabResults(
       uploaded_by_user_id: DEMO_UPLOADED_BY_USER_ID,
       file_name: `manual-entry-${input.report_date}.json`,
       report_date: input.report_date,
+      chief_complaint: input.chief_complaint,
+      clinical_history: input.clinical_history,
       values,
     },
     'Manual result analysis failed',
