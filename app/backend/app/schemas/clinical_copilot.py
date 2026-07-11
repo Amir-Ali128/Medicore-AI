@@ -1,14 +1,22 @@
-"""Pydantic v2 schemas for the Claude clinical hypothesis copilot.
+"""Pydantic v2 schemas for the Claude clinical evaluation copilot.
 
-All outputs are physician-reviewable hypotheses. They are never final diagnoses
-and never treatment advice.
+All outputs are physician-reviewable possibilities. They are never final diagnoses,
+automatic test orders, or treatment advice.
 """
 
 from __future__ import annotations
 
 import uuid
+from typing import Literal
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, computed_field, field_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    computed_field,
+    field_validator,
+)
 
 from app.schemas.clinical_hypothesis import ClinicalHypothesisResponse
 
@@ -26,6 +34,24 @@ class ClinicalHypothesisEvidenceDraft(BaseModel):
     note: str | None = None
 
 
+class SuggestedDiagnosticTestDraft(BaseModel):
+    """A physician-reviewable diagnostic test suggestion, never an automatic order."""
+
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    name: str = Field(min_length=1, max_length=200)
+    rationale: str | None = Field(default=None, max_length=600)
+    priority: Literal["routine", "soon", "urgent"] | None = None
+
+    @field_validator("name", "rationale", mode="before")
+    @classmethod
+    def normalize_text(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
 class ClinicalHypothesisDraft(BaseModel):
     """Validated Claude draft before it is persisted for physician review."""
 
@@ -41,6 +67,13 @@ class ClinicalHypothesisDraft(BaseModel):
         validation_alias=AliasChoices("evidence", "evidence_json"),
     )
     limitations: list[str] = Field(default_factory=list)
+    possible_conditions: list[str] = Field(default_factory=list)
+    recommended_laboratory_tests: list[SuggestedDiagnosticTestDraft] = Field(
+        default_factory=list
+    )
+    recommended_imaging_tests: list[SuggestedDiagnosticTestDraft] = Field(
+        default_factory=list
+    )
     suggested_doctor_actions: list[str] = Field(
         default_factory=list,
         validation_alias=AliasChoices(
@@ -49,14 +82,29 @@ class ClinicalHypothesisDraft(BaseModel):
         ),
     )
 
-    @field_validator("suggested_doctor_actions", mode="before")
+    @field_validator(
+        "suggested_doctor_actions",
+        "possible_conditions",
+        "limitations",
+        mode="before",
+    )
     @classmethod
-    def normalize_suggested_actions(cls, value: object) -> object:
+    def normalize_string_list(cls, value: object) -> object:
         if value is None:
             return []
         if isinstance(value, str):
             return [value]
         return value
+
+    @field_validator("possible_conditions", "limitations")
+    @classmethod
+    def clean_string_list(cls, values: list[str]) -> list[str]:
+        cleaned: list[str] = []
+        for value in values:
+            item = value.strip()
+            if item and item not in cleaned:
+                cleaned.append(item)
+        return cleaned[:10]
 
 
 class ClinicalHypothesisGenerationRequest(BaseModel):
