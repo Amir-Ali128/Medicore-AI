@@ -11,6 +11,7 @@ import ExtractionReviewPage from './pages/ExtractionReviewPage';
 import LoginPage from './pages/LoginPage';
 import MockAnalysisPage from './pages/MockAnalysisPage';
 import PatientDetailPage from './pages/PatientDetailPage';
+import RadiologyPage from './pages/RadiologyPage';
 import TimelinePage from './pages/TimelinePage';
 
 export const router = createBrowserRouter([
@@ -39,6 +40,10 @@ export const router = createBrowserRouter([
           {
             path: '/analysis/mock',
             element: <MockAnalysisPage />,
+          },
+          {
+            path: '/radiology',
+            element: <RadiologyPage />,
           },
           {
             path: '/extraction-review',
