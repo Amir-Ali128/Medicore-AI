@@ -1,7 +1,7 @@
 """Pydantic v2 schemas for clinical hypotheses.
 
 A clinical hypothesis is a system/AI-suggested possibility that always requires
-doctor review — never a final diagnosis and never treatment advice.
+doctor review — never a final diagnosis, automatic test order, or treatment advice.
 """
 
 from __future__ import annotations
@@ -15,11 +15,13 @@ from pydantic import BaseModel, ConfigDict, Field
 class EvidenceItem(BaseModel):
     model_config = ConfigDict(frozen=True)
 
+    lab_result_id: uuid.UUID | None = None
     parameter_code: str | None = None
     parameter_name: str | None = None
     value: str | None = None
     unit: str | None = None
     result_status: str | None = None
+    trend_status: str | None = None
     note: str | None = None
 
 
@@ -54,6 +56,7 @@ class ClinicalHypothesisResponse(BaseModel):
     status: str
     source: str
     evidence_json: list[EvidenceItem]
+    metadata_json: dict = Field(default_factory=dict)
     needs_doctor_review: bool
     reviewed_at: datetime | None
     reviewed_by_user_id: uuid.UUID | None
