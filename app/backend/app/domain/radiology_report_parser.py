@@ -1,4 +1,4 @@
-"""Deterministic parser for text-based radiology reports.
+"""Deterministic parser for text-based radiology and DXA/DEXA reports.
 
 Phase 2 deliberately starts with report text, not pixel/image interpretation. The
 parser extracts conservative structured signals for physician review and never
@@ -12,9 +12,21 @@ import unicodedata
 from collections.abc import Iterable
 from typing import Any
 
-PARSER_VERSION = "phase2-radiology-text-v1"
+PARSER_VERSION = "phase2-radiology-text-v2-dexa"
 
 _MODALITY_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "DEXA",
+        (
+            "dexa",
+            "dxa",
+            "dual-energy x-ray absorptiometry",
+            "dual energy x ray absorptiometry",
+            "kemik mineral yogunlugu",
+            "kemik dansitometri",
+            "kemik yogunlugu",
+        ),
+    ),
     ("PET_CT", ("pet/ct", "pet-bt", "pet bt", "pozitron emisyon")),
     ("MRI", ("manyetik rezonans", "mri", " mr ", "mr inceleme", "mr goruntuleme")),
     ("CT", ("bilgisayarli tomografi", "computed tomography", "ct ", " bt ", "bt inceleme")),
@@ -23,6 +35,7 @@ _MODALITY_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 _BODY_PART_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("BONE_DENSITY", ("kemik mineral yogunlugu", "kemik dansitometri", "dexa", "dxa", "bmd")),
     ("BRAIN", ("beyin", "kraniyal", "kranial", "intrakraniyal", "serebral", "kafa")),
     ("CHEST", ("toraks", "akciger", "pulmoner", "mediasten", "gogus")),
     ("ABDOMEN", ("abdomen", "batin", "karaciger", "pankreas", "dalak", "bobrek")),
@@ -41,91 +54,70 @@ _CRITICAL_TERMS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("İntrakraniyal kanama", ("intrakraniyal kanama", "intraserebral kanama", "subaraknoid kanama", "subdural hematom")),
     ("Akut enfarkt", ("akut enfarkt", "akut infarkt", "akut iskemi")),
     ("Aort diseksiyonu", ("aort diseksiyonu", "diseksiyon flebi")),
-    ("Serbest hava", ("serbest hava", "pnömoperitoneum", "pnomoperitoneum")),
+    ("Serbest hava", ("serbest hava", "pnomoperitoneum")),
     ("Akut obstrüksiyon", ("akut obstruksiyon", "barsak obstruksiyonu", "ileus")),
     ("Aktif kanama", ("aktif kanama", "ekstravazasyon")),
     ("Malignite şüphesi", ("malignite supheli", "malignite acisindan supheli", "malign kitle")),
 )
 
 _ABNORMAL_TERMS: tuple[str, ...] = (
-    "lezyon",
-    "nodul",
-    "kitle",
-    "efüzyon",
-    "efuzyon",
-    "ödem",
-    "odem",
-    "konsolidasyon",
-    "atelektazi",
-    "fraktur",
-    "kırık",
-    "kirik",
-    "stenoz",
-    "dilatasyon",
-    "lenfadenopati",
-    "hematom",
-    "kanama",
-    "infiltrasyon",
-    "trombus",
-    "tromboz",
-    "koleksiyon",
-    "metastaz",
-    "hipodens",
-    "hiperdens",
-    "hiperintens",
-    "hipointens",
+    "lezyon", "nodul", "kitle", "efüzyon", "efuzyon", "ödem", "odem",
+    "konsolidasyon", "atelektazi", "fraktur", "kırık", "kirik", "stenoz",
+    "dilatasyon", "lenfadenopati", "hematom", "kanama", "infiltrasyon",
+    "trombus", "tromboz", "koleksiyon", "metastaz", "hipodens", "hiperdens",
+    "hiperintens", "hipointens",
 )
 
 _NEGATION_TERMS: tuple[str, ...] = (
-    "saptanmadi",
-    "izlenmedi",
-    "gorulmedi",
-    "rastlanmadi",
-    "mevcut degildir",
-    "tespit edilmedi",
-    "yoktur",
-    "yok ",
-    "negatif",
-    "lehine bulgu yok",
+    "saptanmadi", "izlenmedi", "gorulmedi", "rastlanmadi", "mevcut degildir",
+    "tespit edilmedi", "yoktur", "yok ", "negatif", "lehine bulgu yok",
 )
 
 _SECTION_HEADINGS = {
-    "bulgular",
-    "bulgu",
-    "findings",
-    "sonuc",
-    "sonuç",
-    "izlenim",
-    "degerlendirme",
-    "değerlendirme",
-    "impression",
-    "teknik",
-    "klinik bilgi",
-    "klinik",
-    "endikasyon",
+    "bulgular", "bulgu", "findings", "sonuc", "sonuç", "izlenim",
+    "degerlendirme", "değerlendirme", "impression", "teknik",
+    "klinik bilgi", "klinik", "endikasyon",
 }
 
 _MEASUREMENT_RE = re.compile(
-    r"(?P<value>\d+(?:[.,]\d+)?)\s*(?P<unit>mm|cm|ml|cc)\b",
+    r"(?P<value>\d+(?:[.,]\d+)?)\s*(?P<unit>mm|cm|ml|cc|g\s*/\s*cm(?:2|²|\^2))\b",
     flags=re.IGNORECASE,
+)
+_BMD_RE = re.compile(
+    r"(?:(?:bmd|kmy)\s*[:=]?\s*)?(?P<value>\d+(?:[.,]\d+)?)\s*(?P<unit>g\s*/\s*cm(?:2|²|\^2))",
+    flags=re.IGNORECASE,
+)
+_T_SCORE_RE = re.compile(
+    r"(?:t\s*[- ]?\s*(?:score|skor(?:u)?)|t\s*degeri)\s*[:=]?\s*(?P<value>[+-]?\d+(?:[.,]\d+)?)",
+    flags=re.IGNORECASE,
+)
+_Z_SCORE_RE = re.compile(
+    r"(?:z\s*[- ]?\s*(?:score|skor(?:u)?)|z\s*degeri)\s*[:=]?\s*(?P<value>[+-]?\d+(?:[.,]\d+)?)",
+    flags=re.IGNORECASE,
+)
+
+_DEXA_SITE_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("LUMBAR_SPINE_L1_L4", ("l1-l4", "l1 l4", "lomber omurga", "lumbar spine", "ap spine")),
+    ("FEMORAL_NECK", ("femur boynu", "femoral neck", "boyun femur")),
+    ("TOTAL_HIP", ("total kalca", "total hip", "total femur", "toplam kalca")),
+    ("FOREARM_33_RADIUS", ("1/3 radius", "33% radius", "distal radius", "on kol", "ön kol", "forearm")),
+    ("WHOLE_BODY", ("tum vucut", "tüm vücut", "whole body")),
+)
+
+_EXPLICIT_DEXA_CLASSIFICATIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("osteoporosis", ("osteoporoz", "osteoporosis")),
+    ("low_bone_mass", ("osteopeni", "osteopenia", "dusuk kemik kutlesi", "düşük kemik kütlesi", "low bone mass")),
+    ("normal", ("normal kemik", "normal aralik", "normal range")),
+    ("below_expected_for_age", ("yasa gore beklenen araligin altinda", "yaşa göre beklenen aralığın altında", "below expected range for age")),
+    ("within_expected_for_age", ("yasa gore beklenen aralikta", "yaşa göre beklenen aralıkta", "within expected range for age")),
 )
 
 
 def _ascii_fold(value: str) -> str:
     replacements = str.maketrans(
         {
-            "ı": "i",
-            "İ": "i",
-            "ş": "s",
-            "Ş": "s",
-            "ğ": "g",
-            "Ğ": "g",
-            "ü": "u",
-            "Ü": "u",
-            "ö": "o",
-            "Ö": "o",
-            "ç": "c",
-            "Ç": "c",
+            "ı": "i", "İ": "i", "ş": "s", "Ş": "s", "ğ": "g", "Ğ": "g",
+            "ü": "u", "Ü": "u", "ö": "o", "Ö": "o", "ç": "c", "Ç": "c",
         }
     )
     translated = value.translate(replacements)
@@ -224,7 +216,7 @@ def _extract_measurements(sentences: list[str]) -> list[dict[str, Any]]:
     for sentence in sentences:
         for match in _MEASUREMENT_RE.finditer(sentence):
             value = match.group("value").replace(",", ".")
-            unit = match.group("unit").lower()
+            unit = re.sub(r"\s+", "", match.group("unit").lower()).replace("^", "")
             context = sentence[:500]
             key = (value, unit, context)
             if key in seen:
@@ -234,6 +226,116 @@ def _extract_measurements(sentences: list[str]) -> list[dict[str, Any]]:
             if len(measurements) >= 100:
                 return measurements
     return measurements
+
+
+def _parse_float(value: str | None) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value.replace(",", "."))
+    except ValueError:
+        return None
+
+
+def _infer_dexa_site(line: str) -> str:
+    normalized = _normalized_for_match(line)
+    for code, terms in _DEXA_SITE_PATTERNS:
+        if any(_ascii_fold(term) in normalized for term in terms):
+            return code
+    return "UNSPECIFIED"
+
+
+def _explicit_dexa_classification(line: str) -> str | None:
+    normalized = _normalized_for_match(line)
+    for code, terms in _EXPLICIT_DEXA_CLASSIFICATIONS:
+        if any(_ascii_fold(term) in normalized for term in terms):
+            return code
+    return None
+
+
+def _t_score_band(value: float | None) -> str | None:
+    """Assistive range only; never a standalone diagnosis."""
+    if value is None:
+        return None
+    if value <= -2.5:
+        return "osteoporosis_range"
+    if value < -1.0:
+        return "low_bone_mass_range"
+    return "normal_range"
+
+
+def _z_score_band(value: float | None) -> str | None:
+    """ISCD-style assistive age-expected band, not a diagnosis."""
+    if value is None:
+        return None
+    return "below_expected_for_age" if value <= -2.0 else "within_expected_for_age"
+
+
+def _extract_unlabelled_scores(
+    line: str,
+    bmd_match: re.Match[str],
+) -> tuple[float | None, float | None]:
+    tail = line[bmd_match.end() :]
+    numbers = [
+        _parse_float(item)
+        for item in re.findall(r"(?<![\w.])[+-]?\d+(?:[.,]\d+)?(?![\w.])", tail)
+    ]
+    values = [item for item in numbers if item is not None]
+    if not values:
+        return None, None
+    return values[0], values[1] if len(values) > 1 else None
+
+
+def _extract_dexa_metrics(text: str) -> list[dict[str, Any]]:
+    metrics: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, float | None, float | None]] = set()
+    lines = [_compact(line) for line in text.replace("\r", "\n").split("\n") if _compact(line)]
+
+    for line in lines:
+        normalized = _normalized_for_match(line)
+        score_tokens = (
+            " bmd ", " kmy ", " t-score ", " t score ", " t skoru ",
+            " z-score ", " z score ", " z skoru ", " g/cm",
+        )
+        if not any(token in normalized for token in score_tokens):
+            continue
+
+        bmd_match = _BMD_RE.search(line)
+        t_match = _T_SCORE_RE.search(line)
+        z_match = _Z_SCORE_RE.search(line)
+        bmd = _parse_float(bmd_match.group("value")) if bmd_match else None
+        t_score = _parse_float(t_match.group("value")) if t_match else None
+        z_score = _parse_float(z_match.group("value")) if z_match else None
+
+        if bmd_match and t_score is None and z_score is None:
+            t_score, z_score = _extract_unlabelled_scores(line, bmd_match)
+
+        if bmd is None and t_score is None and z_score is None:
+            continue
+
+        site = _infer_dexa_site(line)
+        key = (site, str(bmd), t_score, z_score)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        metrics.append(
+            {
+                "site": site,
+                "bmd": bmd,
+                "bmd_unit": "g/cm2" if bmd is not None else None,
+                "t_score": t_score,
+                "z_score": z_score,
+                "t_score_band": _t_score_band(t_score),
+                "z_score_band": _z_score_band(z_score),
+                "report_classification": _explicit_dexa_classification(line),
+                "context": line[:1000],
+            }
+        )
+        if len(metrics) >= 50:
+            break
+
+    return metrics
 
 
 def _extract_findings(sentences: list[str]) -> tuple[list[dict[str, Any]], list[str]]:
@@ -282,7 +384,7 @@ def _extract_findings(sentences: list[str]) -> tuple[list[dict[str, Any]], list[
 
 
 def analyze_radiology_report(text: str) -> dict[str, Any]:
-    """Return conservative, structured signals from radiology report text."""
+    """Return conservative structured signals from radiology or DXA report text."""
     clean_text = text.strip()
     if len(clean_text) < 10:
         raise ValueError("Radiology report text is too short to analyze.")
@@ -293,6 +395,7 @@ def analyze_radiology_report(text: str) -> dict[str, Any]:
     modality = infer_modality(clean_text)
     body_part = infer_body_part(clean_text)
     impression = _extract_impression(clean_text)
+    dexa_metrics = _extract_dexa_metrics(clean_text) if modality == "DEXA" else []
 
     warnings: list[str] = []
     if modality == "UNKNOWN":
@@ -301,14 +404,21 @@ def analyze_radiology_report(text: str) -> dict[str, Any]:
         warnings.append("Body region could not be inferred; physician confirmation is required.")
     if not findings:
         warnings.append("No structured finding sentence could be extracted.")
+    if modality == "DEXA" and not dexa_metrics:
+        warnings.append("DEXA modality was detected but no BMD, T-score, or Z-score row could be extracted.")
+    if dexa_metrics:
+        warnings.append(
+            "DEXA score bands are assistive only. T-score and Z-score interpretation depends on age, sex, menopausal status, skeletal site, scan quality, and clinical context."
+        )
 
     abnormal_count = sum(
         1 for finding in findings if finding["classification"] == "abnormal"
     )
+    dexa_fragment = f", {len(dexa_metrics)} DXA measurement rows" if dexa_metrics else ""
     summary = (
         f"{modality} / {body_part} report: {len(findings)} finding sentences, "
-        f"{abnormal_count} non-critical abnormal signals, {len(measurements)} measurements "
-        f"and {len(critical_findings)} critical-term alerts were extracted. "
+        f"{abnormal_count} non-critical abnormal signals, {len(measurements)} measurements"
+        f"{dexa_fragment} and {len(critical_findings)} critical-term alerts were extracted. "
         "All outputs require physician verification against the original report."
     )
 
@@ -318,6 +428,7 @@ def analyze_radiology_report(text: str) -> dict[str, Any]:
         "body_part": body_part,
         "findings": findings,
         "measurements": measurements,
+        "dexa_metrics": dexa_metrics,
         "critical_findings": critical_findings,
         "impression": impression,
         "summary": summary,
