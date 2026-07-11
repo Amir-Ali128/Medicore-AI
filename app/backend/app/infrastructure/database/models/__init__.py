@@ -17,6 +17,7 @@ from app.infrastructure.database.models.lab_result import LabResult
 from app.infrastructure.database.models.parameter_alias import ParameterAlias
 from app.infrastructure.database.models.patient import Patient
 from app.infrastructure.database.models.patient_timeline_event import PatientTimelineEvent
+from app.infrastructure.database.models.radiology_report import RadiologyReport
 from app.infrastructure.database.models.reference_range import ReferenceRange
 from app.infrastructure.database.models.user import User
 
@@ -34,4 +35,5 @@ __all__ = [
     "ExtractionJob",
     "ExtractedLabValue",
     "PatientTimelineEvent",
+    "RadiologyReport",
 ]
