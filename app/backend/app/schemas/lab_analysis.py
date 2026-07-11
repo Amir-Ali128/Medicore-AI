@@ -10,7 +10,7 @@ import uuid
 from datetime import date
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.domain.enums import ResultStatus, TrendStatus
 
@@ -38,7 +38,19 @@ class MockLabReportInput(BaseModel):
     uploaded_by_user_id: uuid.UUID | None = None
     file_name: str | None = None
     report_date: date | None = None
+    chief_complaint: str | None = Field(default=None, max_length=2000)
+    clinical_history: str | None = Field(default=None, max_length=5000)
     values: list[RawLabValue] = Field(default_factory=list)
+
+    @field_validator("chief_complaint", "clinical_history", mode="before")
+    @classmethod
+    def normalize_optional_text(cls, value: object) -> object:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
 
 
 # --------------------------------------------------------------------------
