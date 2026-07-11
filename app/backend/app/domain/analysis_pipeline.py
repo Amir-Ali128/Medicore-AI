@@ -1,16 +1,13 @@
 """AnalysisPipeline.
 
-Orchestrates the already-approved deterministic engines to turn a mock lab
-report into structured, classified, and persisted lab results:
+Orchestrates the approved deterministic engines to turn a structured lab report
+into persisted, classified results:
 
     AliasEngine -> ReferenceResolver -> RuleEngine -> TrendEngine
 
-It structures and stores lab data only. It never calls AI, never diagnoses,
-never produces clinical interpretation or patient-specific recommendations, and
-never classifies inactive (non-Phase-1) parameters.
-
-Transaction: the pipeline owns its transaction and commits on success /
-rolls back on failure. No business logic lives in the SQLAlchemy models.
+Clinical intake is stored as context. Only patient age and sex are applied to
+reference-range resolution; no complaint, history, examination, or imaging text
+can directly change a deterministic lab status.
 """
 
 from __future__ import annotations
@@ -21,10 +18,10 @@ from datetime import date, datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.alias_engine import AliasEngine
+from app.domain.enums import AnalysisLevel, ResultStatus, Sex, TrendStatus
 from app.domain.reference_resolver import ReferenceResolver
 from app.domain.rule_engine import RuleEngine
 from app.domain.trend_engine import TrendEngine
-from app.domain.enums import AnalysisLevel, ResultStatus, TrendStatus
 from app.infrastructure.database.models.analysis_run import AnalysisRun
 from app.infrastructure.database.models.lab_report import LabReport
 from app.infrastructure.database.models.lab_result import LabResult
@@ -41,13 +38,12 @@ from app.infrastructure.database.repositories.lab_report_repository import (
 from app.infrastructure.database.repositories.lab_result_repository import (
     LabResultRepository,
 )
-from app.schemas.analysis import (
-    ReferenceResolutionRequest,
-)
+from app.schemas.analysis import ReferenceResolutionRequest
 from app.schemas.lab_analysis import (
     AnalysisCounts,
     AnalysisPipelineResult,
     MockLabReportInput,
+    PatientMetadataOutput,
     RawLabValue,
     StructuredLabResultOutput,
 )
@@ -91,16 +87,16 @@ class AnalysisPipeline:
             await self._session.rollback()
             raise
 
-    # ------------------------------------------------------------------
     async def _run(self, payload: MockLabReportInput) -> AnalysisPipelineResult:
         now = datetime.now(timezone.utc)
 
-        # 0) Patient must exist before any analysis begins.
         patient = await self._session.get(Patient, payload.patient_id)
         if patient is None:
             raise ValueError("Patient not found.")
 
-        # 1) LabReport ---------------------------------------------------
+        self._apply_patient_information(patient, payload)
+        await self._session.flush()
+
         report = LabReport(
             patient_id=payload.patient_id,
             uploaded_by_user_id=payload.uploaded_by_user_id,
@@ -108,12 +104,12 @@ class AnalysisPipeline:
             file_name=payload.file_name,
             report_date=payload.report_date,
             raw_payload=payload.model_dump(mode="json"),
+            metadata_json=self._report_metadata(payload),
             status="received",
         )
         self._reports.create(report)
         await self._session.flush()
 
-        # 2) AnalysisRun -------------------------------------------------
         run = AnalysisRun(
             patient_id=payload.patient_id,
             lab_report_id=report.id,
@@ -123,17 +119,18 @@ class AnalysisPipeline:
         self._runs.create(run)
         await self._session.flush()
 
-        # 3) Process each raw value -------------------------------------
         results: list[LabResult] = []
         for raw in payload.values:
             result = await self._process_value(
-                raw, report=report, run=run, patient=patient
+                raw,
+                report=report,
+                run=run,
+                patient=patient,
             )
             self._results.create(result)
-            await self._session.flush()  # populate id for output
+            await self._session.flush()
             results.append(result)
 
-        # 4) Counts ------------------------------------------------------
         counts = self._count(results)
         self._runs.update_counts(
             run,
@@ -145,23 +142,19 @@ class AnalysisPipeline:
             unknown=counts.unknown,
         )
 
-        # 5) Complete ----------------------------------------------------
         self._runs.mark_completed(run)
         report.status = "analyzed"
-
-        # 6) Commit (pipeline owns the transaction) ----------------------
         await self._session.commit()
 
-        # 7) Result ------------------------------------------------------
         return AnalysisPipelineResult(
             analysis_run_id=run.id,
             lab_report_id=report.id,
             patient_id=payload.patient_id,
-            results=[self._to_output(r) for r in results],
+            patient=self._patient_output(patient, payload),
+            results=[self._to_output(result) for result in results],
             counts=counts,
         )
 
-    # ------------------------------------------------------------------
     async def _process_value(
         self,
         raw: RawLabValue,
@@ -170,16 +163,14 @@ class AnalysisPipeline:
         run: AnalysisRun,
         patient: Patient,
     ) -> LabResult:
-        # Effective measurement date, used consistently everywhere below.
-        # The original extracted date is preserved only in metadata_json.
         measured_at = raw.measured_at or report.report_date
-
         alias = await self._alias.resolve(raw.raw_parameter_name)
 
-        # (b) Alias cannot resolve -> UNKNOWN, no further engines.
         if not alias.is_resolved or alias.canonical_parameter_id is None:
             return self._passive_result(
-                raw, report, run,
+                raw,
+                report,
+                run,
                 measured_at=measured_at,
                 reason=_REASON_UNMAPPED,
                 parameter_id=None,
@@ -188,11 +179,12 @@ class AnalysisPipeline:
                 alias_confidence=alias.confidence,
             )
 
-        # (c) Load the canonical parameter.
         parameter = await self._parameters.get_by_id(alias.canonical_parameter_id)
         if parameter is None:
             return self._passive_result(
-                raw, report, run,
+                raw,
+                report,
+                run,
                 measured_at=measured_at,
                 reason=_REASON_RESOLVED_MISSING,
                 parameter_id=None,
@@ -201,10 +193,14 @@ class AnalysisPipeline:
                 alias_confidence=alias.confidence,
             )
 
-        # (d) Inactive / passive parameter -> store, do not classify.
-        if not parameter.active_phase1 or parameter.analysis_level == AnalysisLevel.L0:
+        if (
+            not parameter.active_phase1
+            or parameter.analysis_level == AnalysisLevel.L0
+        ):
             return self._passive_result(
-                raw, report, run,
+                raw,
+                report,
+                run,
                 measured_at=measured_at,
                 reason=_REASON_INACTIVE,
                 parameter_id=parameter.id,
@@ -213,7 +209,6 @@ class AnalysisPipeline:
                 alias_confidence=alias.confidence,
             )
 
-        # (e) Active -> reference, rule, trend.
         reference = await self._reference.resolve(
             ReferenceResolutionRequest(
                 canonical_parameter_id=parameter.id,
@@ -290,11 +285,12 @@ class AnalysisPipeline:
                 "reference_strategy": reference.resolved_from.value,
                 "reference_reason": reference.reason,
                 "trend_reason": trend.reason,
-                "extracted_measured_at": raw.measured_at.isoformat() if raw.measured_at else None,
+                "extracted_measured_at": (
+                    raw.measured_at.isoformat() if raw.measured_at else None
+                ),
             },
         )
 
-    # ------------------------------------------------------------------
     def _passive_result(
         self,
         raw: RawLabValue,
@@ -308,7 +304,6 @@ class AnalysisPipeline:
         canonical_name: str | None,
         alias_confidence: float,
     ) -> LabResult:
-        """Store a value without classification (unknown/inactive)."""
         return LabResult(
             patient_id=report.patient_id,
             lab_report_id=report.id,
@@ -339,11 +334,113 @@ class AnalysisPipeline:
             measured_at=measured_at,
             metadata_json={
                 "passive": True,
-                "extracted_measured_at": raw.measured_at.isoformat() if raw.measured_at else None,
+                "extracted_measured_at": (
+                    raw.measured_at.isoformat() if raw.measured_at else None
+                ),
             },
         )
 
-    # ------------------------------------------------------------------
+    @staticmethod
+    def _apply_patient_information(
+        patient: Patient,
+        payload: MockLabReportInput,
+    ) -> None:
+        info = payload.patient_information
+        metadata = dict(patient.metadata_json or {})
+
+        if info.full_name is not None:
+            metadata["display_name"] = info.full_name
+        if info.height_cm is not None:
+            metadata["height_cm"] = str(info.height_cm)
+        if info.weight_kg is not None:
+            metadata["weight_kg"] = str(info.weight_kg)
+
+        if info.sex is not None:
+            patient.sex = AnalysisPipeline._normalize_sex(info.sex)
+
+        if info.age is not None:
+            reference_date = payload.report_date or date.today()
+            patient.date_of_birth = AnalysisPipeline._birth_date_from_age(
+                info.age,
+                reference_date,
+            )
+            metadata["reported_age"] = info.age
+            metadata["reported_age_date"] = reference_date.isoformat()
+
+        patient.metadata_json = metadata
+
+    @staticmethod
+    def _normalize_sex(value: str) -> Sex:
+        normalized = value.strip().casefold()
+        if normalized in {"male", "erkek", "m"}:
+            return Sex.MALE
+        if normalized in {"female", "kadın", "kadin", "f"}:
+            return Sex.FEMALE
+        if normalized in {"other", "diğer", "diger"}:
+            return Sex.OTHER
+        return Sex.UNKNOWN
+
+    @staticmethod
+    def _birth_date_from_age(age: int, reference_date: date) -> date:
+        target_year = reference_date.year - age
+        try:
+            return reference_date.replace(year=target_year)
+        except ValueError:
+            return date(target_year, 2, 28)
+
+    @staticmethod
+    def _report_metadata(payload: MockLabReportInput) -> dict[str, object]:
+        context = {
+            "patient_information": payload.patient_information.model_dump(mode="json"),
+            "presenting_complaint": payload.presenting_complaint.model_dump(
+                mode="json"
+            ),
+            "clinical_history_details": payload.clinical_history_details.model_dump(
+                mode="json"
+            ),
+            "physical_exam": payload.physical_exam.model_dump(mode="json"),
+            "imaging_results": payload.imaging_results.model_dump(mode="json"),
+            "attachments": [
+                item.model_dump(mode="json") for item in payload.attachments
+            ],
+        }
+        return {
+            "clinical_context": context,
+            "clinical_context_source": "analysis_payload",
+            "chief_complaint": (
+                payload.presenting_complaint.chief_complaint
+                or payload.chief_complaint
+            ),
+            "clinical_history": (
+                payload.clinical_history_details.history_of_present_illness
+                or payload.clinical_history
+            ),
+        }
+
+    @staticmethod
+    def _patient_output(
+        patient: Patient,
+        payload: MockLabReportInput,
+    ) -> PatientMetadataOutput:
+        info = payload.patient_information
+        metadata = dict(patient.metadata_json or {})
+        age = info.age
+        if age is None:
+            age_years = AnalysisPipeline._age_years(
+                patient,
+                payload.report_date or date.today(),
+            )
+            age = int(age_years) if age_years is not None else None
+
+        return PatientMetadataOutput(
+            display_name=info.full_name or metadata.get("display_name"),
+            age=age,
+            sex=patient.sex.value if patient.sex is not None else None,
+            birth_date=patient.date_of_birth,
+            height_cm=info.height_cm or metadata.get("height_cm"),
+            weight_kg=info.weight_kg or metadata.get("weight_kg"),
+        )
+
     @staticmethod
     def _age_years(patient: Patient, at_date: date | None) -> float | None:
         if patient.date_of_birth is None:
@@ -357,14 +454,23 @@ class AnalysisPipeline:
     @staticmethod
     def _count(results: list[LabResult]) -> AnalysisCounts:
         total = len(results)
-        normal = sum(1 for r in results if r.result_status == ResultStatus.NORMAL)
-        low = sum(1 for r in results if r.result_status == ResultStatus.LOW)
-        high = sum(1 for r in results if r.result_status == ResultStatus.HIGH)
-        unknown = sum(1 for r in results if r.result_status == ResultStatus.UNKNOWN)
+        normal = sum(
+            1 for result in results if result.result_status == ResultStatus.NORMAL
+        )
+        low = sum(
+            1 for result in results if result.result_status == ResultStatus.LOW
+        )
+        high = sum(
+            1 for result in results if result.result_status == ResultStatus.HIGH
+        )
+        unknown = sum(
+            1 for result in results if result.result_status == ResultStatus.UNKNOWN
+        )
         needs_review = sum(
             1
-            for r in results
-            if r.needs_review or r.result_status == ResultStatus.NEEDS_REVIEW
+            for result in results
+            if result.needs_review
+            or result.result_status == ResultStatus.NEEDS_REVIEW
         )
         return AnalysisCounts(
             total=total,
