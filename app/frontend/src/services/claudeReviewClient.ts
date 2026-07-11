@@ -4,6 +4,11 @@ import type { ClinicalHypothesis } from './clinicalHypothesesClient';
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000';
 
+export type ClaudeClinicalContext = {
+  chief_complaint: string | null;
+  clinical_history: string | null;
+};
+
 export type ClaudeReviewGenerationResult = {
   analysis_run_id: string;
   lab_report_id: string | null;
@@ -48,6 +53,7 @@ async function readErrorMessage(response: Response): Promise<string> {
 export async function generateClaudeAbnormalReview(
   analysisRunId: string,
   maxHypotheses: number,
+  clinicalContext?: ClaudeClinicalContext,
 ): Promise<ClaudeReviewGenerationResult> {
   const response = await fetch(
     `${API_BASE_URL}/analysis-runs/${analysisRunId}/clinical-hypotheses/generate`,
@@ -63,6 +69,8 @@ export async function generateClaudeAbnormalReview(
         metadata_json: {
           source: 'lab_analysis_abnormal_review',
           normal_results_excluded: true,
+          chief_complaint: clinicalContext?.chief_complaint ?? null,
+          clinical_history: clinicalContext?.clinical_history ?? null,
         },
       }),
     },
