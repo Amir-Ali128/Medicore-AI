@@ -429,7 +429,7 @@ export default function ExtractionReviewPage() {
                           <td className="px-4 py-4 text-slate-600">
                             {result.needs_review ||
                             result.result_status === 'needs_review'
-                              ? 'Human review required'
+                              ? 'Doktor değerlendirmesi gerek'
                               : 'Ready for clinical workflow'}
                           </td>
                         </tr>
