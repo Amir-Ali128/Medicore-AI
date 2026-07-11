@@ -1,12 +1,14 @@
 import { useMemo, useState, type ChangeEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 
+import ClaudeEvaluationCard from '../components/clinical/ClaudeEvaluationCard';
+import ClinicalIntakeForm, {
+  createEmptyClinicalIntake,
+} from '../components/clinical/ClinicalIntakeForm';
 import SectionCard from '../components/ui/SectionCard';
 import {
   evaluateClaudeAbnormalResults,
-  type ClaudeEvaluationHypothesis,
   type ClaudeReviewGenerationResult,
-  type ClaudeSuggestedTest,
 } from '../services/claudeReviewClient';
 import {
   runBackendMockAnalysis,
@@ -42,32 +44,32 @@ type ResultTone = 'low' | 'high' | 'review';
 const MANUAL_FIELDS: ManualField[] = [
   {
     key: 'parameterName',
-    label: 'Test name',
+    label: 'Test adı',
     placeholder: 'Hemoglobin',
     wide: true,
   },
   {
     key: 'value',
-    label: 'Result',
+    label: 'Sonuç',
     placeholder: '13.8',
     inputMode: 'decimal',
   },
-  { key: 'unit', label: 'Unit', placeholder: 'g/dL' },
+  { key: 'unit', label: 'Birim', placeholder: 'g/dL' },
   {
     key: 'referenceMin',
-    label: 'Reference minimum',
+    label: 'Referans minimum',
     placeholder: '12',
     inputMode: 'decimal',
   },
   {
     key: 'referenceMax',
-    label: 'Reference maximum',
+    label: 'Referans maksimum',
     placeholder: '16',
     inputMode: 'decimal',
   },
   {
     key: 'measuredAt',
-    label: 'Measurement date',
+    label: 'Ölçüm tarihi',
     type: 'date',
     wide: true,
   },
@@ -126,7 +128,7 @@ function parseOptionalNumber(value: string): number | null {
 
   const parsed = Number(value.replace(',', '.'));
   if (!Number.isFinite(parsed)) {
-    throw new Error(`"${value}" is not a valid number.`);
+    throw new Error(`"${value}" geçerli bir sayı değil.`);
   }
 
   return parsed;
@@ -137,20 +139,20 @@ function toManualValue(row: ManualRow): ManualLabValueInput {
   const unit = row.unit.trim();
 
   if (!parameterName) {
-    throw new Error('Every manual result needs a test name.');
+    throw new Error('Her manuel sonuç için test adı gerekli.');
   }
 
   if (!row.value.trim()) {
-    throw new Error(`${parameterName}: result value is required.`);
+    throw new Error(`${parameterName}: sonuç değeri gerekli.`);
   }
 
   const normalizedValue = Number(row.value.replace(',', '.'));
   if (!Number.isFinite(normalizedValue)) {
-    throw new Error(`${parameterName}: result value must be numeric.`);
+    throw new Error(`${parameterName}: sonuç sayısal olmalı.`);
   }
 
   if (!unit) {
-    throw new Error(`${parameterName}: unit is required.`);
+    throw new Error(`${parameterName}: birim gerekli.`);
   }
 
   const referenceMin = parseOptionalNumber(row.referenceMin);
@@ -162,7 +164,7 @@ function toManualValue(row: ManualRow): ManualLabValueInput {
     referenceMin > referenceMax
   ) {
     throw new Error(
-      `${parameterName}: reference minimum cannot be greater than maximum.`,
+      `${parameterName}: minimum referans maksimumdan büyük olamaz.`,
     );
   }
 
@@ -257,169 +259,13 @@ function ResultGroup({
   );
 }
 
-function readStringList(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-
-  return value
-    .filter((item): item is string => typeof item === 'string')
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function readSuggestedTests(value: unknown): ClaudeSuggestedTest[] {
-  if (!Array.isArray(value)) return [];
-
-  return value.flatMap((item) => {
-    if (!item || typeof item !== 'object') return [];
-
-    const record = item as Record<string, unknown>;
-    const name = typeof record.name === 'string' ? record.name.trim() : '';
-
-    if (!name) return [];
-
-    const rationale =
-      typeof record.rationale === 'string' && record.rationale.trim()
-        ? record.rationale.trim()
-        : null;
-    const priority =
-      record.priority === 'routine' ||
-      record.priority === 'soon' ||
-      record.priority === 'urgent'
-        ? record.priority
-        : null;
-
-    return [{ name, rationale, priority }];
-  });
-}
-
-function SuggestedTestList({
-  title,
-  tests,
-}: {
-  title: string;
-  tests: ClaudeSuggestedTest[];
-}) {
-  if (tests.length === 0) return null;
-
-  return (
-    <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-      <h4 className="text-sm font-semibold text-slate-950">{title}</h4>
-      <ul className="mt-3 space-y-3">
-        {tests.map((test, index) => (
-          <li
-            key={`${test.name}-${index}`}
-            className="rounded-lg border border-slate-200 bg-white p-3"
-          >
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-sm font-semibold text-slate-900">
-                {test.name}
-              </span>
-              {test.priority && (
-                <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold uppercase text-slate-600">
-                  {test.priority}
-                </span>
-              )}
-            </div>
-            {test.rationale && (
-              <p className="mt-2 text-xs leading-5 text-slate-600">
-                {test.rationale}
-              </p>
-            )}
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-function ClaudeEvaluationCard({
-  hypothesis,
-}: {
-  hypothesis: ClaudeEvaluationHypothesis;
-}) {
-  const possibleConditions = readStringList(
-    hypothesis.metadata_json?.possible_conditions,
-  );
-  const laboratoryTests = readSuggestedTests(
-    hypothesis.metadata_json?.recommended_laboratory_tests,
-  );
-  const imagingTests = readSuggestedTests(
-    hypothesis.metadata_json?.recommended_imaging_tests,
-  );
-  const limitations = readStringList(hypothesis.metadata_json?.limitations);
-
-  return (
-    <article className="rounded-xl border border-violet-200 bg-white p-5">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h3 className="font-semibold text-slate-950">{hypothesis.title}</h3>
-          <p className="mt-2 text-sm leading-6 text-slate-600">
-            {hypothesis.summary}
-          </p>
-        </div>
-        <span className="whitespace-nowrap rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-700">
-          DOKTOR DEĞERLENDİRMESİ
-        </span>
-      </div>
-
-      {hypothesis.confidence !== null && (
-        <p className="mt-3 text-xs font-medium text-slate-500">
-          Model confidence: {Math.round(hypothesis.confidence * 100)}%
-        </p>
-      )}
-
-      <div className="mt-5 grid gap-4 lg:grid-cols-3">
-        {possibleConditions.length > 0 && (
-          <div className="rounded-lg border border-violet-200 bg-violet-50/60 p-4">
-            <h4 className="text-sm font-semibold text-violet-950">
-              Olası hastalıklar / durumlar
-            </h4>
-            <ul className="mt-3 space-y-2 text-sm leading-5 text-slate-700">
-              {possibleConditions.map((condition) => (
-                <li key={condition}>• {condition}</li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        <SuggestedTestList
-          title="Önerilen laboratuvar tetkikleri"
-          tests={laboratoryTests}
-        />
-        <SuggestedTestList
-          title="Önerilen görüntüleme tetkikleri"
-          tests={imagingTests}
-        />
-      </div>
-
-      {limitations.length > 0 && (
-        <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4">
-          <h4 className="text-sm font-semibold text-amber-950">
-            Sınırlılıklar
-          </h4>
-          <ul className="mt-2 space-y-1 text-xs leading-5 text-amber-900">
-            {limitations.map((limitation) => (
-              <li key={limitation}>• {limitation}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      <p className="mt-4 text-xs leading-5 text-slate-500">
-        Bu çıktı kesin tanı veya otomatik tetkik istemi değildir. Olası durumlar
-        ve tetkik seçenekleri doktor tarafından klinik bağlamla birlikte
-        değerlendirilmelidir.
-      </p>
-    </article>
-  );
-}
-
 export default function MockAnalysisPage() {
   const navigate = useNavigate();
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [manualReportDate, setManualReportDate] = useState(todayValue());
-  const [chiefComplaint, setChiefComplaint] = useState('');
-  const [clinicalHistory, setClinicalHistory] = useState('');
+  const [clinicalIntake, setClinicalIntake] = useState(
+    createEmptyClinicalIntake(),
+  );
   const [manualRows, setManualRows] = useState<ManualRow[]>([
     createManualRow(),
   ]);
@@ -511,26 +357,29 @@ export default function MockAnalysisPage() {
 
       if (action === 'sample') {
         acceptResult(await runBackendMockAnalysis());
-      } else if (action === 'pdf') {
-        if (!selectedFile) {
-          throw new Error('Please choose a PDF file first.');
-        }
-
-        acceptResult(await uploadLabReportPdf(selectedFile));
-      } else {
-        if (!manualReportDate) {
-          throw new Error('Report date is required for manual entry.');
-        }
-
-        acceptResult(
-          await submitManualLabResults({
-            report_date: manualReportDate,
-            chief_complaint: chiefComplaint.trim() || null,
-            clinical_history: clinicalHistory.trim() || null,
-            values: manualRows.map(toManualValue),
-          }),
-        );
+        return;
       }
+
+      if (action === 'pdf') {
+        if (!selectedFile) {
+          throw new Error('Önce bir PDF dosyası seçmelisin.');
+        }
+
+        acceptResult(await uploadLabReportPdf(selectedFile, clinicalIntake));
+        return;
+      }
+
+      if (!manualReportDate) {
+        throw new Error('Manuel giriş için rapor tarihi gerekli.');
+      }
+
+      acceptResult(
+        await submitManualLabResults({
+          report_date: manualReportDate,
+          clinical_context: clinicalIntake,
+          values: manualRows.map(toManualValue),
+        }),
+      );
     } catch (error) {
       setBackendError(error instanceof Error ? error.message : 'Analysis failed.');
     } finally {
@@ -548,10 +397,7 @@ export default function MockAnalysisPage() {
         await evaluateClaudeAbnormalResults(
           backendResult.analysis_run_id,
           Math.min(visibleResults.length, 5),
-          {
-            chief_complaint: chiefComplaint.trim() || null,
-            clinical_history: clinicalHistory.trim() || null,
-          },
+          clinicalIntake,
         ),
       );
     } catch (error) {
@@ -570,18 +416,28 @@ export default function MockAnalysisPage() {
           Lab Analysis
         </p>
         <h2 className="mt-2 text-3xl font-semibold text-slate-950">
-          Lab report analysis workspace
+          Klinik değerlendirme ve laboratuvar çalışma alanı
         </h2>
-        <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-500">
-          Upload a text-based PDF or enter results manually. Normal values are
-          processed but hidden from this review screen; abnormal and uncertain
-          values are separated below.
+        <p className="mt-3 max-w-4xl text-sm leading-6 text-slate-500">
+          Hasta bilgilerini, başvuru nedenini, klinik öyküyü, fizik muayeneyi,
+          laboratuvar sonuçlarını ve görüntüleme raporlarını tek analiz kaydında
+          topla.
         </p>
         <p className="mt-3 inline-flex rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-800">
-          Claude output is for physician review only and is not a diagnosis,
-          automatic test order, or treatment recommendation.
+          Claude çıktıları kesin tanı veya otomatik tetkik istemi değildir; doktor
+          değerlendirmesi gerekir.
         </p>
       </header>
+
+      <SectionCard
+        title="Klinik kayıt"
+        description="Alanlar isteğe bağlıdır. Girilen bilgiler analiz kaydına ve Claude değerlendirme bağlamına eklenir."
+      >
+        <ClinicalIntakeForm
+          value={clinicalIntake}
+          onChange={setClinicalIntake}
+        />
+      </SectionCard>
 
       <section className="rounded-xl border border-emerald-200 bg-emerald-50 p-5">
         <div className="grid gap-5 xl:grid-cols-2">
@@ -590,11 +446,11 @@ export default function MockAnalysisPage() {
               PDF upload
             </p>
             <h3 className="mt-1 text-xl font-semibold text-slate-950">
-              Upload PDF & analyze
+              Laboratuvar PDF&apos;si yükle ve analiz et
             </h3>
             <p className="mt-2 text-sm leading-6 text-slate-600">
-              The backend extracts supported values and stores a structured
-              analysis run.
+              Metin tabanlı PDF&apos;deki desteklenen değerler otomatik çıkarılır,
+              referanslarla karşılaştırılır ve anormal sonuçlar işaretlenir.
             </p>
             <div className="mt-4 rounded-lg border border-dashed border-emerald-300 bg-emerald-50/40 p-4">
               <input
@@ -631,15 +487,15 @@ export default function MockAnalysisPage() {
                   Manual entry
                 </p>
                 <h3 className="mt-1 text-xl font-semibold text-slate-950">
-                  Enter lab results manually
+                  Laboratuvar sonuçlarını manuel gir
                 </h3>
                 <p className="mt-2 text-sm leading-6 text-slate-600">
-                  Manual values, complaint, and history are stored with the same
-                  analysis report.
+                  Manuel değerler aynı alias, referans, kural, trend ve kalıcılık
+                  pipeline&apos;ını kullanır.
                 </p>
               </div>
               <label className="text-sm font-medium text-slate-700">
-                Report date
+                Rapor tarihi
                 <input
                   type="date"
                   value={manualReportDate}
@@ -651,53 +507,7 @@ export default function MockAnalysisPage() {
               </label>
             </div>
 
-            <div className="mt-5 rounded-lg border border-cyan-200 bg-cyan-50/50 p-4">
-              <p className="text-sm font-semibold text-slate-950">
-                Klinik bilgiler
-              </p>
-              <p className="mt-1 text-xs leading-5 text-slate-500">
-                Bu alanlar isteğe bağlıdır ve Claude değerlendirmesine klinik
-                bağlam olarak eklenir.
-              </p>
-
-              <div className="mt-4 grid gap-4">
-                <label className="text-sm font-medium text-slate-700">
-                  Şikayet
-                  <textarea
-                    value={chiefComplaint}
-                    onChange={(event: ChangeEvent<HTMLTextAreaElement>) =>
-                      setChiefComplaint(event.target.value)
-                    }
-                    maxLength={2000}
-                    rows={3}
-                    placeholder="Örn: Halsizlik, baş dönmesi ve çabuk yorulma..."
-                    className="mt-1 block w-full resize-y rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm leading-6 text-slate-950 placeholder:text-slate-400"
-                  />
-                  <span className="mt-1 block text-right text-xs text-slate-400">
-                    {chiefComplaint.length}/2000
-                  </span>
-                </label>
-
-                <label className="text-sm font-medium text-slate-700">
-                  Öykü
-                  <textarea
-                    value={clinicalHistory}
-                    onChange={(event: ChangeEvent<HTMLTextAreaElement>) =>
-                      setClinicalHistory(event.target.value)
-                    }
-                    maxLength={5000}
-                    rows={5}
-                    placeholder="Örn: Şikayetlerin başlangıcı, süresi, bilinen hastalıklar, kullanılan ilaçlar ve önceki tetkikler..."
-                    className="mt-1 block w-full resize-y rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm leading-6 text-slate-950 placeholder:text-slate-400"
-                  />
-                  <span className="mt-1 block text-right text-xs text-slate-400">
-                    {clinicalHistory.length}/5000
-                  </span>
-                </label>
-              </div>
-            </div>
-
-            <div className="mt-4 max-h-[34rem] space-y-4 overflow-y-auto pr-1">
+            <div className="mt-4 max-h-[38rem] space-y-4 overflow-y-auto pr-1">
               {manualRows.map((row, index) => (
                 <div
                   key={row.id}
@@ -705,16 +515,17 @@ export default function MockAnalysisPage() {
                 >
                   <div className="flex items-center justify-between">
                     <p className="text-sm font-semibold text-slate-950">
-                      Result {index + 1}
+                      Sonuç {index + 1}
                     </p>
                     <button
                       type="button"
                       onClick={() => removeManualRow(row.id)}
                       className="text-sm font-semibold text-red-600 hover:text-red-700"
                     >
-                      Remove
+                      Kaldır
                     </button>
                   </div>
+
                   <div className="mt-3 grid gap-3 sm:grid-cols-2">
                     {MANUAL_FIELDS.map((field) => (
                       <label
@@ -753,7 +564,7 @@ export default function MockAnalysisPage() {
                 }
                 className="rounded-lg border border-cyan-300 bg-white px-4 py-2 text-sm font-semibold text-cyan-800 hover:bg-cyan-50"
               >
-                + Add Result
+                + Sonuç ekle
               </button>
               <button
                 type="button"
@@ -826,9 +637,7 @@ export default function MockAnalysisPage() {
               <p className="mt-3 text-3xl font-semibold text-slate-950">
                 {value}
               </p>
-              <p className="mt-2 text-sm leading-6 text-slate-500">
-                {helper}
-              </p>
+              <p className="mt-2 text-sm leading-6 text-slate-500">{helper}</p>
             </div>
           ))}
         </div>
@@ -881,10 +690,10 @@ export default function MockAnalysisPage() {
               Evaluate abnormal results
             </h2>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
-              Claude evaluates non-normal structured results together with the
-              entered complaint and history. The output includes possible
-              conditions and laboratory or imaging tests a physician may
-              consider.
+              Claude evaluates non-normal structured results together with
+              patient information, complaint, history, examination and entered
+              imaging reports. The output includes possible conditions and
+              laboratory or imaging tests a physician may consider.
             </p>
           </div>
           <button
