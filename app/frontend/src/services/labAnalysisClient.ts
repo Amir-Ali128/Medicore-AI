@@ -11,6 +11,9 @@ export const LAST_PATIENT_AGE_KEY = 'medicore:lastPatientAge';
 export const LAST_PATIENT_SEX_KEY = 'medicore:lastPatientSex';
 export const LAST_PATIENT_BIRTH_DATE_KEY = 'medicore:lastPatientBirthDate';
 
+const DEMO_PATIENT_ID = '3fa85f64-5717-4562-b3fc-2c963f66afa6';
+const DEMO_UPLOADED_BY_USER_ID = '3fa85f64-5717-4562-b3fc-2c963f66afa6';
+
 export type LabResultStatus =
   | 'normal'
   | 'low'
@@ -81,6 +84,20 @@ export type LabAnalysisResponse = {
     needs_review: number;
     unknown: number;
   };
+};
+
+export type ManualLabValueInput = {
+  raw_parameter_name: string;
+  normalized_value: number;
+  unit: string;
+  extracted_reference_min: number | null;
+  extracted_reference_max: number | null;
+  measured_at: string | null;
+};
+
+export type ManualLabReportInput = {
+  report_date: string;
+  values: ManualLabValueInput[];
 };
 
 function authHeaders(): HeadersInit {
@@ -196,16 +213,35 @@ export async function saveLabReportPatientMetadata(
   return response.json();
 }
 
-export async function runBackendMockAnalysis(): Promise<LabAnalysisResponse> {
+async function submitStructuredLabReport(
+  payload: Record<string, unknown>,
+  errorPrefix: string,
+): Promise<LabAnalysisResponse> {
   const response = await fetch(`${API_BASE_URL}/lab-analysis/mock`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       ...authHeaders(),
     },
-    body: JSON.stringify({
-      patient_id: '3fa85f64-5717-4562-b3fc-2c963f66afa6',
-      uploaded_by_user_id: '3fa85f64-5717-4562-b3fc-2c963f66afa6',
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const errorText = await readErrorMessage(response);
+    throw new Error(`${errorPrefix}: ${response.status} ${errorText}`);
+  }
+
+  const result = (await response.json()) as LabAnalysisResponse;
+  rememberLatestAnalysis(result);
+
+  return result;
+}
+
+export async function runBackendMockAnalysis(): Promise<LabAnalysisResponse> {
+  return submitStructuredLabReport(
+    {
+      patient_id: DEMO_PATIENT_ID,
+      uploaded_by_user_id: DEMO_UPLOADED_BY_USER_ID,
       file_name: 'demo-cbc.pdf',
       report_date: '2026-07-06',
       values: [
@@ -220,18 +256,39 @@ export async function runBackendMockAnalysis(): Promise<LabAnalysisResponse> {
           measured_at: '2026-07-06',
         },
       ],
-    }),
+    },
+    'Backend analysis failed',
+  );
+}
+
+export async function submitManualLabResults(
+  input: ManualLabReportInput,
+): Promise<LabAnalysisResponse> {
+  const values = input.values.map((value) => {
+    const unit = value.unit.trim();
+
+    return {
+      raw_parameter_name: value.raw_parameter_name.trim(),
+      raw_value: String(value.normalized_value),
+      normalized_value: value.normalized_value,
+      unit: unit || null,
+      extracted_reference_min: value.extracted_reference_min,
+      extracted_reference_max: value.extracted_reference_max,
+      extracted_unit: unit || null,
+      measured_at: value.measured_at || input.report_date,
+    };
   });
 
-  if (!response.ok) {
-    const errorText = await readErrorMessage(response);
-    throw new Error(`Backend analysis failed: ${response.status} ${errorText}`);
-  }
-
-  const result = (await response.json()) as LabAnalysisResponse;
-  rememberLatestAnalysis(result);
-
-  return result;
+  return submitStructuredLabReport(
+    {
+      patient_id: DEMO_PATIENT_ID,
+      uploaded_by_user_id: DEMO_UPLOADED_BY_USER_ID,
+      file_name: `manual-entry-${input.report_date}.json`,
+      report_date: input.report_date,
+      values,
+    },
+    'Manual result analysis failed',
+  );
 }
 
 export async function uploadLabReportPdf(
