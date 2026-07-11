@@ -33,7 +33,7 @@ _MAX_UPLOAD_BYTES = 15 * 1024 * 1024
 
 
 async def _ensure_phase2_table(session: Any) -> None:
-    """Create only the additive Phase 2 table on existing Render databases."""
+    """Create or add only Phase 2 columns on existing Render databases."""
     await session.execute(
         sql_text(
             """
@@ -49,6 +49,7 @@ async def _ensure_phase2_table(session: Any) -> None:
                 original_text TEXT NOT NULL,
                 findings_json JSONB NOT NULL DEFAULT '[]'::jsonb,
                 measurements_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+                dexa_metrics_json JSONB NOT NULL DEFAULT '[]'::jsonb,
                 critical_findings_json JSONB NOT NULL DEFAULT '[]'::jsonb,
                 impression TEXT,
                 summary TEXT NOT NULL,
@@ -57,6 +58,14 @@ async def _ensure_phase2_table(session: Any) -> None:
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
+            """
+        )
+    )
+    await session.execute(
+        sql_text(
+            """
+            ALTER TABLE radiology_reports
+            ADD COLUMN IF NOT EXISTS dexa_metrics_json JSONB NOT NULL DEFAULT '[]'::jsonb
             """
         )
     )
@@ -144,6 +153,7 @@ async def _persist_report(
             "parser_warnings": analysis["warnings"],
             "original_text_length": len(payload.report_text),
             "physician_review_required": True,
+            "dexa_interpretation_is_assistive": bool(analysis["dexa_metrics"]),
         }
     )
 
@@ -158,6 +168,7 @@ async def _persist_report(
         original_text=payload.report_text,
         findings_json=analysis["findings"],
         measurements_json=analysis["measurements"],
+        dexa_metrics_json=analysis["dexa_metrics"],
         critical_findings_json=analysis["critical_findings"],
         impression=analysis["impression"],
         summary=analysis["summary"],
