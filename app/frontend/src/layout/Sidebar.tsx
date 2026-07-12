@@ -1,17 +1,15 @@
 import { NavLink } from 'react-router-dom';
 
 const navigationItems = [
-  { label: 'Ana sayfa', to: '/' },
-  { label: 'Hasta bilgileri', to: '/patients/demo' },
-  { label: 'Laboratuvar analizi', to: '/analysis/mock' },
+  { label: 'Ana Sayfa', to: '/' },
+  { label: 'Hasta Kaydı', to: '/patients/demo' },
+  { label: 'Laboratuvar', to: '/analysis/mock' },
   { label: 'Radyoloji', to: '/radiology' },
-  { label: 'Klinik bilgi ve test sonuçlarının değerlendirilmesi', to: '/extraction-review' },
-  { label: 'Ayrıntılı sonuçlar', to: '/analysis/results' },
-  { label: 'Klinik yorumlar', to: '/clinical-hypotheses' },
-  { label: 'Hekim onayı', to: '/doctor-review' },
-  { label: 'Hekim iş listesi', to: '/doctor-worklist' },
-  { label: 'Geçmiş sonuçlar', to: '/timeline' },
-  { label: 'Hasta geçmişi', to: '/patient-history' },
+  { label: 'Değerlendirme', to: '/extraction-review' },
+  { label: 'Sonuçlar', to: '/analysis/results' },
+  { label: 'Hekim İşlemleri', to: '/doctor-worklist' },
+  { label: 'Geçmiş Sonuçlar', to: '/timeline' },
+  { label: 'Hasta Arşivi', to: '/patient-history' },
 ];
 
 const getLinkClassName = ({ isActive }: { isActive: boolean }) =>
@@ -30,9 +28,8 @@ export default function Sidebar() {
           <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-blue-600 text-lg font-bold text-white shadow-sm">
             M
           </div>
-
           <p className="mt-4 text-xs font-semibold uppercase text-cyan-700">
-            Klinik değerlendirme
+            Klinik Değerlendirme
           </p>
         </div>
 
@@ -44,12 +41,9 @@ export default function Sidebar() {
           ))}
         </nav>
 
-        <div className="mt-auto rounded-lg border border-emerald-100 bg-emerald-50 p-4">
-          <p className="text-xs font-semibold uppercase text-emerald-800">
-            Sistem durumu
-          </p>
-          <p className="mt-2 text-sm leading-6 text-slate-600">
-            Laboratuvar ve klinik kayıt akışları backend ile bağlantılıdır.
+        <div className="mt-auto rounded-lg border border-blue-100 bg-blue-50 p-4">
+          <p className="text-sm leading-6 text-blue-900">
+            Yeni hastaya geçmeden önce üstteki <strong>Hastayı kaydet ve temizle</strong> düğmesini kullanın.
           </p>
         </div>
       </aside>
