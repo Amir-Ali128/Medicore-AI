@@ -1,4 +1,5 @@
 export const PATIENT_HISTORY_KEY = 'medicore:patientHistory';
+export const ACTIVE_CLINICAL_INTAKE_KEY = 'medicore:activeClinicalIntake';
 
 const ACTIVE_PATIENT_KEYS = [
   'medicore:lastAnalysisRunId',
@@ -8,6 +9,7 @@ const ACTIVE_PATIENT_KEYS = [
   'medicore:lastPatientAge',
   'medicore:lastPatientSex',
   'medicore:lastPatientBirthDate',
+  ACTIVE_CLINICAL_INTAKE_KEY,
 ] as const;
 
 export type PatientHistoryRecord = {
@@ -44,9 +46,7 @@ function getFirstStoredValue(keys: string[]) {
 
 function collectActiveSnapshot() {
   const snapshot: Record<string, string> = {};
-  for (let index = 0; index < localStorage.length; index += 1) {
-    const key = localStorage.key(index);
-    if (!key || !key.startsWith('medicore:last')) continue;
+  for (const key of ACTIVE_PATIENT_KEYS) {
     const value = localStorage.getItem(key);
     if (value !== null) snapshot[key] = value;
   }
@@ -101,12 +101,7 @@ export function archiveActivePatientSession(): PatientHistoryRecord | null {
 }
 
 export function clearActivePatientSession() {
-  const keysToRemove: string[] = [];
-  for (let index = 0; index < localStorage.length; index += 1) {
-    const key = localStorage.key(index);
-    if (key?.startsWith('medicore:last')) keysToRemove.push(key);
-  }
-  keysToRemove.forEach((key) => localStorage.removeItem(key));
+  ACTIVE_PATIENT_KEYS.forEach((key) => localStorage.removeItem(key));
 }
 
 export function startNewPatientSession() {
