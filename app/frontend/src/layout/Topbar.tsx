@@ -15,12 +15,12 @@ export default function Topbar() {
     navigate('/login', { replace: true });
   }
 
-  function handleNewPatient() {
+  function handleResetPatient() {
     const hasActiveSession = hasActivePatientSession();
     const confirmed = window.confirm(
       hasActiveSession
-        ? 'Mevcut hasta geçmişe kaydedilip tüm çalışma alanları yeni hasta için temizlensin mi?'
-        : 'Yeni ve boş bir hasta çalışma alanı açılsın mı?',
+        ? 'Bu hastanın mevcut kayıtları geçmişe alınacak ve tüm aktif hasta alanları temizlenecek. Devam edilsin mi?'
+        : 'Tüm aktif hasta alanları temizlenip boş bir hasta kaydı açılsın mı?',
     );
     if (!confirmed) return;
 
@@ -31,28 +31,22 @@ export default function Topbar() {
 
   return (
     <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/95 px-4 py-4 backdrop-blur sm:px-6 lg:px-8">
-      <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <h1 className="text-xl font-semibold text-slate-950">MediCore AI</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Hekim denetimli klinik karar destek sistemi
-          </p>
+          <p className="mt-1 text-sm text-slate-500">Klinik değerlendirme sistemi</p>
         </div>
 
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-          <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-medium text-blue-800">
-            Klinik çıktılar hekim değerlendirmesi için yapılandırılmıştır ve tanı değildir.
-          </div>
-
           <button
             type="button"
-            onClick={handleNewPatient}
-            className="rounded-lg border border-blue-200 bg-white px-4 py-3 text-sm font-semibold text-blue-700 transition hover:bg-blue-50"
+            onClick={handleResetPatient}
+            className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-700 transition hover:bg-blue-100"
           >
-            + Yeni hasta
+            Hastayı kaydet ve temizle
           </button>
 
-          <div className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3">
+          <div className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3 sm:justify-start">
             <div className="text-right">
               <p className="text-sm font-semibold text-slate-900">
                 {user?.full_name ?? 'Demo Hekim'}
