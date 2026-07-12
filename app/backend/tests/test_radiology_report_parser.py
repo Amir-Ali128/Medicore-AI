@@ -32,6 +32,43 @@ class RadiologyReportParserTests(unittest.TestCase):
         self.assertEqual(result["modality"], "XRAY")
         self.assertNotIn("Pnömotoraks", result["critical_findings"])
 
+    def test_formal_turkish_negation_does_not_flag_free_air(self) -> None:
+        report = """
+        KONTRASTLI ÜST ABDOMEN BT İNCELEMESİ
+        Karaciğer parankiminde fokal kitle lezyonu saptanmamıştır.
+        Pankreas başında kitle saptanmamıştır.
+        Patolojik boyutta lenf nodu izlenmemiştir.
+        Serbest hava veya serbest sıvı saptanmamıştır.
+        Sonuç: Distal koledok düzeyinde kalküle bağlı obstrüksiyon ile uyumlu görünüm.
+        """
+        result = analyze_radiology_report(report)
+
+        self.assertNotIn("Serbest hava", result["critical_findings"])
+        free_air_finding = next(
+            item for item in result["findings"] if "Serbest hava" in item["text"]
+        )
+        self.assertEqual(free_air_finding["classification"], "observation")
+        self.assertFalse(free_air_finding["is_critical"])
+
+        negated_mass_findings = [
+            item
+            for item in result["findings"]
+            if "kitle" in item["text"].lower()
+        ]
+        self.assertTrue(negated_mass_findings)
+        self.assertTrue(
+            all(item["classification"] == "observation" for item in negated_mass_findings)
+        )
+
+    def test_positive_free_air_is_still_critical(self) -> None:
+        report = """
+        ABDOMEN BT İNCELEMESİ
+        Batın içinde yaygın serbest hava izlenmektedir.
+        Perforasyon açısından acil değerlendirme önerilir.
+        """
+        result = analyze_radiology_report(report)
+        self.assertIn("Serbest hava", result["critical_findings"])
+
     def test_extracts_labelled_dexa_metrics_and_score_bands(self) -> None:
         report = """
         DEXA KEMİK MİNERAL YOĞUNLUĞU
