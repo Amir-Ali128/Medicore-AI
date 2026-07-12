@@ -4,7 +4,6 @@ import ProtectedRoute from './components/ProtectedRoute';
 import AppLayout from './layout/AppLayout';
 import AnalysisResultsPage from './pages/AnalysisResultsPage';
 import ClinicalHypothesesPage from './pages/ClinicalHypothesesPage';
-import DashboardPage from './pages/DashboardPage';
 import DoctorReviewPage from './pages/DoctorReviewPage';
 import DoctorWorklistPage from './pages/DoctorWorklistPage';
 import ExtractionReviewPage from './pages/ExtractionReviewPage';
@@ -28,7 +27,7 @@ export const router = createHashRouter([
         children: [
           {
             path: '/',
-            element: <DashboardPage />,
+            element: <PatientRecordPage />,
           },
           {
             path: '/patients/demo',
