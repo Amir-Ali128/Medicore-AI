@@ -98,11 +98,13 @@ export default function ExtractionReviewPage() {
       return;
     }
 
+    const currentAnalysisRunId: string = storedAnalysisRunId;
+
     async function loadResults() {
       try {
         setIsLoading(true);
         setError('');
-        setResults(await getAnalysisRunResults(storedAnalysisRunId));
+        setResults(await getAnalysisRunResults(currentAnalysisRunId));
       } catch (loadError) {
         setError(
           loadError instanceof Error
