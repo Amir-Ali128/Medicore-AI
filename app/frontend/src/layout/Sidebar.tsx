@@ -1,14 +1,11 @@
 import { NavLink } from 'react-router-dom';
 
 const navigationItems = [
-  { label: 'Ana Sayfa', to: '/' },
+  { label: 'Hasta Özeti', to: '/' },
   { label: 'Hasta Kaydı', to: '/patients/demo' },
   { label: 'Laboratuvar', to: '/analysis/mock' },
   { label: 'Radyoloji', to: '/radiology' },
-  { label: 'Değerlendirme', to: '/extraction-review' },
-  { label: 'Sonuçlar', to: '/analysis/results' },
-  { label: 'Hekim İşlemleri', to: '/doctor-worklist' },
-  { label: 'Geçmiş Sonuçlar', to: '/timeline' },
+  { label: 'Klinik Değerlendirme', to: '/clinical-hypotheses' },
   { label: 'Hasta Arşivi', to: '/patient-history' },
 ];
 
@@ -29,7 +26,7 @@ export default function Sidebar() {
             M
           </div>
           <p className="mt-4 text-xs font-semibold uppercase text-cyan-700">
-            Klinik Değerlendirme
+            Klinik Karar Desteği
           </p>
         </div>
 
@@ -43,7 +40,8 @@ export default function Sidebar() {
 
         <div className="mt-auto rounded-lg border border-blue-100 bg-blue-50 p-4">
           <p className="text-sm leading-6 text-blue-900">
-            Yeni hastaya geçmeden önce üstteki <strong>Hastayı kaydet ve temizle</strong> düğmesini kullanın.
+            Yeni hastaya geçmeden önce <strong>Hastayı kaydet ve temizle</strong>{' '}
+            düğmesini kullanın.
           </p>
         </div>
       </aside>
