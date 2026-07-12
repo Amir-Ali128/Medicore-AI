@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 
 import {
   evaluateClaudeAbnormalResults,
+  type ClaudeEvaluationHypothesis,
   type ClaudeReviewGenerationResult,
 } from '../../services/claudeReviewClient';
 import {
@@ -18,6 +19,20 @@ import ClaudeEvaluationCard from './ClaudeEvaluationCard';
 
 function isNonNormal(result: LabAnalysisResult) {
   return result.result_status !== 'normal';
+}
+
+function asClaudeHypothesis(
+  hypothesis: ClinicalHypothesis,
+): ClaudeEvaluationHypothesis {
+  return {
+    ...hypothesis,
+    metadata_json:
+      'metadata_json' in hypothesis &&
+      typeof hypothesis.metadata_json === 'object' &&
+      hypothesis.metadata_json !== null
+        ? (hypothesis.metadata_json as Record<string, unknown>)
+        : {},
+  } as ClaudeEvaluationHypothesis;
 }
 
 export default function UnifiedClinicalEvaluationPanel() {
@@ -181,7 +196,10 @@ export default function UnifiedClinicalEvaluationPanel() {
       ) : (
         <div className="mt-3 space-y-4">
           {hypotheses.slice(0, 5).map((hypothesis) => (
-            <ClaudeEvaluationCard key={hypothesis.id} hypothesis={hypothesis} />
+            <ClaudeEvaluationCard
+              key={hypothesis.id}
+              hypothesis={asClaudeHypothesis(hypothesis)}
+            />
           ))}
         </div>
       )}
