@@ -26,7 +26,6 @@ export default function Topbar() {
 
     startNewPatientSession();
     navigate('/analysis/mock', { replace: true });
-    window.location.reload();
   }
 
   return (
