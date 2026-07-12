@@ -67,29 +67,27 @@ const EXACT_TRANSLATIONS: Record<string, string> = {
   'Patient-facing visibility remains blocked until review rules pass.': 'Değerlendirme tamamlanana kadar hasta görünürlüğü kapalı kalır.',
   'Final clinical decisions belong to a physician.': 'Nihai klinik karar hekime aittir.',
   'Backend-connected patient': 'Sisteme bağlı hasta kaydı',
-  'Name': 'Ad Soyad',
-  'Age': 'Yaş',
-  'Sex': 'Cinsiyet',
+  Name: 'Ad Soyad',
+  Age: 'Yaş',
+  Sex: 'Cinsiyet',
   'Clinical outputs are structured for physician review and are not a diagnosis.': 'Klinik çıktılar hekim değerlendirmesi için yapılandırılmıştır ve tanı değildir.',
   'Analysis run:': 'Analiz çalışması:',
   'Lab report:': 'Laboratuvar raporu:',
   'Not stored locally': 'Yerel olarak kaydedilmedi',
   'Reference:': 'Referans:',
-  'NORMAL': 'NORMAL',
-  'HIGH': 'YÜKSEK',
-  'LOW': 'DÜŞÜK',
+  NORMAL: 'NORMAL',
+  HIGH: 'YÜKSEK',
+  LOW: 'DÜŞÜK',
   'NEEDS REVIEW': 'HEKİM KONTROLÜ',
   'PENDING REVIEW': 'DEĞERLENDİRME BEKLİYOR',
-  'COMPLETED': 'TAMAMLANDI',
-  'CREATED': 'OLUŞTURULDU',
-  'BLOCKED': 'KAPALI',
-  'PENDING': 'BEKLİYOR',
-  'APPROVED': 'ONAYLANDI',
-  'REJECTED': 'REDDEDİLDİ',
+  COMPLETED: 'TAMAMLANDI',
+  CREATED: 'OLUŞTURULDU',
+  BLOCKED: 'KAPALI',
+  PENDING: 'BEKLİYOR',
+  APPROVED: 'ONAYLANDI',
+  REJECTED: 'REDDEDİLDİ',
   'EXTRA TEST REQUESTED': 'EK TEST İSTENDİ',
-  'MODERATE': 'ORTA',
-  'LOW': 'DÜŞÜK',
-  'HIGH': 'YÜKSEK',
+  MODERATE: 'ORTA',
   'Analysis summary': 'Analiz özeti',
   'Normal rows are excluded from the visible review queue.': 'Normal sonuçlar görünür değerlendirme listesinin dışında tutulur.',
   'Processed results': 'İşlenen sonuçlar',
@@ -120,30 +118,33 @@ function translateText(value: string): string {
 
   for (const [pattern, replacement] of REGEX_TRANSLATIONS) {
     const match = trimmed.match(pattern);
-    if (match) {
-      return value.replace(trimmed, replacement(...match));
-    }
+    if (match) return value.replace(trimmed, replacement(...match));
   }
 
   return value;
 }
 
 function localizeNode(root: Node) {
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-  const textNodes: Text[] = [];
-  let current = walker.nextNode();
-  while (current) {
-    textNodes.push(current as Text);
-    current = walker.nextNode();
+  if (root.nodeType === Node.TEXT_NODE) {
+    const textNode = root as Text;
+    const parent = textNode.parentElement;
+    if (parent && !['SCRIPT', 'STYLE', 'TEXTAREA', 'OPTION'].includes(parent.tagName)) {
+      const translated = translateText(textNode.nodeValue ?? '');
+      if (translated !== textNode.nodeValue) textNode.nodeValue = translated;
+    }
+    return;
   }
 
-  for (const node of textNodes) {
-    const parent = node.parentElement;
-    if (!parent || ['SCRIPT', 'STYLE', 'TEXTAREA', 'OPTION'].includes(parent.tagName)) {
-      continue;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let current = walker.nextNode();
+  while (current) {
+    const textNode = current as Text;
+    const parent = textNode.parentElement;
+    if (parent && !['SCRIPT', 'STYLE', 'TEXTAREA', 'OPTION'].includes(parent.tagName)) {
+      const translated = translateText(textNode.nodeValue ?? '');
+      if (translated !== textNode.nodeValue) textNode.nodeValue = translated;
     }
-    const translated = translateText(node.nodeValue ?? '');
-    if (translated !== node.nodeValue) node.nodeValue = translated;
+    current = walker.nextNode();
   }
 }
 
@@ -154,10 +155,10 @@ export default function FrontendTurkishLocalizer() {
     const observer = new MutationObserver((mutations) => {
       for (const mutation of mutations) {
         if (mutation.type === 'characterData') {
-          localizeNode(mutation.target.parentNode ?? mutation.target);
-          continue;
+          localizeNode(mutation.target);
+        } else {
+          for (const node of mutation.addedNodes) localizeNode(node);
         }
-        for (const node of mutation.addedNodes) localizeNode(node);
       }
     });
 
