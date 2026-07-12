@@ -13,6 +13,15 @@ export default function SectionCard({
   action,
   children,
 }: SectionCardProps) {
+  const isLabPage =
+    typeof window !== 'undefined' &&
+    (window.location.hash.includes('/analysis/mock') ||
+      window.location.pathname.includes('/analysis/mock'));
+
+  if (isLabPage && title === 'Klinik kayıt') {
+    return null;
+  }
+
   return (
     <section className="rounded-lg border border-slate-200 bg-white shadow-soft">
       <div className="flex flex-col gap-4 border-b border-slate-200 px-5 py-4 sm:flex-row sm:items-start sm:justify-between">
