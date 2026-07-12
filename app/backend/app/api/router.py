@@ -12,12 +12,14 @@ from app.api.routes import (
     lab_reports,
     lab_results,
     patient_timeline,
+    patients,
     radiology_reports,
 )
 
 api_router = APIRouter()
 
 api_router.include_router(auth.router)
+api_router.include_router(patients.router)
 api_router.include_router(lab_analysis.router)
 api_router.include_router(lab_reports.router)
 api_router.include_router(analysis_runs.router)
