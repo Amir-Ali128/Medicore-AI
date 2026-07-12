@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { Link } from 'react-router-dom';
 
 import DexaMetricsPanel from '../components/clinical/DexaMetricsPanel';
 import SectionCard from '../components/ui/SectionCard';
+import { evaluateClaudeAbnormalResults } from '../services/claudeReviewClient';
 import {
   createManualRadiologyReport,
   listPatientRadiologyReports,
@@ -226,6 +228,7 @@ export default function RadiologyPage() {
   const [isHistoryLoading, setIsHistoryLoading] = useState(true);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [aiEvaluationCreated, setAiEvaluationCreated] = useState(false);
 
   const loadHistory = async () => {
     try {
@@ -255,6 +258,7 @@ export default function RadiologyPage() {
     setSelectedFile(null);
     setResult(null);
     setError('');
+    setAiEvaluationCreated(false);
     if (fileInputRef.current) fileInputRef.current.value = '';
     if (showMessage) {
       setNotice('Radyoloji giriş alanları temizlendi. Kaydedilmiş geçmiş raporlar korunuyor.');
@@ -266,6 +270,7 @@ export default function RadiologyPage() {
     event.preventDefault();
     setError('');
     setNotice('');
+    setAiEvaluationCreated(false);
     setIsSubmitting(true);
 
     try {
@@ -289,7 +294,31 @@ export default function RadiologyPage() {
         report,
         ...current.filter((item) => item.id !== report.id),
       ]);
-      setNotice('Rapor analiz edildi ve hasta geçmişine kaydedildi.');
+
+      const analysisRunId = localStorage.getItem('medicore:lastAnalysisRunId');
+      if (!analysisRunId) {
+        setNotice(
+          'Rapor kaydedildi. Tüm verilerle yapay zekâ değerlendirmesi için önce bu hastaya laboratuvar analizi ekleyin.',
+        );
+        return;
+      }
+
+      try {
+        const evaluation = await evaluateClaudeAbnormalResults(analysisRunId, 5);
+        setAiEvaluationCreated(true);
+        setNotice(
+          evaluation.created_count > 0
+            ? `Rapor kaydedildi. Klinik bilgiler, laboratuvar sonuçları ve görüntüleme raporları birlikte değerlendirilerek ${evaluation.created_count} hekim değerlendirmesi oluşturuldu.`
+            : 'Rapor kaydedildi ve tüm hasta verileri birlikte değerlendirildi. Yeni bir hekim değerlendirmesi oluşturulmadı.',
+        );
+      } catch (aiError) {
+        setNotice('Rapor hasta geçmişine kaydedildi. Yapay zekâ değerlendirmesi şu anda tamamlanamadı.');
+        setError(
+          aiError instanceof Error
+            ? aiError.message
+            : 'Birleşik klinik değerlendirme tamamlanamadı.',
+        );
+      }
     } catch (submitError) {
       setError(
         submitError instanceof Error
@@ -308,7 +337,7 @@ export default function RadiologyPage() {
           <p className="text-sm font-semibold uppercase tracking-wide text-cyan-700">Radyoloji</p>
           <h1 className="mt-2 text-3xl font-semibold text-slate-950">Görüntüleme raporları</h1>
           <p className="mt-3 max-w-4xl text-sm leading-6 text-slate-500">
-            Radyoloji veya DEXA raporunu ekleyin. Kaydedilen raporlar aktif hastanın geçmişinde tutulur.
+            Rapor kaydedildiğinde klinik bilgiler, laboratuvar sonuçları ve görüntüleme raporları birlikte yapay zekâ değerlendirmesine gönderilir.
           </p>
         </div>
         <button
@@ -323,6 +352,14 @@ export default function RadiologyPage() {
       {notice ? (
         <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800">
           {notice}
+          {aiEvaluationCreated ? (
+            <Link
+              to="/clinical-hypotheses"
+              className="ml-2 font-bold text-emerald-900 underline underline-offset-2"
+            >
+              Değerlendirmeyi aç
+            </Link>
+          ) : null}
         </div>
       ) : null}
 
@@ -438,7 +475,9 @@ export default function RadiologyPage() {
               disabled={isSubmitting}
               className="rounded-lg bg-blue-600 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {isSubmitting ? 'Analiz ediliyor…' : 'Analiz et ve kaydet'}
+              {isSubmitting
+                ? 'Kaydediliyor ve tüm veriler değerlendiriliyor…'
+                : 'Kaydet ve tüm verilerle değerlendir'}
             </button>
             <button
               type="button"
