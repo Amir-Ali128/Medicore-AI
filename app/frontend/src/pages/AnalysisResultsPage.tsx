@@ -7,11 +7,133 @@ import SectionCard from '../components/ui/SectionCard';
 import StatusBadge from '../components/ui/StatusBadge';
 import {
   getAnalysisRunResults,
+  type ClinicalIntakeInput,
   type LabAnalysisResult,
 } from '../services/labAnalysisClient';
 
+const ACTIVE_CLINICAL_INTAKE_KEY = 'medicore:activeClinicalIntake';
+
 type BadgeStatus = ComponentProps<typeof StatusBadge>['status'];
 type ResultTone = 'high' | 'low' | 'review';
+
+type ClinicalSummaryItem = {
+  label: string;
+  value: string;
+};
+
+function readClinicalIntake(): ClinicalIntakeInput | null {
+  try {
+    const raw = localStorage.getItem(ACTIVE_CLINICAL_INTAKE_KEY);
+    return raw ? (JSON.parse(raw) as ClinicalIntakeInput) : null;
+  } catch {
+    return null;
+  }
+}
+
+function textValue(value: string | number | null | undefined) {
+  if (value === null || value === undefined) return null;
+  const normalized = String(value).trim();
+  return normalized || null;
+}
+
+function sexLabel(value: string | null | undefined) {
+  const labels: Record<string, string> = {
+    male: 'Erkek',
+    female: 'Kadın',
+    other: 'Diğer',
+    unknown: 'Bilinmiyor',
+  };
+  return value ? labels[value] ?? value : null;
+}
+
+function buildClinicalSummary(
+  clinicalIntake: ClinicalIntakeInput | null,
+): ClinicalSummaryItem[] {
+  if (!clinicalIntake) return [];
+
+  const patient = clinicalIntake.patient_information;
+  const complaint = clinicalIntake.presenting_complaint;
+  const history = clinicalIntake.clinical_history_details;
+  const exam = clinicalIntake.physical_exam;
+
+  const bloodPressure =
+    exam.blood_pressure_systolic !== null ||
+    exam.blood_pressure_diastolic !== null
+      ? `${exam.blood_pressure_systolic ?? '-'} / ${exam.blood_pressure_diastolic ?? '-'} mmHg`
+      : null;
+
+  const items: Array<ClinicalSummaryItem | null> = [
+    textValue(patient.full_name)
+      ? { label: 'Hasta', value: textValue(patient.full_name)! }
+      : null,
+    textValue(patient.age)
+      ? { label: 'Yaş', value: `${textValue(patient.age)} yaş` }
+      : null,
+    sexLabel(patient.sex)
+      ? { label: 'Cinsiyet', value: sexLabel(patient.sex)! }
+      : null,
+    textValue(complaint.chief_complaint)
+      ? { label: 'Ana şikâyet', value: textValue(complaint.chief_complaint)! }
+      : null,
+    textValue(complaint.complaint_duration)
+      ? { label: 'Şikâyetin süresi', value: textValue(complaint.complaint_duration)! }
+      : null,
+    textValue(complaint.associated_symptoms)
+      ? {
+          label: 'Eşlik eden belirtiler',
+          value: textValue(complaint.associated_symptoms)!,
+        }
+      : null,
+    textValue(history.history_of_present_illness)
+      ? {
+          label: 'Şikâyetin öyküsü',
+          value: textValue(history.history_of_present_illness)!,
+        }
+      : null,
+    textValue(history.past_medical_history)
+      ? {
+          label: 'Geçmiş sağlık öyküsü',
+          value: textValue(history.past_medical_history)!,
+        }
+      : null,
+    textValue(history.family_history)
+      ? { label: 'Aile öyküsü', value: textValue(history.family_history)! }
+      : null,
+    textValue(history.medications)
+      ? { label: 'Kullanılan ilaçlar', value: textValue(history.medications)! }
+      : null,
+    textValue(history.allergies)
+      ? { label: 'Alerjiler', value: textValue(history.allergies)! }
+      : null,
+    bloodPressure ? { label: 'Tansiyon', value: bloodPressure } : null,
+    textValue(exam.pulse_bpm)
+      ? { label: 'Nabız', value: `${textValue(exam.pulse_bpm)} /dk` }
+      : null,
+    textValue(exam.temperature_c)
+      ? { label: 'Vücut sıcaklığı', value: `${textValue(exam.temperature_c)} °C` }
+      : null,
+    textValue(exam.respiratory_rate)
+      ? {
+          label: 'Solunum sayısı',
+          value: `${textValue(exam.respiratory_rate)} /dk`,
+        }
+      : null,
+    textValue(exam.oxygen_saturation_percent)
+      ? {
+          label: 'Oksijen satürasyonu',
+          value: `%${textValue(exam.oxygen_saturation_percent)}`,
+        }
+      : null,
+    textValue(exam.examination_findings)
+      ? {
+          label: 'Muayene bulguları',
+          value: textValue(exam.examination_findings)!,
+        }
+      : null,
+  ];
+
+  return items.filter((item): item is ClinicalSummaryItem => item !== null);
+}
 
 function toDisplayStatus(status: LabAnalysisResult['result_status']): BadgeStatus {
   if (status === 'low') return 'LOW' as BadgeStatus;
@@ -98,6 +220,7 @@ export default function AnalysisResultsPage() {
   const [results, setResults] = useState<LabAnalysisResult[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
+  const [clinicalIntake] = useState<ClinicalIntakeInput | null>(readClinicalIntake);
 
   const analysisRunId = localStorage.getItem('medicore:lastAnalysisRunId');
 
@@ -123,6 +246,11 @@ export default function AnalysisResultsPage() {
     }
     void loadResults();
   }, [analysisRunId]);
+
+  const clinicalSummary = useMemo(
+    () => buildClinicalSummary(clinicalIntake),
+    [clinicalIntake],
+  );
 
   const groupedResults = useMemo(
     () => ({
@@ -181,15 +309,42 @@ export default function AnalysisResultsPage() {
     <div className="space-y-8">
       <header>
         <p className="text-sm font-semibold uppercase text-cyan-700">
-          Ayrıntılı sonuçlar
+          Hasta raporu
         </p>
         <h2 className="mt-2 text-3xl font-semibold text-slate-950">
-          Anormal laboratuvar sonuçları
+          Klinik ve laboratuvar değerlendirmesi
         </h2>
         <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-500">
-          Normal sonuçlar gizlenir; yüksek, düşük ve hekim kontrolü gerektiren değerler ayrı gösterilir.
+          Klinik bilgiler ve laboratuvar sonuçları aynı raporda birlikte gösterilir.
         </p>
       </header>
+
+      {clinicalSummary.length > 0 ? (
+        <SectionCard
+          title="Klinik bilgiler"
+          description="Hasta kaydında girilen şikâyet, öykü, muayene ve yaşamsal bulgular."
+        >
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {clinicalSummary.map((item) => (
+              <div
+                key={item.label}
+                className="rounded-lg border border-slate-200 bg-slate-50 p-4"
+              >
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  {item.label}
+                </p>
+                <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-800">
+                  {item.value}
+                </p>
+              </div>
+            ))}
+          </div>
+        </SectionCard>
+      ) : (
+        <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-5 text-sm text-slate-600">
+          Bu rapor için klinik bilgi bulunmuyor. Hasta Kaydı bölümünden şikâyet, öykü ve muayene bilgileri eklenebilir.
+        </div>
+      )}
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {summaryCards.map(([title, value]) => (
@@ -203,7 +358,7 @@ export default function AnalysisResultsPage() {
         ))}
       </div>
 
-      <SectionCard title="Değerlendirme listesi" description="">
+      <SectionCard title="Laboratuvar değerlendirmesi" description="">
         {visibleResults.length === 0 ? (
           <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-6 text-sm text-emerald-800">
             Anormal veya hekim kontrolü gerektiren sonuç bulunmadı.
