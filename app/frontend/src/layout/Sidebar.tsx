@@ -1,19 +1,16 @@
 import { NavLink } from 'react-router-dom';
 
 const navigationItems = [
-  { label: 'Dashboard', to: '/' },
-  { label: 'Patient Detail', to: '/patients/demo' },
-  { label: 'Lab Analysis', to: '/analysis/mock' },
+  { label: 'Ana sayfa', to: '/' },
+  { label: 'Hasta bilgileri', to: '/patients/demo' },
+  { label: 'Laboratuvar analizi', to: '/analysis/mock' },
   { label: 'Radyoloji', to: '/radiology' },
-  {
-    label: 'Klinik bilgi ve test sonuçlarının değerlendirilmesi',
-    to: '/extraction-review',
-  },
-  { label: 'Results', to: '/analysis/results' },
-  { label: 'Clinical Review Prompts', to: '/clinical-hypotheses' },
-  { label: 'Doctor Review', to: '/doctor-review' },
-  { label: 'Doctor Worklist', to: '/doctor-worklist' },
-  { label: 'Timeline', to: '/timeline' },
+  { label: 'Klinik ve test değerlendirmesi', to: '/extraction-review' },
+  { label: 'Analiz sonuçları', to: '/analysis/results' },
+  { label: 'Klinik değerlendirme', to: '/clinical-hypotheses' },
+  { label: 'Hekim onayı', to: '/doctor-review' },
+  { label: 'Hekim iş listesi', to: '/doctor-worklist' },
+  { label: 'Hasta geçmişi', to: '/timeline' },
 ];
 
 const getLinkClassName = ({ isActive }: { isActive: boolean }) =>
@@ -34,7 +31,7 @@ export default function Sidebar() {
           </div>
 
           <p className="mt-4 text-xs font-semibold uppercase text-cyan-700">
-            Clinical Review
+            Klinik değerlendirme
           </p>
         </div>
 
@@ -48,11 +45,10 @@ export default function Sidebar() {
 
         <div className="mt-auto rounded-lg border border-emerald-100 bg-emerald-50 p-4">
           <p className="text-xs font-semibold uppercase text-emerald-800">
-            Backend Workspace
+            Sistem bağlantısı
           </p>
-
           <p className="mt-2 text-sm leading-6 text-slate-600">
-            Connected to backend workflow data.
+            Klinik veriler güvenli backend akışına bağlıdır.
           </p>
         </div>
       </aside>
