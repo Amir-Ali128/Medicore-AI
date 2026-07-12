@@ -5,6 +5,7 @@ const API_BASE_URL =
 
 export const DEMO_PATIENT_ID = '3fa85f64-5717-4562-b3fc-2c963f66afa6';
 const DEMO_UPLOADED_BY_USER_ID = '3fa85f64-5717-4562-b3fc-2c963f66afa6';
+export const ACTIVE_PATIENT_ID_KEY = 'medicore:activePatientId';
 export const LAST_RADIOLOGY_REPORT_ID_KEY = 'medicore:lastRadiologyReportId';
 
 export type RadiologyFinding = {
@@ -61,6 +62,10 @@ export type RadiologyReportInput = {
   reportText: string;
 };
 
+export function getActiveRadiologyPatientId(): string {
+  return localStorage.getItem(ACTIVE_PATIENT_ID_KEY) ?? DEMO_PATIENT_ID;
+}
+
 function authHeaders(): HeadersInit {
   const token = getAccessToken();
   return token ? { Authorization: `Bearer ${token}` } : {};
@@ -100,14 +105,14 @@ export async function createManualRadiologyReport(
       ...authHeaders(),
     },
     body: JSON.stringify({
-      patient_id: DEMO_PATIENT_ID,
+      patient_id: getActiveRadiologyPatientId(),
       uploaded_by_user_id: DEMO_UPLOADED_BY_USER_ID,
       report_date: input.reportDate,
       modality: input.modality,
       body_part: input.bodyPart,
       report_text: input.reportText,
       file_name: null,
-      metadata_json: { source: 'phase2_radiology_workspace' },
+      metadata_json: { source: 'radiology_workspace' },
     }),
   });
   return parseReportResponse(response);
@@ -119,7 +124,7 @@ export async function uploadRadiologyReportPdf(
 ): Promise<RadiologyReport> {
   const formData = new FormData();
   formData.append('file', file);
-  formData.append('patient_id', DEMO_PATIENT_ID);
+  formData.append('patient_id', getActiveRadiologyPatientId());
   formData.append('uploaded_by_user_id', DEMO_UPLOADED_BY_USER_ID);
   if (input.reportDate) formData.append('report_date', input.reportDate);
   if (input.modality) formData.append('modality', input.modality);
@@ -134,7 +139,7 @@ export async function uploadRadiologyReportPdf(
 }
 
 export async function listPatientRadiologyReports(
-  patientId = DEMO_PATIENT_ID,
+  patientId = getActiveRadiologyPatientId(),
 ): Promise<RadiologyReport[]> {
   const response = await fetch(
     `${API_BASE_URL}/radiology-reports/patient/${patientId}?limit=50`,
@@ -145,5 +150,8 @@ export async function listPatientRadiologyReports(
     throw new Error(`Radyoloji geçmişi yüklenemedi: ${response.status} ${message}`);
   }
   const reports = (await response.json()) as RadiologyReport[];
-  return reports.map((report) => ({ ...report, dexa_metrics: report.dexa_metrics ?? [] }));
+  return reports.map((report) => ({
+    ...report,
+    dexa_metrics: report.dexa_metrics ?? [],
+  }));
 }
