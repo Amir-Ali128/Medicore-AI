@@ -11,6 +11,7 @@ import ExtractionReviewPage from './pages/ExtractionReviewPage';
 import LoginPage from './pages/LoginPage';
 import MockAnalysisPage from './pages/MockAnalysisPage';
 import PatientDetailPage from './pages/PatientDetailPage';
+import PatientHistoryPage from './pages/PatientHistoryPage';
 import RadiologyPage from './pages/RadiologyPage';
 import TimelinePage from './pages/TimelinePage';
 
@@ -68,6 +69,10 @@ export const router = createBrowserRouter([
           {
             path: '/timeline',
             element: <TimelinePage />,
+          },
+          {
+            path: '/patient-history',
+            element: <PatientHistoryPage />,
           },
         ],
       },
