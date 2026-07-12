@@ -5,12 +5,13 @@ const navigationItems = [
   { label: 'Hasta bilgileri', to: '/patients/demo' },
   { label: 'Laboratuvar analizi', to: '/analysis/mock' },
   { label: 'Radyoloji', to: '/radiology' },
-  { label: 'Test sonuçlarını değerlendir', to: '/extraction-review' },
+  { label: 'Klinik bilgi ve test sonuçlarının değerlendirilmesi', to: '/extraction-review' },
   { label: 'Ayrıntılı sonuçlar', to: '/analysis/results' },
   { label: 'Klinik yorumlar', to: '/clinical-hypotheses' },
   { label: 'Hekim onayı', to: '/doctor-review' },
   { label: 'Hekim iş listesi', to: '/doctor-worklist' },
   { label: 'Geçmiş sonuçlar', to: '/timeline' },
+  { label: 'Hasta geçmişi', to: '/patient-history' },
 ];
 
 const getLinkClassName = ({ isActive }: { isActive: boolean }) =>
@@ -35,7 +36,7 @@ export default function Sidebar() {
           </p>
         </div>
 
-        <nav className="space-y-2">
+        <nav className="space-y-2 overflow-y-auto pr-1">
           {navigationItems.map((item) => (
             <NavLink key={item.to} to={item.to} className={getLinkClassName}>
               {item.label}
