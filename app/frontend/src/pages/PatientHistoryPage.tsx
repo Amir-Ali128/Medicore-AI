@@ -35,7 +35,7 @@ function RecordCard({
             {record.sex ?? 'Cinsiyet bilgisi yok'}
           </p>
           <p className="mt-2 text-xs text-slate-400">
-            Arşivlenme: {formatDate(record.archivedAt)}
+            Kaydedilme tarihi: {formatDate(record.archivedAt)}
           </p>
         </div>
 
@@ -45,35 +45,35 @@ function RecordCard({
             onClick={() => onRestore(record.id)}
             className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
           >
-            Kaydı aç
+            Hastayı aç
           </button>
           <button
             type="button"
             onClick={() => onDelete(record.id)}
             className="rounded-lg border border-red-200 bg-white px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-50"
           >
-            Geçmişten kaldır
+            Kaydı kaldır
           </button>
         </div>
       </div>
 
       <div className="mt-5 grid gap-3 md:grid-cols-3">
         <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-          <p className="text-xs font-semibold uppercase text-slate-500">Laboratuvar</p>
+          <p className="text-xs font-semibold uppercase text-slate-500">Laboratuvar analizi</p>
           <p className="mt-2 text-sm font-medium text-slate-800">
-            {record.analysisRunId ? 'Analiz kaydı mevcut' : 'Kayıt yok'}
+            {record.analysisRunId ? 'Mevcut' : 'Bulunmuyor'}
           </p>
         </div>
         <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-          <p className="text-xs font-semibold uppercase text-slate-500">Rapor</p>
+          <p className="text-xs font-semibold uppercase text-slate-500">Laboratuvar raporu</p>
           <p className="mt-2 text-sm font-medium text-slate-800">
-            {record.labReportId ? 'Laboratuvar raporu mevcut' : 'Kayıt yok'}
+            {record.labReportId ? 'Mevcut' : 'Bulunmuyor'}
           </p>
         </div>
         <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
           <p className="text-xs font-semibold uppercase text-slate-500">Radyoloji</p>
           <p className="mt-2 text-sm font-medium text-slate-800">
-            {record.radiologyReportId ? 'Radyoloji kaydı mevcut' : 'Kayıt yok'}
+            {record.radiologyReportId ? 'Mevcut' : 'Bulunmuyor'}
           </p>
         </div>
       </div>
@@ -93,7 +93,7 @@ export default function PatientHistoryPage() {
   }
 
   function handleDelete(recordId: string) {
-    const confirmed = window.confirm('Bu hasta kaydı yalnızca tarayıcı geçmişinden kaldırılsın mı?');
+    const confirmed = window.confirm('Bu hasta kaydı arşivden kaldırılsın mı?');
     if (!confirmed) return;
     deletePatientHistoryRecord(recordId);
     setVersion((current) => current + 1);
@@ -103,23 +103,23 @@ export default function PatientHistoryPage() {
     <div className="space-y-6">
       <header>
         <p className="text-sm font-semibold uppercase tracking-wide text-cyan-700">
-          Hasta kayıtları
+          Hasta Arşivi
         </p>
-        <h1 className="mt-2 text-3xl font-semibold text-slate-950">Hasta geçmişi</h1>
+        <h1 className="mt-2 text-3xl font-semibold text-slate-950">Kaydedilen hastalar</h1>
         <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-500">
-          Yeni hastaya geçerken arşivlenen çalışma kayıtlarını görüntüleyin. Bir kaydı açtığınızda laboratuvar, klinik değerlendirme ve radyoloji bağlantıları yeniden aktif hale gelir.
+          Yeni hastaya geçmeden önce kaydettiğiniz hastaları burada görebilir ve yeniden açabilirsiniz.
         </p>
       </header>
 
       <SectionCard
-        title="Arşivlenen hastalar"
-        description={`${history.length} hasta çalışma kaydı tarayıcı geçmişinde saklanıyor.`}
+        title="Hasta kayıtları"
+        description={`${history.length} hasta kaydı bulunuyor.`}
       >
         {history.length === 0 ? (
           <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center">
-            <p className="font-semibold text-slate-900">Henüz arşivlenmiş hasta yok</p>
+            <p className="font-semibold text-slate-900">Henüz kaydedilmiş hasta yok</p>
             <p className="mt-2 text-sm text-slate-500">
-              Üst bardaki “Yeni hasta” düğmesine bastığınızda mevcut hasta buraya taşınır.
+              Üst bardaki “Hastayı kaydet ve temizle” düğmesiyle mevcut hastayı buraya kaydedebilirsiniz.
             </p>
           </div>
         ) : (
