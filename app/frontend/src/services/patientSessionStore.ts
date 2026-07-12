@@ -2,6 +2,7 @@ export const PATIENT_HISTORY_KEY = 'medicore:patientHistory';
 export const ACTIVE_CLINICAL_INTAKE_KEY = 'medicore:activeClinicalIntake';
 
 const ACTIVE_PATIENT_KEYS = [
+  'medicore:activePatientId',
   'medicore:lastAnalysisRunId',
   'medicore:lastLabReportId',
   'medicore:lastRadiologyReportId',
@@ -107,6 +108,7 @@ export function clearActivePatientSession() {
 export function startNewPatientSession() {
   archiveActivePatientSession();
   clearActivePatientSession();
+  window.dispatchEvent(new Event('medicore:new-patient'));
 }
 
 export function restorePatientSession(recordId: string) {
