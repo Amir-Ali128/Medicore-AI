@@ -5,12 +5,12 @@ const navigationItems = [
   { label: 'Hasta bilgileri', to: '/patients/demo' },
   { label: 'Laboratuvar analizi', to: '/analysis/mock' },
   { label: 'Radyoloji', to: '/radiology' },
-  { label: 'Klinik ve test değerlendirmesi', to: '/extraction-review' },
-  { label: 'Analiz sonuçları', to: '/analysis/results' },
-  { label: 'Klinik değerlendirme', to: '/clinical-hypotheses' },
+  { label: 'Test sonuçlarını değerlendir', to: '/extraction-review' },
+  { label: 'Ayrıntılı sonuçlar', to: '/analysis/results' },
+  { label: 'Klinik yorumlar', to: '/clinical-hypotheses' },
   { label: 'Hekim onayı', to: '/doctor-review' },
   { label: 'Hekim iş listesi', to: '/doctor-worklist' },
-  { label: 'Hasta geçmişi', to: '/timeline' },
+  { label: 'Geçmiş sonuçlar', to: '/timeline' },
 ];
 
 const getLinkClassName = ({ isActive }: { isActive: boolean }) =>
@@ -45,10 +45,10 @@ export default function Sidebar() {
 
         <div className="mt-auto rounded-lg border border-emerald-100 bg-emerald-50 p-4">
           <p className="text-xs font-semibold uppercase text-emerald-800">
-            Sistem bağlantısı
+            Sistem durumu
           </p>
           <p className="mt-2 text-sm leading-6 text-slate-600">
-            Klinik veriler güvenli backend akışına bağlıdır.
+            Laboratuvar ve klinik kayıt akışları backend ile bağlantılıdır.
           </p>
         </div>
       </aside>
