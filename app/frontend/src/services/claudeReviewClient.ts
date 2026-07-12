@@ -136,6 +136,8 @@ function mergeRadiologyIntoContext(
         grouped.ultrasound.push(text);
         break;
       case 'CT':
+      case 'CT_WITH_CONTRAST':
+      case 'CT_WITHOUT_CONTRAST':
         grouped.ct.push(text);
         break;
       case 'MRI':
