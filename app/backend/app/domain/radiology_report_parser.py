@@ -1,8 +1,7 @@
 """Deterministic parser for text-based radiology and DXA/DEXA reports.
 
-Phase 2 deliberately starts with report text, not pixel/image interpretation. The
-parser extracts conservative structured signals for physician review and never
-turns report text into an automatic diagnosis or treatment recommendation.
+The parser extracts conservative structured signals for physician review. It does
+not interpret image pixels and never produces an automatic diagnosis.
 """
 
 from __future__ import annotations
@@ -12,7 +11,7 @@ import unicodedata
 from collections.abc import Iterable
 from typing import Any
 
-PARSER_VERSION = "phase2-radiology-text-v2-dexa"
+PARSER_VERSION = "phase2-radiology-text-v3-negation"
 
 _MODALITY_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
@@ -51,7 +50,10 @@ _BODY_PART_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
 _CRITICAL_TERMS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Pnömotoraks", ("pnomotoraks",)),
     ("Pulmoner emboli", ("pulmoner emboli", "emboli ile uyumlu")),
-    ("İntrakraniyal kanama", ("intrakraniyal kanama", "intraserebral kanama", "subaraknoid kanama", "subdural hematom")),
+    (
+        "İntrakraniyal kanama",
+        ("intrakraniyal kanama", "intraserebral kanama", "subaraknoid kanama", "subdural hematom"),
+    ),
     ("Akut enfarkt", ("akut enfarkt", "akut infarkt", "akut iskemi")),
     ("Aort diseksiyonu", ("aort diseksiyonu", "diseksiyon flebi")),
     ("Serbest hava", ("serbest hava", "pnomoperitoneum")),
@@ -61,22 +63,68 @@ _CRITICAL_TERMS: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 _ABNORMAL_TERMS: tuple[str, ...] = (
-    "lezyon", "nodul", "kitle", "efüzyon", "efuzyon", "ödem", "odem",
-    "konsolidasyon", "atelektazi", "fraktur", "kırık", "kirik", "stenoz",
-    "dilatasyon", "lenfadenopati", "hematom", "kanama", "infiltrasyon",
-    "trombus", "tromboz", "koleksiyon", "metastaz", "hipodens", "hiperdens",
-    "hiperintens", "hipointens",
+    "lezyon",
+    "nodul",
+    "kitle",
+    "efüzyon",
+    "efuzyon",
+    "ödem",
+    "odem",
+    "konsolidasyon",
+    "atelektazi",
+    "fraktur",
+    "kırık",
+    "kirik",
+    "stenoz",
+    "dilatasyon",
+    "lenfadenopati",
+    "hematom",
+    "kanama",
+    "infiltrasyon",
+    "trombus",
+    "tromboz",
+    "koleksiyon",
+    "metastaz",
+    "hipodens",
+    "hiperdens",
+    "hiperintens",
+    "hipointens",
 )
 
-_NEGATION_TERMS: tuple[str, ...] = (
-    "saptanmadi", "izlenmedi", "gorulmedi", "rastlanmadi", "mevcut degildir",
-    "tespit edilmedi", "yoktur", "yok ", "negatif", "lehine bulgu yok",
+# Values are matched after Turkish characters are ASCII-folded. Both short past
+# tense forms and formal report forms ending in -mıştır/-miştir are included.
+_NEGATION_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
+    re.compile(pattern)
+    for pattern in (
+        r"\bsaptanma(?:di|mistir|maktadir)\b",
+        r"\bizlenme(?:di|mistir|mektedir)\b",
+        r"\bgorulme(?:di|mistir|mektedir)\b",
+        r"\brastlanma(?:di|mistir)\b",
+        r"\btespit edilme(?:di|mistir)\b",
+        r"\bmevcut degildir\b",
+        r"\bmevcut degil\b",
+        r"\byoktur\b",
+        r"\byok\b",
+        r"\bnegatif\b",
+        r"\blehine bulgu yok\b",
+        r"\bpatoloji saptanma(?:di|mistir)\b",
+    )
 )
 
 _SECTION_HEADINGS = {
-    "bulgular", "bulgu", "findings", "sonuc", "sonuç", "izlenim",
-    "degerlendirme", "değerlendirme", "impression", "teknik",
-    "klinik bilgi", "klinik", "endikasyon",
+    "bulgular",
+    "bulgu",
+    "findings",
+    "sonuc",
+    "sonuç",
+    "izlenim",
+    "degerlendirme",
+    "değerlendirme",
+    "impression",
+    "teknik",
+    "klinik bilgi",
+    "klinik",
+    "endikasyon",
 }
 
 _MEASUREMENT_RE = re.compile(
@@ -108,16 +156,32 @@ _EXPLICIT_DEXA_CLASSIFICATIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("osteoporosis", ("osteoporoz", "osteoporosis")),
     ("low_bone_mass", ("osteopeni", "osteopenia", "dusuk kemik kutlesi", "düşük kemik kütlesi", "low bone mass")),
     ("normal", ("normal kemik", "normal aralik", "normal range")),
-    ("below_expected_for_age", ("yasa gore beklenen araligin altinda", "yaşa göre beklenen aralığın altında", "below expected range for age")),
-    ("within_expected_for_age", ("yasa gore beklenen aralikta", "yaşa göre beklenen aralıkta", "within expected range for age")),
+    (
+        "below_expected_for_age",
+        ("yasa gore beklenen araligin altinda", "yaşa göre beklenen aralığın altında", "below expected range for age"),
+    ),
+    (
+        "within_expected_for_age",
+        ("yasa gore beklenen aralikta", "yaşa göre beklenen aralıkta", "within expected range for age"),
+    ),
 )
 
 
 def _ascii_fold(value: str) -> str:
     replacements = str.maketrans(
         {
-            "ı": "i", "İ": "i", "ş": "s", "Ş": "s", "ğ": "g", "Ğ": "g",
-            "ü": "u", "Ü": "u", "ö": "o", "Ö": "o", "ç": "c", "Ç": "c",
+            "ı": "i",
+            "İ": "i",
+            "ş": "s",
+            "Ş": "s",
+            "ğ": "g",
+            "Ğ": "g",
+            "ü": "u",
+            "Ü": "u",
+            "ö": "o",
+            "Ö": "o",
+            "ç": "c",
+            "Ç": "c",
         }
     )
     translated = value.translate(replacements)
@@ -153,14 +217,26 @@ def _contains_any(value: str, terms: Iterable[str]) -> list[str]:
     return [term for term in terms if _ascii_fold(term) in normalized]
 
 
+def _has_negation(value: str) -> bool:
+    normalized = _normalized_for_match(value)
+    return any(pattern.search(normalized) for pattern in _NEGATION_PATTERNS)
+
+
 def _is_negated(sentence: str, matched_term: str) -> bool:
     normalized = _normalized_for_match(sentence)
     term = _ascii_fold(matched_term)
     position = normalized.find(term)
     if position < 0:
         return False
-    window = normalized[max(0, position - 60) : position + len(term) + 45]
-    return any(negation in window for negation in _NEGATION_TERMS)
+
+    # Radiology reports often place the negation after a coordinated phrase:
+    # "Serbest hava veya serbest sıvı saptanmamıştır." Use the whole sentence
+    # when it is short, otherwise a generous local window around the finding.
+    if len(normalized) <= 240:
+        window = normalized
+    else:
+        window = normalized[max(0, position - 100) : position + len(term) + 120]
+    return _has_negation(window)
 
 
 def infer_modality(text: str) -> str:
@@ -196,6 +272,7 @@ def _extract_impression(text: str) -> str | None:
                 return inline or None
     if start is None:
         return None
+
     collected: list[str] = []
     for line in lines[start:]:
         if not line:
@@ -254,7 +331,6 @@ def _explicit_dexa_classification(line: str) -> str | None:
 
 
 def _t_score_band(value: float | None) -> str | None:
-    """Assistive range only; never a standalone diagnosis."""
     if value is None:
         return None
     if value <= -2.5:
@@ -265,7 +341,6 @@ def _t_score_band(value: float | None) -> str | None:
 
 
 def _z_score_band(value: float | None) -> str | None:
-    """ISCD-style assistive age-expected band, not a diagnosis."""
     if value is None:
         return None
     return "below_expected_for_age" if value <= -2.0 else "within_expected_for_age"
@@ -294,8 +369,15 @@ def _extract_dexa_metrics(text: str) -> list[dict[str, Any]]:
     for line in lines:
         normalized = _normalized_for_match(line)
         score_tokens = (
-            " bmd ", " kmy ", " t-score ", " t score ", " t skoru ",
-            " z-score ", " z score ", " z skoru ", " g/cm",
+            " bmd ",
+            " kmy ",
+            " t-score ",
+            " t score ",
+            " t skoru ",
+            " z-score ",
+            " z score ",
+            " z skoru ",
+            " g/cm",
         )
         if not any(token in normalized for token in score_tokens):
             continue
@@ -309,7 +391,6 @@ def _extract_dexa_metrics(text: str) -> list[dict[str, Any]]:
 
         if bmd_match and t_score is None and z_score is None:
             t_score, z_score = _extract_unlabelled_scores(line, bmd_match)
-
         if bmd is None and t_score is None and z_score is None:
             continue
 
@@ -318,7 +399,6 @@ def _extract_dexa_metrics(text: str) -> list[dict[str, Any]]:
         if key in seen:
             continue
         seen.add(key)
-
         metrics.append(
             {
                 "site": site,
@@ -334,7 +414,6 @@ def _extract_dexa_metrics(text: str) -> list[dict[str, Any]]:
         )
         if len(metrics) >= 50:
             break
-
     return metrics
 
 
