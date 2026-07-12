@@ -1,10 +1,12 @@
 import { Outlet } from 'react-router-dom';
+import FrontendTurkishLocalizer from '../components/FrontendTurkishLocalizer';
 import Sidebar from './Sidebar';
 import Topbar from './Topbar';
 
 export default function AppLayout() {
   return (
     <div className="min-h-screen bg-slate-50 text-slate-950">
+      <FrontendTurkishLocalizer />
       <Sidebar />
       <div className="min-h-screen lg:pl-72">
         <Topbar />
