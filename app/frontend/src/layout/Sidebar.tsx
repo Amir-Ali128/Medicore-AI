@@ -1,12 +1,29 @@
 import { NavLink } from 'react-router-dom';
 
-const navigationItems = [
+const mainItems = [
   { label: 'Hasta Özeti', to: '/' },
   { label: 'Hasta Kaydı', to: '/patients/demo' },
-  { label: 'Laboratuvar', to: '/analysis/mock' },
-  { label: 'Radyoloji', to: '/radiology' },
   { label: 'Klinik Değerlendirme', to: '/clinical-hypotheses' },
   { label: 'Hasta Arşivi', to: '/patient-history' },
+];
+
+const workflowGroups = [
+  {
+    label: 'Laboratuvar',
+    to: '/analysis/mock',
+    children: [
+      { label: 'PDF yoluyla ekleme', to: '/analysis/mock?entry=pdf' },
+      { label: 'Manuel yolla ekleme', to: '/analysis/mock?entry=manual' },
+    ],
+  },
+  {
+    label: 'Radyoloji',
+    to: '/radiology',
+    children: [
+      { label: 'PDF yoluyla ekleme', to: '/radiology?entry=pdf' },
+      { label: 'Manuel yolla ekleme', to: '/radiology?entry=manual' },
+    ],
+  },
 ];
 
 const getLinkClassName = ({ isActive }: { isActive: boolean }) =>
@@ -15,6 +32,14 @@ const getLinkClassName = ({ isActive }: { isActive: boolean }) =>
     isActive
       ? 'bg-blue-50 text-blue-700 ring-1 ring-blue-100'
       : 'text-slate-600 hover:bg-slate-100 hover:text-slate-950',
+  ].join(' ');
+
+const getChildLinkClassName = ({ isActive }: { isActive: boolean }) =>
+  [
+    'block rounded-md px-3 py-2 text-xs font-medium leading-5 transition',
+    isActive
+      ? 'bg-cyan-50 text-cyan-800'
+      : 'text-slate-500 hover:bg-slate-50 hover:text-slate-800',
   ].join(' ');
 
 export default function Sidebar() {
@@ -31,7 +56,28 @@ export default function Sidebar() {
         </div>
 
         <nav className="space-y-2 overflow-y-auto pr-1">
-          {navigationItems.map((item) => (
+          {mainItems.slice(0, 2).map((item) => (
+            <NavLink key={item.to} to={item.to} className={getLinkClassName}>
+              {item.label}
+            </NavLink>
+          ))}
+
+          {workflowGroups.map((group) => (
+            <div key={group.to} className="rounded-lg border border-slate-100 bg-slate-50/60 p-1">
+              <NavLink to={group.to} className={getLinkClassName}>
+                {group.label}
+              </NavLink>
+              <div className="mt-1 space-y-1 border-l border-slate-200 pl-3">
+                {group.children.map((child) => (
+                  <NavLink key={child.to} to={child.to} className={getChildLinkClassName}>
+                    {child.label}
+                  </NavLink>
+                ))}
+              </div>
+            </div>
+          ))}
+
+          {mainItems.slice(2).map((item) => (
             <NavLink key={item.to} to={item.to} className={getLinkClassName}>
               {item.label}
             </NavLink>
@@ -48,9 +94,9 @@ export default function Sidebar() {
 
       <div className="border-b border-slate-200 bg-white px-4 py-3 lg:hidden">
         <nav className="flex gap-2 overflow-x-auto">
-          {navigationItems.map((item) => (
+          {[...mainItems, ...workflowGroups.flatMap((group) => group.children)].map((item) => (
             <NavLink
-              key={item.to}
+              key={`${item.to}-${item.label}`}
               to={item.to}
               className={({ isActive }) =>
                 [
