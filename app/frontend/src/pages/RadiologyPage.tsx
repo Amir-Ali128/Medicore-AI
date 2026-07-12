@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 
 import DexaMetricsPanel from '../components/clinical/DexaMetricsPanel';
 import SectionCard from '../components/ui/SectionCard';
@@ -16,7 +16,9 @@ const MODALITIES = [
   ['UNKNOWN', 'Otomatik belirle'],
   ['XRAY', 'Röntgen / Grafi'],
   ['ULTRASOUND', 'Ultrason / USG'],
-  ['CT', 'BT / CT'],
+  ['CT_WITH_CONTRAST', 'Kontrastlı BT'],
+  ['CT_WITHOUT_CONTRAST', 'Kontrastsız BT'],
+  ['CT', 'BT — kontrast bilgisi belirtilmemiş'],
   ['MRI', 'MR / MRI'],
   ['PET_CT', 'PET-BT'],
   ['DEXA', 'DEXA / DXA Kemik Yoğunluğu'],
@@ -51,6 +53,39 @@ function formatDate(value: string | null) {
   );
 }
 
+function modalityLabel(value: string) {
+  const labels: Record<string, string> = {
+    XRAY: 'Röntgen',
+    ULTRASOUND: 'Ultrasonografi',
+    CT: 'BT',
+    CT_WITH_CONTRAST: 'Kontrastlı BT',
+    CT_WITHOUT_CONTRAST: 'Kontrastsız BT',
+    MRI: 'MR',
+    PET_CT: 'PET-BT',
+    DEXA: 'DEXA',
+    UNKNOWN: 'Belirlenemedi',
+  };
+  return labels[value] ?? value;
+}
+
+function bodyPartLabel(value: string) {
+  const labels: Record<string, string> = {
+    BONE_DENSITY: 'Kemik yoğunluğu',
+    BRAIN: 'Beyin',
+    CHEST: 'Toraks',
+    ABDOMEN: 'Abdomen',
+    PELVIS: 'Pelvis',
+    SPINE: 'Omurga',
+    NECK: 'Boyun',
+    BREAST: 'Meme',
+    CARDIAC: 'Kalp',
+    MUSCULOSKELETAL: 'Kas-iskelet',
+    WHOLE_BODY: 'Tüm vücut',
+    OTHER: 'Diğer',
+  };
+  return labels[value] ?? value;
+}
+
 function findingClass(finding: RadiologyFinding) {
   if (finding.is_critical || finding.classification === 'critical') {
     return 'border-red-200 bg-red-50 text-red-950';
@@ -59,6 +94,12 @@ function findingClass(finding: RadiologyFinding) {
     return 'border-amber-200 bg-amber-50 text-amber-950';
   }
   return 'border-slate-200 bg-slate-50 text-slate-700';
+}
+
+function findingLabel(finding: RadiologyFinding) {
+  if (finding.is_critical || finding.classification === 'critical') return 'Kritik';
+  if (finding.classification === 'abnormal') return 'Dikkat';
+  return 'Bilgi';
 }
 
 function ReportResult({ report }: { report: RadiologyReport }) {
@@ -72,23 +113,11 @@ function ReportResult({ report }: { report: RadiologyReport }) {
     [report],
   );
 
-  const summaryCards = [
-    ['Modalite', report.modality],
-    ['Bölge', report.body_part],
-    ['Bulgu cümlesi', String(report.findings.length)],
-    ['Ölçüm', String(report.measurements.length)],
-    ...(report.dexa_metrics.length > 0
-      ? [['DEXA satırı', String(report.dexa_metrics.length)]]
-      : []),
-  ];
-
   return (
     <div className="space-y-5">
       {report.critical_findings.length > 0 ? (
         <div className="rounded-xl border border-red-300 bg-red-50 p-5">
-          <p className="text-xs font-bold uppercase tracking-wide text-red-700">
-            Kritik ifade uyarısı · Hekim doğrulaması gerekli
-          </p>
+          <p className="text-sm font-bold text-red-800">Kritik bulgular</p>
           <ul className="mt-3 space-y-2 text-sm font-semibold text-red-950">
             {report.critical_findings.map((finding) => (
               <li key={finding}>• {finding}</li>
@@ -97,12 +126,17 @@ function ReportResult({ report }: { report: RadiologyReport }) {
         </div>
       ) : (
         <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
-          Parser kritik terim uyarısı üretmedi. Bu, raporun klinik olarak normal olduğu anlamına gelmez.
+          Sistem kritik ifade saptamadı. Sonuç yine de hekim tarafından doğrulanmalıdır.
         </div>
       )}
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-        {summaryCards.map(([label, value]) => (
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {[
+          ['Tetkik', modalityLabel(report.modality)],
+          ['Bölge', bodyPartLabel(report.body_part)],
+          ['Bulgu', String(report.findings.length)],
+          ['Ölçüm', String(report.measurements.length)],
+        ].map(([label, value]) => (
           <div key={label} className="rounded-xl border border-slate-200 bg-white p-4">
             <p className="text-xs font-semibold uppercase text-slate-500">{label}</p>
             <p className="mt-2 text-lg font-semibold text-slate-950">{value}</p>
@@ -111,15 +145,11 @@ function ReportResult({ report }: { report: RadiologyReport }) {
       </div>
 
       <div className="rounded-xl border border-violet-200 bg-violet-50 p-5">
-        <p className="text-xs font-bold uppercase tracking-wide text-violet-700">
-          Yapılandırılmış özet
-        </p>
+        <p className="text-sm font-bold text-violet-800">Rapor özeti</p>
         <p className="mt-3 text-sm leading-7 text-slate-700">{report.summary}</p>
         {report.impression ? (
           <div className="mt-4 rounded-lg border border-violet-200 bg-white p-4">
-            <p className="text-xs font-semibold uppercase text-slate-500">
-              Rapor izlenimi / sonuç
-            </p>
+            <p className="text-xs font-semibold uppercase text-slate-500">Sonuç / izlenim</p>
             <p className="mt-2 text-sm leading-6 text-slate-800">{report.impression}</p>
           </div>
         ) : null}
@@ -129,7 +159,7 @@ function ReportResult({ report }: { report: RadiologyReport }) {
 
       {report.measurements.length > 0 ? (
         <section>
-          <h3 className="text-base font-semibold text-slate-950">Çıkarılan ölçümler</h3>
+          <h3 className="font-semibold text-slate-950">Ölçümler</h3>
           <div className="mt-3 grid gap-3 lg:grid-cols-2">
             {report.measurements.map((measurement, index) => (
               <div
@@ -139,9 +169,7 @@ function ReportResult({ report }: { report: RadiologyReport }) {
                 <p className="font-semibold text-cyan-950">
                   {measurement.value} {measurement.unit}
                 </p>
-                <p className="mt-2 text-xs leading-5 text-slate-600">
-                  {measurement.context}
-                </p>
+                <p className="mt-2 text-xs leading-5 text-slate-600">{measurement.context}</p>
               </div>
             ))}
           </div>
@@ -150,9 +178,9 @@ function ReportResult({ report }: { report: RadiologyReport }) {
 
       <section>
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 className="text-base font-semibold text-slate-950">Bulgu cümleleri</h3>
+          <h3 className="font-semibold text-slate-950">Bulgular</h3>
           <p className="text-xs text-slate-500">
-            {counts.critical} kritik · {counts.abnormal} anormal sinyal
+            {counts.critical} kritik · {counts.abnormal} dikkat gerektiren
           </p>
         </div>
         <div className="mt-3 space-y-3">
@@ -164,7 +192,7 @@ function ReportResult({ report }: { report: RadiologyReport }) {
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <p className="text-sm leading-6">{finding.text}</p>
                 <span className="rounded-full border border-current/20 bg-white/70 px-2 py-1 text-[10px] font-bold uppercase">
-                  {finding.classification}
+                  {findingLabel(finding)}
                 </span>
               </div>
             </article>
@@ -185,6 +213,7 @@ function ReportResult({ report }: { report: RadiologyReport }) {
 }
 
 export default function RadiologyPage() {
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [mode, setMode] = useState<InputMode>('manual');
   const [reportDate, setReportDate] = useState(todayValue());
   const [modality, setModality] = useState('UNKNOWN');
@@ -196,6 +225,7 @@ export default function RadiologyPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isHistoryLoading, setIsHistoryLoading] = useState(true);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
 
   const loadHistory = async () => {
     try {
@@ -216,9 +246,26 @@ export default function RadiologyPage() {
     void loadHistory();
   }, []);
 
+  function resetForm(showMessage = true) {
+    setMode('manual');
+    setReportDate(todayValue());
+    setModality('UNKNOWN');
+    setBodyPart('OTHER');
+    setReportText('');
+    setSelectedFile(null);
+    setResult(null);
+    setError('');
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    if (showMessage) {
+      setNotice('Radyoloji giriş alanları temizlendi. Kaydedilmiş geçmiş raporlar korunuyor.');
+      window.setTimeout(() => setNotice(''), 3000);
+    }
+  }
+
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setError('');
+    setNotice('');
     setIsSubmitting(true);
 
     try {
@@ -228,21 +275,21 @@ export default function RadiologyPage() {
         bodyPart: bodyPart === 'OTHER' ? null : bodyPart,
       };
 
-      let report: RadiologyReport;
-      if (mode === 'manual') {
-        report = await createManualRadiologyReport({ ...metadata, reportText });
-      } else {
-        if (!selectedFile) {
-          throw new Error('Önce bir radyoloji PDF dosyası seçmelisin.');
-        }
-        report = await uploadRadiologyReportPdf(selectedFile, metadata);
-      }
+      const report =
+        mode === 'manual'
+          ? await createManualRadiologyReport({ ...metadata, reportText })
+          : selectedFile
+            ? await uploadRadiologyReportPdf(selectedFile, metadata)
+            : (() => {
+                throw new Error('Önce bir radyoloji PDF dosyası seçmelisin.');
+              })();
 
       setResult(report);
       setHistory((current) => [
         report,
         ...current.filter((item) => item.id !== report.id),
       ]);
+      setNotice('Rapor analiz edildi ve hasta geçmişine kaydedildi.');
     } catch (submitError) {
       setError(
         submitError instanceof Error
@@ -256,30 +303,38 @@ export default function RadiologyPage() {
 
   return (
     <div className="space-y-6">
-      <header>
-        <p className="text-sm font-semibold uppercase tracking-wide text-cyan-700">
-          Faz 2 · Radyoloji ve DEXA
-        </p>
-        <h1 className="mt-2 text-3xl font-semibold text-slate-950">
-          Radyoloji rapor analizi
-        </h1>
-        <p className="mt-3 max-w-4xl text-sm leading-6 text-slate-500">
-          Metin tabanlı radyoloji veya DEXA PDF&apos;lerini ve rapor metnini aynı MediCore hasta kaydına ekle. Sistem modaliteyi, bölgeyi, ölçümleri, kritik terimleri ve DEXA skorlarını yapılandırır.
-        </p>
-        <p className="mt-3 inline-flex rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900">
-          Bu modül görüntünün kendisini yorumlamaz ve otomatik tanı üretmez. DEXA skor bantları dahil tüm çıktılar orijinal raporla hekim tarafından doğrulanmalıdır.
-        </p>
+      <header className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <p className="text-sm font-semibold uppercase tracking-wide text-cyan-700">Radyoloji</p>
+          <h1 className="mt-2 text-3xl font-semibold text-slate-950">Görüntüleme raporları</h1>
+          <p className="mt-3 max-w-4xl text-sm leading-6 text-slate-500">
+            Radyoloji veya DEXA raporunu ekleyin. Kaydedilen raporlar aktif hastanın geçmişinde tutulur.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => resetForm(true)}
+          className="rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+        >
+          Formu temizle
+        </button>
       </header>
+
+      {notice ? (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800">
+          {notice}
+        </div>
+      ) : null}
 
       <form onSubmit={submit} className="space-y-5">
         <SectionCard
-          title="Rapor kaynağı"
-          description="PDF yükle veya radyoloji/DEXA raporunun metnini yapıştır. Taranmış PDF için OCR sonraki sürümde eklenecek."
+          title="Yeni görüntüleme raporu"
+          description="Rapor metnini yapıştırın veya metin içeren bir PDF yükleyin."
         >
           <div className="flex flex-wrap gap-2">
             {([
               ['manual', 'Rapor metni'],
-              ['pdf', 'PDF yükleme'],
+              ['pdf', 'PDF yükle'],
             ] as const).map(([value, label]) => (
               <button
                 key={value}
@@ -308,7 +363,7 @@ export default function RadiologyPage() {
             </label>
 
             <label className="text-sm font-medium text-slate-700">
-              Modalite
+              Tetkik türü
               <select
                 value={modality}
                 onChange={(event) => {
@@ -342,7 +397,7 @@ export default function RadiologyPage() {
 
           {mode === 'manual' ? (
             <label className="mt-5 block text-sm font-medium text-slate-700">
-              Radyoloji / DEXA raporu
+              Rapor metni
               <textarea
                 rows={14}
                 minLength={10}
@@ -350,17 +405,15 @@ export default function RadiologyPage() {
                 required
                 value={reportText}
                 onChange={(event) => setReportText(event.target.value)}
-                placeholder="Bulgular, sonuç/izlenim veya DEXA BMD, T-score ve Z-score satırlarını buraya yapıştır..."
+                placeholder="Bulgular ve sonuç/izlenim bölümünü buraya yapıştırın..."
                 className={`${INPUT_CLASS} resize-y leading-6`}
               />
-              <span className="mt-1 block text-right text-xs text-slate-400">
-                {reportText.length}/250000
-              </span>
             </label>
           ) : (
             <label className="mt-5 block rounded-xl border border-dashed border-cyan-300 bg-cyan-50/50 p-5 text-sm font-medium text-slate-700">
-              Metin tabanlı radyoloji / DEXA PDF&apos;si
+              Radyoloji / DEXA PDF dosyası
               <input
+                ref={fileInputRef}
                 type="file"
                 accept="application/pdf,.pdf"
                 required
@@ -368,9 +421,7 @@ export default function RadiologyPage() {
                 className="mt-3 block w-full text-sm"
               />
               {selectedFile ? (
-                <span className="mt-2 block text-xs text-cyan-800">
-                  {selectedFile.name}
-                </span>
+                <span className="mt-2 block text-xs text-cyan-800">{selectedFile.name}</span>
               ) : null}
             </label>
           )}
@@ -381,28 +432,37 @@ export default function RadiologyPage() {
             </p>
           ) : null}
 
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="mt-5 rounded-lg bg-blue-600 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {isSubmitting ? 'Analiz ediliyor…' : 'Raporu analiz et ve kaydet'}
-          </button>
+          <div className="mt-5 flex flex-wrap gap-3">
+            <button
+              type="submit"
+              disabled={isSubmitting}
+              className="rounded-lg bg-blue-600 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isSubmitting ? 'Analiz ediliyor…' : 'Analiz et ve kaydet'}
+            </button>
+            <button
+              type="button"
+              onClick={() => resetForm(true)}
+              className="rounded-lg border border-slate-300 bg-white px-5 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              Temizle
+            </button>
+          </div>
         </SectionCard>
       </form>
 
       {result ? (
         <SectionCard
-          title="Son analiz"
-          description={`${formatDate(result.report_date)} · ${result.source_type}`}
+          title="Son rapor"
+          description={`${formatDate(result.report_date)} · ${modalityLabel(result.modality)}`}
         >
           <ReportResult report={result} />
         </SectionCard>
       ) : null}
 
       <SectionCard
-        title="Radyoloji ve DEXA geçmişi"
-        description="Aynı demo hasta kaydına eklenen Faz 2 raporları."
+        title="Görüntüleme geçmişi"
+        description="Aktif hastaya kaydedilen radyoloji ve DEXA raporları."
         action={
           <button
             type="button"
@@ -416,7 +476,7 @@ export default function RadiologyPage() {
         {isHistoryLoading ? (
           <p className="text-sm text-slate-500">Raporlar yükleniyor…</p>
         ) : history.length === 0 ? (
-          <p className="text-sm text-slate-500">Henüz kaydedilmiş radyoloji veya DEXA raporu yok.</p>
+          <p className="text-sm text-slate-500">Bu hasta için henüz görüntüleme raporu yok.</p>
         ) : (
           <div className="space-y-3">
             {history.map((report) => (
@@ -429,16 +489,11 @@ export default function RadiologyPage() {
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <p className="font-semibold text-slate-950">
-                      {report.modality} · {report.body_part}
+                      {modalityLabel(report.modality)} · {bodyPartLabel(report.body_part)}
                     </p>
                     <p className="mt-1 text-sm text-slate-500">
                       {formatDate(report.report_date)} · {report.file_name ?? 'Manuel rapor metni'}
                     </p>
-                    {report.dexa_metrics.length > 0 ? (
-                      <p className="mt-1 text-xs font-medium text-indigo-700">
-                        {report.dexa_metrics.length} DEXA ölçüm satırı çıkarıldı
-                      </p>
-                    ) : null}
                   </div>
                   <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
                     report.critical_findings.length > 0
@@ -447,7 +502,7 @@ export default function RadiologyPage() {
                   }`}>
                     {report.critical_findings.length > 0
                       ? `${report.critical_findings.length} kritik uyarı`
-                      : 'Kritik terim yok'}
+                      : 'Kritik uyarı yok'}
                   </span>
                 </div>
                 <p className="mt-3 text-sm leading-6 text-slate-600">
