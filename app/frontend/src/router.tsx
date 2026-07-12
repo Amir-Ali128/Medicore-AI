@@ -10,8 +10,8 @@ import DoctorWorklistPage from './pages/DoctorWorklistPage';
 import ExtractionReviewPage from './pages/ExtractionReviewPage';
 import LoginPage from './pages/LoginPage';
 import MockAnalysisPage from './pages/MockAnalysisPage';
-import PatientDetailPage from './pages/PatientDetailPage';
 import PatientHistoryPage from './pages/PatientHistoryPage';
+import PatientRecordPage from './pages/PatientRecordPage';
 import RadiologyPage from './pages/RadiologyPage';
 import TimelinePage from './pages/TimelinePage';
 
@@ -32,11 +32,11 @@ export const router = createHashRouter([
           },
           {
             path: '/patients/demo',
-            element: <PatientDetailPage />,
+            element: <PatientRecordPage />,
           },
           {
             path: '/patient-detail',
-            element: <PatientDetailPage />,
+            element: <PatientRecordPage />,
           },
           {
             path: '/analysis/mock',
