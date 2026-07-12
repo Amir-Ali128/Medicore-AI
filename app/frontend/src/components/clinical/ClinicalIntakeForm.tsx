@@ -243,7 +243,7 @@ export default function ClinicalIntakeForm({
             />
           </label>
 
-          <label className="text-sm font-medium text-slate-700">
+          <label className="text-sm font-medium text-slate-700 lg:col-span-2">
             Şikayetin süresi
             <input
               value={value.presenting_complaint.complaint_duration ?? ''}
@@ -251,20 +251,6 @@ export default function ClinicalIntakeForm({
                 updateComplaint('complaint_duration', textOrNull(event.target.value))
               }
               placeholder="Örn: 3 gündür, 2 aydır, aralıklı"
-              className={INPUT_CLASS}
-            />
-          </label>
-
-          <label className="text-sm font-medium text-slate-700">
-            Şiddet (0–10)
-            <input
-              type="number"
-              min={0}
-              max={10}
-              value={value.presenting_complaint.severity_score ?? ''}
-              onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                updateComplaint('severity_score', numberOrNull(event.target.value))
-              }
               className={INPUT_CLASS}
             />
           </label>
@@ -286,7 +272,7 @@ export default function ClinicalIntakeForm({
 
       <FormSection
         title="Tıbbi öykü"
-        description="Mevcut hastalıklar, geçmiş sağlık bilgileri, ilaçlar ve risk faktörleri."
+        description="Geçmiş sağlık bilgileri, ilaçlar ve risk faktörleri."
       >
         <div className="grid gap-4 lg:grid-cols-2">
           {[
@@ -294,11 +280,6 @@ export default function ClinicalIntakeForm({
               'history_of_present_illness',
               'Şikayetin öyküsü',
               'Başlangıcı, seyri, artıran veya azaltan durumlar',
-            ],
-            [
-              'current_medical_conditions',
-              'Mevcut hastalıklar',
-              'Diyabet, hipertansiyon, tiroid veya diğer kronik hastalıklar',
             ],
             [
               'past_medical_history',
@@ -369,7 +350,12 @@ export default function ClinicalIntakeForm({
                 type="number"
                 min={Number(min)}
                 max={Number(max)}
-                step={key === 'temperature_c' || key === 'oxygen_saturation_percent' ? '0.1' : '1'}
+                step={
+                  key === 'temperature_c' ||
+                  key === 'oxygen_saturation_percent'
+                    ? '0.1'
+                    : '1'
+                }
                 value={
                   value.physical_exam[
                     key as keyof ClinicalIntakeInput['physical_exam']
