@@ -98,7 +98,7 @@ export default function ExtractionReviewPage() {
       return;
     }
 
-    const currentAnalysisRunId: string = storedAnalysisRunId;
+    const currentAnalysisRunId = storedAnalysisRunId;
 
     async function loadResults() {
       try {
@@ -154,21 +154,30 @@ export default function ExtractionReviewPage() {
 
   return (
     <div className="space-y-8">
-      <header>
-        <p className="text-sm font-semibold uppercase text-cyan-700">
-          Klinik değerlendirme
-        </p>
-        <h1 className="mt-2 text-3xl font-semibold text-slate-950">
-          Klinik bilgi ve test sonuçlarının değerlendirilmesi
-        </h1>
-        <p className="mt-3 max-w-4xl text-sm leading-6 text-slate-500">
-          Son laboratuvar analizindeki düşük, yüksek, belirsiz veya hekim kontrolü
-          gerektiren sonuçları tek ekranda inceleyin.
-        </p>
-        <p className="mt-3 inline-flex rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-800">
-          Bu ekran kesin tanı üretmez; sonuçlar klinik bilgilerle birlikte hekim
-          tarafından değerlendirilmelidir.
-        </p>
+      <header className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+        <div>
+          <p className="text-sm font-semibold uppercase text-cyan-700">
+            Sonuç değerlendirme
+          </p>
+          <h1 className="mt-2 text-3xl font-semibold text-slate-950">
+            Klinik bilgiler ve test sonuçları
+          </h1>
+          <p className="mt-3 max-w-4xl text-sm leading-6 text-slate-500">
+            Son laboratuvar analizindeki değerleri, referans aralıklarını ve hekim
+            kontrolü gerektiren sonuçları tek ekranda inceleyin.
+          </p>
+          <p className="mt-3 inline-flex rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-800">
+            Bu ekran kesin tanı üretmez; sonuçlar hastanın klinik bilgileriyle birlikte
+            hekim tarafından değerlendirilmelidir.
+          </p>
+        </div>
+
+        <Link
+          to="/timeline"
+          className="inline-flex shrink-0 items-center justify-center rounded-lg border border-blue-200 bg-white px-4 py-2.5 text-sm font-semibold text-blue-700 transition hover:bg-blue-50"
+        >
+          Geçmiş sonuçları göster
+        </Link>
       </header>
 
       {!analysisRunId && !isLoading ? (
@@ -200,16 +209,16 @@ export default function ExtractionReviewPage() {
       {analysisRunId && !isLoading ? (
         <>
           <SectionCard
-            title="Genel durum"
-            description="Son laboratuvar analizindeki sonuçların kısa özeti."
+            title="Son laboratuvar analizinin özeti"
+            description="Mevcut analizde bulunan normal, anormal ve kontrol gerektiren sonuçların dağılımı."
           >
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
               {[
-                ['Toplam sonuç', summary.total],
+                ['Toplam test', summary.total],
                 ['Düşük / yüksek', summary.abnormal],
                 ['Hekim kontrolü', summary.needsReview],
                 ['Belirsiz', summary.unknown],
-                ['Hazır', summary.ready],
+                ['Hazır sonuç', summary.ready],
               ].map(([label, value]) => (
                 <div
                   key={String(label)}
@@ -225,22 +234,22 @@ export default function ExtractionReviewPage() {
 
             <div className="mt-5 flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 bg-white p-4">
               <span className="text-sm font-medium text-slate-700">
-                Değerlendirme durumu:
+                Genel değerlendirme durumu:
               </span>
               <StatusPill status={overallStatus} />
             </div>
           </SectionCard>
 
           <SectionCard
-            title="Klinik yorum"
-            description="Düşük ve yüksek sonuçlardan oluşturulan, hekim incelemesine yönelik açıklama."
+            title="Sonuçların klinik özeti"
+            description="Düşük ve yüksek sonuçlardan oluşturulan, hekim incelemesine yardımcı açıklama."
           >
             <DoctorLanguageSummary summary={doctorInterpretation} />
           </SectionCard>
 
           <SectionCard
             title="Test sonuçları"
-            description="Çıkarılan değerler, referans aralıkları ve kontrol durumları."
+            description="Test adı, ölçülen değer, referans aralığı ve kontrol durumu."
           >
             {results.length === 0 ? (
               <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-6 text-sm text-slate-600">
@@ -257,7 +266,7 @@ export default function ExtractionReviewPage() {
                           'Sonuç',
                           'Referans aralığı',
                           'Eşleşme güveni',
-                          'Durum',
+                          'Kontrol durumu',
                           'Açıklama',
                         ].map((heading) => (
                           <th
@@ -300,14 +309,15 @@ export default function ExtractionReviewPage() {
           </SectionCard>
 
           <SectionCard
-            title="Sonraki adımlar"
-            description="Değerlendirmeye uygun ekrana devam edin."
+            title="İlgili işlemler"
+            description="Sonuçları ayrıntılı inceleyin, klinik yorumlara geçin veya önceki kayıtları açın."
           >
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
               {[
-                ['Analiz sonuçları', '/analysis/results'],
-                ['Klinik değerlendirme', '/clinical-hypotheses'],
-                ['Hekim onayı', '/doctor-review'],
+                ['Ayrıntılı sonuçları aç', '/analysis/results'],
+                ['Klinik yorumları aç', '/clinical-hypotheses'],
+                ['Hekim onayına git', '/doctor-review'],
+                ['Geçmiş sonuçları göster', '/timeline'],
                 ['Yeni laboratuvar analizi', '/analysis/mock'],
               ].map(([label, to]) => (
                 <Link
