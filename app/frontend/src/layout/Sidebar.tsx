@@ -4,8 +4,11 @@ const navigationItems = [
   { label: 'Dashboard', to: '/' },
   { label: 'Patient Detail', to: '/patients/demo' },
   { label: 'Lab Analysis', to: '/analysis/mock' },
-  { label: 'Radyoloji ve DEXA', to: '/radiology' },
-  { label: 'PDF Veri Kontrolü', to: '/extraction-review' },
+  { label: 'Radyoloji', to: '/radiology' },
+  {
+    label: 'Klinik bilgi ve test sonuçlarının değerlendirilmesi',
+    to: '/extraction-review',
+  },
   { label: 'Results', to: '/analysis/results' },
   { label: 'Clinical Review Prompts', to: '/clinical-hypotheses' },
   { label: 'Doctor Review', to: '/doctor-review' },
@@ -15,7 +18,7 @@ const navigationItems = [
 
 const getLinkClassName = ({ isActive }: { isActive: boolean }) =>
   [
-    'block rounded-lg px-4 py-3 text-sm font-medium transition',
+    'block rounded-lg px-4 py-3 text-sm font-medium leading-5 transition',
     isActive
       ? 'bg-blue-50 text-blue-700 ring-1 ring-blue-100'
       : 'text-slate-600 hover:bg-slate-100 hover:text-slate-950',
@@ -62,7 +65,7 @@ export default function Sidebar() {
               to={item.to}
               className={({ isActive }) =>
                 [
-                  'shrink-0 rounded-lg px-3 py-2 text-sm font-medium',
+                  'shrink-0 rounded-lg px-3 py-2 text-sm font-medium leading-5',
                   isActive
                     ? 'bg-blue-50 text-blue-700'
                     : 'text-slate-600 hover:bg-slate-100',
