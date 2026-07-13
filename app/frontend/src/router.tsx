@@ -12,7 +12,6 @@ import MockAnalysisPage from './pages/MockAnalysisPage';
 import ModulePreviewPage from './pages/ModulePreviewPage';
 import PatientHistoryPage from './pages/PatientHistoryPage';
 import PatientRecordPage from './pages/PatientRecordPage';
-import RadiologyPage from './pages/RadiologyPage';
 import TimelinePage from './pages/TimelinePage';
 
 export const router = createHashRouter([
@@ -44,7 +43,11 @@ export const router = createHashRouter([
           },
           {
             path: '/radiology',
-            element: <RadiologyPage />,
+            element: <ModulePreviewPage module="radiology" />,
+          },
+          {
+            path: '/roadmap/radiology',
+            element: <ModulePreviewPage module="radiology" />,
           },
           {
             path: '/roadmap/imaging',
@@ -57,6 +60,10 @@ export const router = createHashRouter([
           {
             path: '/roadmap/cardiology',
             element: <ModulePreviewPage module="cardiology" />,
+          },
+          {
+            path: '/roadmap/microbiology',
+            element: <ModulePreviewPage module="microbiology" />,
           },
           {
             path: '/extraction-review',
