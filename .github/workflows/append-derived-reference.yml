@@ -1,0 +1,67 @@
+name: Append derived laboratory reference
+
+on:
+  push:
+    branches:
+      - feat/derived-bun-creatinine-ratio
+
+permissions:
+  contents: write
+
+jobs:
+  update-reference-csv:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Append BUN creatinine ratio reference
+        run: |
+          python - <<'PY'
+          import csv
+          from pathlib import Path
+
+          path = Path('app/backend/app/data/reference_ranges.csv')
+          with path.open('r', encoding='utf-8-sig', newline='') as handle:
+              reader = csv.DictReader(handle)
+              rows = list(reader)
+              fields = reader.fieldnames or []
+
+          names = {row.get('parameter_name', '').strip().casefold() for row in rows}
+          if 'bun/kreatinin oranı'.casefold() not in names:
+              row = {field: '' for field in fields}
+              row.update({
+                  'parameter_name': 'BUN/Kreatinin Oranı',
+                  'category': 'Biyokimya',
+                  'unit': 'oran',
+                  'adult_male_min': '10.0',
+                  'adult_male_max': '20.0',
+                  'adult_female_min': '10.0',
+                  'adult_female_max': '20.0',
+                  'elderly_male_min': '10.0',
+                  'elderly_male_max': '20.0',
+                  'elderly_female_min': '10.0',
+                  'elderly_female_max': '20.0',
+                  'is_qualitative': 'false',
+                  'clinical_note': 'BUN doğrudan mevcutsa BUN/Kreatinin olarak; yalnızca Üre mevcutsa (Üre/2.14)/Kreatinin olarak hesaplanır. Laboratuvarın kendi referans aralığı varsa önceliklidir.',
+                  'ratio_interpretation': '<10 düşük; 10-20 referans içinde; >20 yüksek. Klinik bağlam ve laboratuvar yöntemiyle birlikte değerlendirilmelidir.',
+                  'reference_source': 'MediCore derived parameter rule; laboratory-specific interval takes precedence',
+                  'last_updated': '2026-07-14',
+              })
+              rows.append(row)
+
+          with path.open('w', encoding='utf-8', newline='') as handle:
+              writer = csv.DictWriter(handle, fieldnames=fields)
+              writer.writeheader()
+              writer.writerows(rows)
+          PY
+
+          python -m py_compile app/backend/app/api/routes/lab_derived_parameters.py app/backend/app/main.py
+          git rm .github/workflows/append-derived-reference.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add app/backend/app/data/reference_ranges.csv app/backend/app/api/routes/lab_derived_parameters.py app/backend/app/main.py
+          git commit -m "Add BUN creatinine ratio reference" || exit 0
+          git push
