@@ -115,7 +115,7 @@ function StatusPill({ status }: { status: LabResultStatus | string }) {
 
 function formatReference(result: LabAnalysisResult) {
   if (result.reference_min === null && result.reference_max === null) {
-    return 'Needs review';
+    return 'Hekim kontrolü gerekli';
   }
 
   return `${result.reference_min ?? '-'} - ${result.reference_max ?? '-'} ${
@@ -213,14 +213,14 @@ function ResultGroup({
           <h3 className="font-semibold">{title}</h3>
           <p className="mt-1 text-sm opacity-80">{description}</p>
         </div>
-        <span className="text-sm font-semibold">{results.length} result(s)</span>
+        <span className="text-sm font-semibold">{results.length} sonuç</span>
       </div>
 
       <div className="overflow-x-auto bg-white">
         <table className="min-w-full divide-y divide-slate-200">
           <thead className="bg-slate-50">
             <tr>
-              {['Marker', 'Value', 'Reference', 'Status', 'Reason'].map(
+              {['Test', 'Sonuç', 'Referans Aralığı', 'Durum', 'Açıklama'].map(
                 (heading) => (
                   <th
                     key={heading}
@@ -320,7 +320,7 @@ export default function MockAnalysisPage() {
       'Below an available reference range.',
     ],
     [
-      'Needs review',
+      'Hekim Kontrolü Gerekenler',
       groupedResults.review.length,
       'Unknown or uncertain results separated for review.',
     ],
@@ -402,7 +402,7 @@ export default function MockAnalysisPage() {
       );
     } catch (error) {
       setClaudeError(
-        error instanceof Error ? error.message : 'Claude evaluation failed.',
+        error instanceof Error ? error.message : 'Yapay zekâ değerlendirmesi başarısız oldu.',
       );
     } finally {
       setIsClaudeEvaluating(false);
@@ -413,7 +413,7 @@ export default function MockAnalysisPage() {
     <div className="space-y-8">
       <header>
         <p className="text-sm font-semibold uppercase text-cyan-700">
-          Lab Analysis
+          Yapay Zekâ Laboratuvar Analizi
         </p>
         <h2 className="mt-2 text-3xl font-semibold text-slate-950">
           Klinik değerlendirme ve laboratuvar çalışma alanı
@@ -424,14 +424,14 @@ export default function MockAnalysisPage() {
           topla.
         </p>
         <p className="mt-3 inline-flex rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-800">
-          Claude çıktıları kesin tanı veya otomatik tetkik istemi değildir; doktor
+          Yapay zekâ çıktıları kesin tanı veya otomatik tetkik istemi değildir; hekim
           değerlendirmesi gerekir.
         </p>
       </header>
 
       <SectionCard
         title="Klinik kayıt"
-        description="Alanlar isteğe bağlıdır. Girilen bilgiler analiz kaydına ve Claude değerlendirme bağlamına eklenir."
+        description="Alanlar isteğe bağlıdır. Girilen bilgiler analiz kaydına ve yapay zekâ değerlendirme bağlamına eklenir."
       >
         <ClinicalIntakeForm
           value={clinicalIntake}
@@ -443,7 +443,7 @@ export default function MockAnalysisPage() {
         <div className="grid gap-5 xl:grid-cols-2">
           <div className="rounded-xl border border-emerald-200 bg-white p-5">
             <p className="text-sm font-semibold uppercase text-emerald-700">
-              PDF upload
+              PDF Yükleme
             </p>
             <h3 className="mt-1 text-xl font-semibold text-slate-950">
               Laboratuvar PDF&apos;si yükle ve analiz et
@@ -463,7 +463,7 @@ export default function MockAnalysisPage() {
               />
               {selectedFile && (
                 <p className="mt-3 text-sm text-slate-600">
-                  Selected:{' '}
+                  Seçilen dosya:{' '}
                   <strong className="text-slate-950">{selectedFile.name}</strong>
                 </p>
               )}
@@ -474,8 +474,8 @@ export default function MockAnalysisPage() {
                 className="mt-4 rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {busyAction === 'pdf'
-                  ? 'Uploading & analyzing...'
-                  : 'Upload & Analyze PDF'}
+                  ? 'PDF yükleniyor ve analiz ediliyor…'
+                  : 'PDF’yi Yükle ve Analiz Et'}
               </button>
             </div>
           </div>
@@ -484,7 +484,7 @@ export default function MockAnalysisPage() {
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <p className="text-sm font-semibold uppercase text-cyan-700">
-                  Manual entry
+                  Manuel Giriş
                 </p>
                 <h3 className="mt-1 text-xl font-semibold text-slate-950">
                   Laboratuvar sonuçlarını manuel gir
@@ -573,8 +573,8 @@ export default function MockAnalysisPage() {
                 className="rounded-lg bg-cyan-700 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-800 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {busyAction === 'manual'
-                  ? 'Saving & analyzing...'
-                  : 'Save & Analyze Manual Results'}
+                  ? 'Kaydediliyor ve analiz ediliyor…'
+                  : 'Sonuçları Kaydet ve Analiz Et'}
               </button>
             </div>
           </div>
@@ -583,10 +583,10 @@ export default function MockAnalysisPage() {
         <div className="mt-5 flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-5 md:flex-row md:items-center md:justify-between">
           <div>
             <p className="text-sm font-semibold uppercase text-slate-500">
-              Controlled backend sample
+              Kontrollü Örnek Analiz
             </p>
             <p className="mt-1 font-semibold text-slate-950">
-              Run demo Hemoglobin payload
+              Örnek hemoglobin sonucunu analiz et
             </p>
           </div>
           <button
@@ -595,7 +595,7 @@ export default function MockAnalysisPage() {
             disabled={busyAction !== null}
             className="rounded-lg bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
           >
-            {busyAction === 'sample' ? 'Running...' : 'Run Backend Analysis'}
+            {busyAction === 'sample' ? 'Analiz ediliyor…' : 'Örnek Analizi Başlat'}
           </button>
         </div>
 
@@ -608,7 +608,7 @@ export default function MockAnalysisPage() {
         {backendResult && (
           <div className="mt-4 flex flex-col gap-3 rounded-lg border border-emerald-200 bg-white p-4 text-sm md:flex-row md:items-center md:justify-between">
             <p className="text-slate-600">
-              <strong className="text-slate-950">Analysis completed.</strong>{' '}
+              <strong className="text-slate-950">Analiz tamamlandı.</strong>{' '}
               {visibleResults.length} non-normal result(s) are visible; normal
               rows are hidden.
             </p>
@@ -617,15 +617,15 @@ export default function MockAnalysisPage() {
               onClick={() => navigate('/analysis/results')}
               className="rounded-lg bg-blue-700 px-4 py-2 font-semibold text-white hover:bg-blue-800"
             >
-              View Full Analysis Record
+              Tüm Sonuçları Gör
             </button>
           </div>
         )}
       </section>
 
       <SectionCard
-        title="Analysis summary"
-        description="Normal rows are excluded from the visible review queue."
+        title="Laboratuvar Özeti"
+        description="Normal sonuçlar, klinik incelemeyi sadeleştirmek amacıyla gizlenmiştir."
       >
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {summaryCards.map(([title, value, helper]) => (
@@ -644,12 +644,12 @@ export default function MockAnalysisPage() {
       </SectionCard>
 
       <SectionCard
-        title="Abnormal and review-required results"
-        description="HIGH, LOW, NEEDS REVIEW, and UNKNOWN values are separated. Normal values are intentionally hidden."
+        title="Anormal ve Kontrol Gereken Sonuçlar"
+        description="Yüksek, düşük ve hekim kontrolü gerektiren sonuçlar ayrı gruplarda gösterilir. Normal sonuçlar bu görünümde gizlidir."
       >
         {!backendResult ? (
           <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-6 text-sm text-slate-600">
-            Complete an analysis to build the review queue.
+            Sonuçları görmek için önce bir analiz oluşturun.
           </div>
         ) : visibleResults.length === 0 ? (
           <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-6 text-sm text-emerald-800">
@@ -659,20 +659,20 @@ export default function MockAnalysisPage() {
         ) : (
           <div className="space-y-5">
             <ResultGroup
-              title="High results"
-              description="Above the available reference range."
+              title="Yüksek Sonuçlar"
+              description="Referans aralığının üzerinde."
               results={groupedResults.high}
               tone="high"
             />
             <ResultGroup
-              title="Low results"
-              description="Below the available reference range."
+              title="Düşük Sonuçlar"
+              description="Referans aralığının altında."
               results={groupedResults.low}
               tone="low"
             />
             <ResultGroup
-              title="Needs review"
-              description="Uncertain mapping, range, or classification."
+              title="Hekim Kontrolü Gerekenler"
+              description="Parametre eşleştirmesi, referans aralığı veya sınıflandırma belirsiz."
               results={groupedResults.review}
               tone="review"
             />
@@ -684,10 +684,10 @@ export default function MockAnalysisPage() {
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
             <p className="text-sm font-semibold uppercase text-violet-700">
-              Claude clinical copilot
+              Yapay Zekâ Destekli Klinik Değerlendirme
             </p>
             <h2 className="mt-1 text-xl font-semibold text-slate-950">
-              Evaluate abnormal results
+              Anormal Sonuçları Değerlendir
             </h2>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
               Claude evaluates non-normal structured results together with
@@ -707,14 +707,14 @@ export default function MockAnalysisPage() {
             className="rounded-lg bg-violet-700 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-800 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {isClaudeEvaluating
-              ? 'Claude is evaluating...'
-              : 'Evaluate with Claude'}
+              ? 'Yapay zekâ değerlendiriyor…'
+              : 'Tüm Verilerle Değerlendir'}
           </button>
         </div>
 
         {!backendResult && (
           <p className="mt-4 text-sm text-slate-600">
-            Complete an analysis before evaluating the results with Claude.
+            Yapay zekâ değerlendirmesi için önce laboratuvar analizi oluşturun.
           </p>
         )}
         {backendResult && visibleResults.length === 0 && (
@@ -732,7 +732,7 @@ export default function MockAnalysisPage() {
         {claudeResult && (
           <div className="mt-5 space-y-4">
             <div className="rounded-lg border border-violet-200 bg-white p-4 text-sm text-slate-700">
-              Claude prepared {claudeResult.created_count} physician-review
+              Yapay zekâ {claudeResult.created_count} physician-review
               evaluation(s).
             </div>
 

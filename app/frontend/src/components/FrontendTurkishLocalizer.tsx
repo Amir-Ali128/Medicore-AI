@@ -17,12 +17,11 @@ const EXACT_TRANSLATIONS: Record<string, string> = {
   Open: 'Aç',
   Refresh: 'Yenile',
   Search: 'Ara',
-  Routine: 'Rutin',
-  Dashboard: 'Ana Sayfa',
   'No data': 'Veri bulunamadı',
   'No results': 'Sonuç bulunamadı',
+  Dashboard: 'Ana Sayfa',
   'Patient Detail': 'Hasta Kaydı',
-  'Lab Analysis': 'Laboratuvar',
+  'Lab Analysis': 'Yapay Zekâ Laboratuvar Analizi',
   Results: 'Sonuçlar',
   Timeline: 'Geçmiş',
   'Doctor Review': 'Hekim Değerlendirmesi',
@@ -49,13 +48,11 @@ const EXACT_TRANSLATIONS: Record<string, string> = {
   'All values processed by the deterministic pipeline.': 'Analiz edilen toplam sonuç sayısı.',
   'Above an available reference range.': 'Referans aralığının üzerinde.',
   'Below an available reference range.': 'Referans aralığının altında.',
-  'Above the available reference range.': 'Referans aralığının üzerinde.',
-  'Below the available reference range.': 'Referans aralığının altında.',
   'Unknown or uncertain results separated for review.': 'Belirsiz sonuçlar hekim kontrolü için ayrıldı.',
-  'Uncertain mapping, range, or classification.': 'Parametre eşleştirmesi, referans aralığı veya sınıflandırma belirsiz.',
-  'Alias resolution is uncertain; human review required.': 'Parametre adı güvenle eşleştirilemedi; hekim kontrolü gerekir.',
-  'Parameter could not be mapped.': 'Parametre sistemdeki standart test adıyla eşleştirilemedi.',
+  'Normal rows are excluded from the visible review queue.': 'Normal sonuçlar, klinik incelemeyi sadeleştirmek amacıyla gizlenmiştir.',
   'Abnormal and review-required results': 'Anormal ve Kontrol Gereken Sonuçlar',
+  'HIGH, LOW, NEEDS REVIEW, and UNKNOWN values are separated. Normal values are intentionally hidden.':
+    'Yüksek, düşük ve hekim kontrolü gerektiren sonuçlar ayrı gruplarda gösterilir. Normal sonuçlar bu görünümde gizlidir.',
   'Complete an analysis to build the review queue.': 'Sonuçları görmek için önce bir analiz oluşturun.',
   'No abnormal or review-required result was found. Normal rows remain hidden by design.':
     'Anormal veya kontrol gerektiren sonuç bulunmadı.',
@@ -64,9 +61,13 @@ const EXACT_TRANSLATIONS: Record<string, string> = {
   'Claude clinical copilot': 'Yapay Zekâ Destekli Klinik Değerlendirme',
   'Evaluate abnormal results': 'Anormal Sonuçları Değerlendir',
   'Evaluate with Claude': 'Tüm Verilerle Değerlendir',
-  'Claude is evaluating...': 'Değerlendiriliyor…',
+  'Claude is evaluating...': 'Yapay zekâ değerlendiriyor…',
   'Complete an analysis before evaluating the results with Claude.':
     'Klinik değerlendirme için önce laboratuvar analizi oluşturun.',
+  'Claude evaluation is disabled because there are no non-normal results.':
+    'Anormal sonuç bulunmadığı için yapay zekâ değerlendirmesi kullanılamıyor.',
+  'Claude evaluates non-normal structured results together with patient information, complaint, history, examination and entered imaging reports. The output includes possible conditions and laboratory or imaging tests a physician may consider.':
+    'Yapay zekâ; anormal laboratuvar sonuçlarını hasta bilgileri, yakınmalar, klinik öykü, muayene bulguları ve eklenen görüntüleme raporlarıyla birlikte değerlendirir. Olası klinik durumlar ile hekim tarafından değerlendirilebilecek laboratuvar ve görüntüleme tetkiklerini sunar.',
   'Continue the workflow': 'Sonraki İşlemler',
   'View Analysis Results': 'Laboratuvar Sonuçlarını Aç',
   'Open Clinical Review Prompts': 'Klinik Değerlendirmeleri Aç',
@@ -95,7 +96,7 @@ const EXACT_TRANSLATIONS: Record<string, string> = {
   'Structured lab results loaded': 'Laboratuvar sonuçları yüklendi',
   Intake: 'Hasta kaydı',
   'Frontend workflow': 'Sistem işlemi',
-  'Lab analysis': 'Laboratuvar analizi',
+  'Lab analysis': 'Yapay Zekâ Laboratuvar Analizi',
   'Backend analysis service': 'Analiz sistemi',
   'Clinical review prompt': 'Klinik değerlendirme',
   'Doctor reviewer': 'Değerlendiren hekim',
@@ -126,6 +127,7 @@ const EXACT_TRANSLATIONS: Record<string, string> = {
   Status: 'Durum',
   Reason: 'Açıklama',
   'Review note': 'Açıklama',
+  Routine: 'Rutin',
   NORMAL: 'NORMAL',
   HIGH: 'YÜKSEK',
   LOW: 'DÜŞÜK',
@@ -149,7 +151,7 @@ const REGEX_TRANSLATIONS: Array<[RegExp, (...matches: string[]) => string]> = [
   [/^(\d+) structured lab result row loaded\.$/, (_all, count) => `${count} laboratuvar sonucu yüklendi.`],
   [/^(\d+) clinical review prompt available\.$/, (_all, count) => `${count} klinik değerlendirme mevcut.`],
   [/^(\d+) result\(s\)$/, (_all, count) => `${count} sonuç`],
-  [/^Claude prepared (\d+) (?:physician|hekim)-review evaluation\(s\)\.$/i, (_all, count) => `Yapay zekâ ${count} klinik değerlendirme hazırladı.`],
+  [/^Claude prepared (\d+) (?:physician-review|hekim incelemesine yönelik) evaluation\(s\)\.$/, (_all, count) => `Yapay zekâ ${count} klinik değerlendirme hazırladı.`],
 ];
 
 const TECHNICAL_REPLACEMENTS: Array<[RegExp, string]> = [
@@ -165,10 +167,9 @@ const TECHNICAL_REPLACEMENTS: Array<[RegExp, string]> = [
   [/\bConfidence Score\b/gi, 'Güven düzeyi'],
   [/\bModel confidence\b/gi, 'Güven düzeyi'],
   [/\bGenerated by Claude\b/gi, 'Yapay zekâ değerlendirmesi'],
+  [/\bClaude\b/gi, 'Yapay zekâ'],
   [/\bMetadata\b/gi, 'Ek bilgiler'],
   [/\bDraft(s)?\b/gi, 'Taslak'],
-  [/\bphysician-review\b/gi, 'hekim incelemesine yönelik'],
-  [/\bhuman review\b/gi, 'hekim kontrolü'],
 ];
 
 function translateText(value: string): string {
