@@ -1,0 +1,198 @@
+name: Patch lab parser and AI demo UI
+
+on:
+  push:
+    branches:
+      - fix/lab-parser-and-ai-localization
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply focused parser and UI fixes
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              if old not in text:
+                  raise SystemExit(f"Expected block not found: {label}")
+              return text.replace(old, new, 1)
+
+          backend_path = Path('app/backend/app/api/routes/lab_analysis.py')
+          backend = backend_path.read_text(encoding='utf-8')
+
+          backend = replace_once(
+              backend,
+              '        ("BAZOFIL_MUTLAK", "Bazofil Mutlak", "K/mm3"),\n',
+              '        ("BAZOFIL_MUTLAK", "Bazofil Mutlak", "K/mm3"),\n'
+              '        ("BUN", "BUN", "mg/dL"),\n'
+              '        ("KREATININ", "Kreatinin", "mg/dL"),\n'
+              '        ("BUN_KREATININ_ORANI", "BUN / Kreatinin", ""),\n'
+              '        ("NON_HDL", "Non-HDL", "mg/dL"),\n'
+              '        ("IG_MUTLAK", "IG Mutlak", "K/mm3"),\n'
+              '        ("IG_YUZDE", "IG %", "%"),\n',
+              'bootstrap parameters',
+          )
+
+          backend = replace_once(
+              backend,
+              '    "Non-HDL": {\n        "aliases": ["NON-HDL-KOLESTEROL", "NON HDL KOLESTEROL", "NON HDL CHOLESTEROL"],\n        "default_unit": "mg/dL",\n    },',
+              '    "Non-HDL": {\n'
+              '        "aliases": [\n'
+              '            "NON-HDL",\n'
+              '            "NON HDL",\n'
+              '            "NON-HDL KOLESTEROL",\n'
+              '            "NON HDL KOLESTEROL",\n'
+              '            "NON-HDL-KOLESTEROL",\n'
+              '            "NON HDL CHOLESTEROL",\n'
+              '            "NON-HDL CHOLESTEROL",\n'
+              '        ],\n'
+              '        "default_unit": "mg/dL",\n'
+              '    },',
+              'Non-HDL aliases',
+          )
+
+          backend = replace_once(
+              backend,
+              '    "IG Mutlak": {\n        "aliases": ["IG (IMMATUR GRANULOSIT)", "IG (İMMATÜR GRANÜLOSİT)"],\n        "default_unit": "K/mm3",\n    },',
+              '    "IG Mutlak": {\n'
+              '        "aliases": [\n'
+              '            "IG MUTLAK",\n'
+              '            "IG ABSOLUTE",\n'
+              '            "IMMATURE GRANULOCYTE ABSOLUTE",\n'
+              '            "IMMATUR GRANULOSIT",\n'
+              '            "İMMATÜR GRANÜLOSİT",\n'
+              '            "IG (IMMATUR GRANULOSIT)",\n'
+              '            "IG (İMMATÜR GRANÜLOSİT)",\n'
+              '        ],\n'
+              '        "default_unit": "K/mm3",\n'
+              '    },',
+              'IG aliases',
+          )
+
+          helper = '''\n\ndef _is_bun_creatinine_ratio_line(line: str) -> bool:\n    normalized = _normalize_text(line).upper().replace(" ", "")\n    return any(\n        marker in normalized\n        for marker in (\n            "BUN/KREATININ",\n            "BUN/CREATININE",\n            "BUNCREATININERATIO",\n        )\n    )\n\n\n'''
+          backend = replace_once(
+              backend,
+              'def _find_parameter_value_in_lines(\n',
+              helper + 'def _find_parameter_value_in_lines(\n',
+              'ratio helper insertion',
+          )
+
+          backend = replace_once(
+              backend,
+              '    for line in lines:\n        for alias in sorted_aliases:\n',
+              '    for line in lines:\n'
+              '        if raw_parameter_name in {"BUN", "Kreatinin"} and _is_bun_creatinine_ratio_line(line):\n'
+              '            continue\n\n'
+              '        for alias in sorted_aliases:\n',
+              'ratio guard',
+          )
+
+          backend = replace_once(
+              backend,
+              '        "LDL": ("mg/dL", 0.0, 130.0),\n',
+              '        "LDL": ("mg/dL", 0.0, 130.0),\n'
+              '        "Non-HDL": ("mg/dL", 0.0, 120.0),\n'
+              '        "IG Mutlak": ("K/mm3", 0.0, 0.06),\n'
+              '        "IG %": ("%", 0.0, 0.6),\n',
+              'forced references',
+          )
+
+          backend_path.write_text(backend, encoding='utf-8')
+
+          sidebar_path = Path('app/frontend/src/components/layout/Sidebar.tsx')
+          sidebar = sidebar_path.read_text(encoding='utf-8')
+          sidebar = sidebar.replace('🩸 Laboratuvar Analizi', '🩸 Yapay Zekâ Laboratuvar Analizi')
+          sidebar_path.write_text(sidebar, encoding='utf-8')
+
+          page_path = Path('app/frontend/src/pages/MockAnalysisPage.tsx')
+          page = page_path.read_text(encoding='utf-8')
+          replacements = {
+              "return 'Needs review';": "return 'Hekim kontrolü gerekli';",
+              '<span className="text-sm font-semibold">{results.length} result(s)</span>': '<span className="text-sm font-semibold">{results.length} sonuç</span>',
+              "'Marker', 'Value', 'Reference', 'Status', 'Reason'": "'Test', 'Sonuç', 'Referans Aralığı', 'Durum', 'Açıklama'",
+              'Lab Analysis': 'Yapay Zekâ Laboratuvar Analizi',
+              'Claude çıktıları kesin tanı veya otomatik tetkik istemi değildir; doktor': 'Yapay zekâ çıktıları kesin tanı veya otomatik tetkik istemi değildir; hekim',
+              'Girilen bilgiler analiz kaydına ve Claude değerlendirme bağlamına eklenir.': 'Girilen bilgiler analiz kaydına ve yapay zekâ değerlendirme bağlamına eklenir.',
+              'PDF upload': 'PDF Yükleme',
+              "Selected:{' '}": "Seçilen dosya:{' '}",
+              "'Uploading & analyzing...'": "'PDF yükleniyor ve analiz ediliyor…'",
+              "'Upload & Analyze PDF'": "'PDF’yi Yükle ve Analiz Et'",
+              'Manual entry': 'Manuel Giriş',
+              "Manuel değerler aynı alias, referans, kural, trend ve kalıcılık\n                   pipeline&apos;ını kullanır.": "Manuel değerler aynı parametre eşleştirme, referans, kural ve trend\n                   analiz sürecini kullanır.",
+              "'Saving & analyzing...'": "'Kaydediliyor ve analiz ediliyor…'",
+              "'Save & Analyze Manual Results'": "'Sonuçları Kaydet ve Analiz Et'",
+              'Controlled backend sample': 'Kontrollü Örnek Analiz',
+              'Run demo Hemoglobin payload': 'Örnek hemoglobin sonucunu analiz et',
+              "'Running...'": "'Analiz ediliyor…'",
+              "'Run Backend Analysis'": "'Örnek Analizi Başlat'",
+              '<strong className="text-slate-950">Analysis completed.</strong>': '<strong className="text-slate-950">Analiz tamamlandı.</strong>',
+              '{visibleResults.length} non-normal result(s) are visible; normal\n               rows are hidden.': '{visibleResults.length} anormal veya kontrol gerektiren sonuç gösteriliyor; normal sonuçlar gizlidir.',
+              'View Full Analysis Record': 'Tüm Sonuçları Gör',
+              'Analysis summary': 'Laboratuvar Özeti',
+              'Normal rows are excluded from the visible review queue.': 'Normal sonuçlar, klinik incelemeyi sadeleştirmek amacıyla gizlenmiştir.',
+              'Abnormal and review-required results': 'Anormal ve Kontrol Gereken Sonuçlar',
+              'HIGH, LOW, NEEDS REVIEW, and UNKNOWN values are separated. Normal values are intentionally hidden.': 'Yüksek, düşük ve hekim kontrolü gerektiren sonuçlar ayrı gruplarda gösterilir. Normal sonuçlar bu görünümde gizlidir.',
+              'Complete an analysis to build the review queue.': 'Sonuçları görmek için önce bir analiz oluşturun.',
+              'No abnormal or review-required result was found. Normal rows remain\n             hidden by design.': 'Anormal veya hekim kontrolü gerektiren sonuç bulunmadı.',
+              'High results': 'Yüksek Sonuçlar',
+              'Above the available reference range.': 'Referans aralığının üzerinde.',
+              'Low results': 'Düşük Sonuçlar',
+              'Below the available reference range.': 'Referans aralığının altında.',
+              'Needs review': 'Hekim Kontrolü Gerekenler',
+              'Uncertain mapping, range, or classification.': 'Parametre eşleştirmesi, referans aralığı veya sınıflandırma belirsiz.',
+              'Claude clinical copilot': 'Yapay Zekâ Destekli Klinik Değerlendirme',
+              'Evaluate abnormal results': 'Anormal Sonuçları Değerlendir',
+              'Claude evaluates non-normal structured results together with\n               patient information, complaint, history, examination and entered\n               imaging reports. The output includes possible conditions and\n               laboratory or imaging tests a physician may consider.': 'Yapay zekâ; anormal laboratuvar sonuçlarını hasta bilgileri, yakınmalar,\n               klinik öykü, muayene bulguları ve eklenen görüntüleme raporlarıyla\n               birlikte değerlendirir. Olası klinik durumlar ile hekim tarafından\n               değerlendirilebilecek laboratuvar ve görüntüleme tetkiklerini sunar.',
+              "'Claude is evaluating...'": "'Yapay zekâ değerlendiriyor…'",
+              "'Evaluate with Claude'": "'Tüm Verilerle Değerlendir'",
+              'Complete an analysis before evaluating the results with Claude.': 'Yapay zekâ değerlendirmesi için önce laboratuvar analizi oluşturun.',
+              'Claude evaluation is disabled because there are no non-normal\n             results.': 'Anormal sonuç bulunmadığı için yapay zekâ değerlendirmesi kullanılamıyor.',
+              "'Claude evaluation failed.'": "'Yapay zekâ değerlendirmesi başarısız oldu.'",
+          }
+          for old, new in replacements.items():
+              page = page.replace(old, new)
+          page = page.replace('Claude prepared ', 'Yapay zekâ ')
+          page = page.replace(' physician-review evaluation(s).', ' klinik değerlendirme hazırladı.')
+          page_path.write_text(page, encoding='utf-8')
+
+          localizer_path = Path('app/frontend/src/components/FrontendTurkishLocalizer.tsx')
+          if localizer_path.exists():
+              localizer = localizer_path.read_text(encoding='utf-8')
+              anchor = "  'Unknown patient': 'Bilinmeyen hasta',\n"
+              additions = (
+                  "  'Normal rows are excluded from the visible review queue.': 'Normal sonuçlar, klinik incelemeyi sadeleştirmek amacıyla gizlenmiştir.',\n"
+                  "  'HIGH, LOW, NEEDS REVIEW, and UNKNOWN values are separated. Normal values are intentionally hidden.': 'Yüksek, düşük ve hekim kontrolü gerektiren sonuçlar ayrı gruplarda gösterilir. Normal sonuçlar bu görünümde gizlidir.',\n"
+                  "  'Claude evaluates non-normal structured results together with patient information, complaint, history, examination and entered imaging reports. The output includes possible conditions and laboratory or imaging tests a physician may consider.': 'Yapay zekâ; anormal laboratuvar sonuçlarını hasta bilgileri, yakınmalar, klinik öykü, muayene bulguları ve eklenen görüntüleme raporlarıyla birlikte değerlendirir. Olası klinik durumlar ile hekim tarafından değerlendirilebilecek tetkikleri sunar.',\n"
+              )
+              if additions not in localizer:
+                  localizer = localizer.replace(anchor, anchor + additions)
+              localizer = localizer.replace(
+                  "[/^Claude prepared (\\d+) physician-review evaluation\\(s\\)\\.$/, (_all, count) => `${count} klinik değerlendirme hazırlandı.`],",
+                  "[/^Claude prepared (\\d+) (?:physician-review|hekim incelemesine yönelik) evaluation\\(s\\)\\.$/, (_all, count) => `Yapay zekâ ${count} klinik değerlendirme hazırladı.`],",
+              )
+              localizer_path.write_text(localizer, encoding='utf-8')
+
+          workflow = Path('.github/workflows/patch-lab-ai-demo.yml')
+          if workflow.exists():
+              workflow.unlink()
+
+      - name: Validate backend syntax
+        run: python -m py_compile app/backend/app/api/routes/lab_analysis.py
+
+      - name: Commit patched files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Fix lab parser collisions and Turkish AI analysis UI"
+          git push
