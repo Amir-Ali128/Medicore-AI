@@ -8,15 +8,15 @@ type NavItem = {
 };
 
 const topItems: NavItem[] = [
-  { label: '🏠 Dashboard', to: '/' },
+  { label: '🏠 Ana Sayfa', to: '/' },
   { label: '👤 Hasta Özeti', to: '/patients/demo' },
 ];
 
 const coreItems: NavItem[] = [
   { label: '🩸 Laboratuvar Analizi', to: '/analysis/mock', status: 'Aktif', tone: 'active' },
-  { label: '🩻 Radyoloji Rapor Analizi', to: '/radiology', status: 'Beta', tone: 'beta' },
-  { label: '🧠 AI Klinik Değerlendirme', to: '/clinical-hypotheses', status: 'Aktif', tone: 'active' },
-  { label: '📈 Trend Analizi', to: '/timeline', status: 'Beta', tone: 'beta' },
+  { label: '🩻 Radyoloji Rapor Analizi', to: '/radiology', status: 'Test', tone: 'beta' },
+  { label: '🧠 Yapay Zekâ Klinik Değerlendirme', to: '/clinical-hypotheses', status: 'Aktif', tone: 'active' },
+  { label: '📈 Trend Analizi', to: '/timeline', status: 'Test', tone: 'beta' },
   { label: '📄 Raporlar ve Arşiv', to: '/patient-history', status: 'Aktif', tone: 'active' },
 ];
 
@@ -92,7 +92,7 @@ export default function Sidebar() {
             Klinik Karar Desteği
           </p>
           <p className="mt-1 text-xs leading-5 text-slate-500">
-            Çalışan çekirdek, kontrollü klinik pilotlar ve araştırma modülleri.
+            Çalışan temel özellikler, kontrollü klinik pilotlar ve araştırma modülleri.
           </p>
         </div>
 
@@ -110,7 +110,7 @@ export default function Sidebar() {
 
         <div className="mt-4 rounded-lg border border-blue-100 bg-blue-50 p-4">
           <p className="text-xs leading-5 text-blue-900">
-            Rozetler modül olgunluğunu gösterir. Araştırma ve ön izleme alanları klinik kullanım için aktif değildir.
+            Rozetler modüllerin geliştirme durumunu gösterir. Araştırma ve ön izleme alanları klinik kullanım için aktif değildir.
           </p>
         </div>
       </aside>
