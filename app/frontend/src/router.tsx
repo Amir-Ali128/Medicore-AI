@@ -9,6 +9,7 @@ import DoctorWorklistPage from './pages/DoctorWorklistPage';
 import ExtractionReviewPage from './pages/ExtractionReviewPage';
 import LoginPage from './pages/LoginPage';
 import MockAnalysisPage from './pages/MockAnalysisPage';
+import ModulePreviewPage from './pages/ModulePreviewPage';
 import PatientHistoryPage from './pages/PatientHistoryPage';
 import PatientRecordPage from './pages/PatientRecordPage';
 import RadiologyPage from './pages/RadiologyPage';
@@ -44,6 +45,18 @@ export const router = createHashRouter([
           {
             path: '/radiology',
             element: <RadiologyPage />,
+          },
+          {
+            path: '/roadmap/imaging',
+            element: <ModulePreviewPage module="imaging" />,
+          },
+          {
+            path: '/roadmap/pathology',
+            element: <ModulePreviewPage module="pathology" />,
+          },
+          {
+            path: '/roadmap/cardiology',
+            element: <ModulePreviewPage module="cardiology" />,
           },
           {
             path: '/extraction-review',
