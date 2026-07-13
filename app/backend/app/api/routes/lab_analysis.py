@@ -95,6 +95,12 @@ async def _ensure_render_demo_clinical_parameters(session: Any) -> None:
         ("MONOSIT_MUTLAK", "Monosit Mutlak", "K/mm3"),
         ("EOZINOFIL_MUTLAK", "Eozinofil Mutlak", "K/mm3"),
         ("BAZOFIL_MUTLAK", "Bazofil Mutlak", "K/mm3"),
+        ("BUN", "BUN", "mg/dL"),
+        ("KREATININ", "Kreatinin", "mg/dL"),
+        ("BUN_KREATININ_ORANI", "BUN / Kreatinin", ""),
+        ("NON_HDL", "Non-HDL", "mg/dL"),
+        ("IG_MUTLAK", "IG Mutlak", "K/mm3"),
+        ("IG_YUZDE", "IG %", "%"),
     ]
 
 
@@ -323,7 +329,15 @@ LAB_PARAMETER_ALIASES: dict[str, dict[str, Any]] = {
         "default_unit": "mg/dL",
     },
     "Non-HDL": {
-        "aliases": ["NON-HDL-KOLESTEROL", "NON HDL KOLESTEROL", "NON HDL CHOLESTEROL"],
+        "aliases": [
+            "NON-HDL",
+            "NON HDL",
+            "NON-HDL KOLESTEROL",
+            "NON HDL KOLESTEROL",
+            "NON-HDL-KOLESTEROL",
+            "NON HDL CHOLESTEROL",
+            "NON-HDL CHOLESTEROL",
+        ],
         "default_unit": "mg/dL",
     },
 
@@ -495,7 +509,15 @@ LAB_PARAMETER_ALIASES: dict[str, dict[str, Any]] = {
         "default_unit": "%",
     },
     "IG Mutlak": {
-        "aliases": ["IG (IMMATUR GRANULOSIT)", "IG (İMMATÜR GRANÜLOSİT)"],
+        "aliases": [
+            "IG MUTLAK",
+            "IG ABSOLUTE",
+            "IMMATURE GRANULOCYTE ABSOLUTE",
+            "IMMATUR GRANULOSIT",
+            "İMMATÜR GRANÜLOSİT",
+            "IG (IMMATUR GRANULOSIT)",
+            "IG (İMMATÜR GRANÜLOSİT)",
+        ],
         "default_unit": "K/mm3",
     },
     "IG %": {
@@ -1025,6 +1047,20 @@ def _parse_lab_values_from_text(text: str) -> list[dict[str, Any]]:
 
 
 
+
+
+def _is_bun_creatinine_ratio_line(line: str) -> bool:
+    normalized = _normalize_text(line).upper().replace(" ", "")
+    return any(
+        marker in normalized
+        for marker in (
+            "BUN/KREATININ",
+            "BUN/CREATININE",
+            "BUNCREATININERATIO",
+        )
+    )
+
+
 def _find_parameter_value_in_lines(
     *,
     raw_parameter_name: str,
@@ -1038,6 +1074,9 @@ def _find_parameter_value_in_lines(
 
 
     for line in lines:
+        if raw_parameter_name in {"BUN", "Kreatinin"} and _is_bun_creatinine_ratio_line(line):
+            continue
+
         for alias in sorted_aliases:
             if not _line_contains_alias(line, alias):
                 continue
@@ -1115,6 +1154,9 @@ def _forced_demo_reference(parameter_name: str) -> tuple[str, float, float] | No
         "Trigliserit": ("mg/dL", 0.0, 150.0),
         "TRIGLISERIT": ("mg/dL", 0.0, 150.0),
         "LDL": ("mg/dL", 0.0, 130.0),
+        "Non-HDL": ("mg/dL", 0.0, 120.0),
+        "IG Mutlak": ("K/mm3", 0.0, 0.06),
+        "IG %": ("%", 0.0, 0.6),
         "Total Bilirubin": ("mg/dL", 0.20, 1.25),
         "Direkt Bilirubin": ("mg/dL", 0.0, 0.30),
         "FOLIK_ASIT": ("ng/mL", 3.89, 26.80),

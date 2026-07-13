@@ -2,6 +2,9 @@ import { useEffect } from 'react';
 
 const EXACT_TRANSLATIONS: Record<string, string> = {
   'Unknown patient': 'Bilinmeyen hasta',
+  'Normal rows are excluded from the visible review queue.': 'Normal sonuçlar, klinik incelemeyi sadeleştirmek amacıyla gizlenmiştir.',
+  'HIGH, LOW, NEEDS REVIEW, and UNKNOWN values are separated. Normal values are intentionally hidden.': 'Yüksek, düşük ve hekim kontrolü gerektiren sonuçlar ayrı gruplarda gösterilir. Normal sonuçlar bu görünümde gizlidir.',
+  'Claude evaluates non-normal structured results together with patient information, complaint, history, examination and entered imaging reports. The output includes possible conditions and laboratory or imaging tests a physician may consider.': 'Yapay zekâ; anormal laboratuvar sonuçlarını hasta bilgileri, yakınmalar, klinik öykü, muayene bulguları ve eklenen görüntüleme raporlarıyla birlikte değerlendirir. Olası klinik durumlar ile hekim tarafından değerlendirilebilecek tetkikleri sunar.',
   'Extracted from uploaded PDF': 'Yüklenen PDF’den alındı',
   'PDF metadata not available': 'PDF’de hasta bilgisi bulunamadı',
   'Current workflow': 'Mevcut işlem',
