@@ -17,31 +17,33 @@ const workflowGroups = [
       { label: 'Manuel yolla ekleme', to: '/analysis/mock?entry=manual' },
     ],
   },
-  {
-    label: '🩻 Radyoloji Raporları',
-    to: '/radiology',
-    children: [
-      { label: 'PDF yoluyla ekleme', to: '/radiology?entry=pdf' },
-      { label: 'Manuel yolla ekleme', to: '/radiology?entry=manual' },
-    ],
-  },
 ];
 
 const roadmapItems = [
   {
-    label: '🩻 Görüntüleme',
-    to: '/roadmap/imaging',
+    label: 'Radyoloji Raporları',
+    to: '/radiology',
     phase: 'Faz 2',
   },
   {
-    label: '🧫 Patoloji',
+    label: 'Medikal Görüntüleme',
+    to: '/roadmap/imaging',
+    phase: 'Faz 2.5',
+  },
+  {
+    label: 'Patoloji',
     to: '/roadmap/pathology',
     phase: 'Faz 3',
   },
   {
-    label: '🫀 Kardiyoloji',
+    label: 'Kardiyoloji',
     to: '/roadmap/cardiology',
     phase: 'Faz 3.1',
+  },
+  {
+    label: 'Mikrobiyoloji',
+    to: '/roadmap/microbiology',
+    phase: 'Faz 3.2',
   },
 ];
 
@@ -142,7 +144,10 @@ export default function Sidebar() {
         <nav className="flex gap-2 overflow-x-auto">
           {[
             ...mainItems,
-            ...workflowGroups.flatMap((group) => group.children),
+            ...workflowGroups.flatMap((group) => [
+              { label: group.label, to: group.to },
+              ...group.children,
+            ]),
             ...roadmapItems,
           ].map((item) => (
             <NavLink
