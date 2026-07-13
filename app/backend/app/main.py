@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router
+from app.api.routes import lab_derived_parameters as _lab_derived_parameters  # noqa: F401
 
 
 app = FastAPI(title="MediCore AI API", version="0.1.0")
