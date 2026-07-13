@@ -1,15 +1,16 @@
 import { NavLink } from 'react-router-dom';
 
 const mainItems = [
-  { label: 'Hasta Özeti', to: '/' },
-  { label: 'Hasta Kaydı', to: '/patients/demo' },
-  { label: 'Klinik Değerlendirme', to: '/clinical-hypotheses' },
-  { label: 'Hasta Arşivi', to: '/patient-history' },
+  { label: '🏠 Hasta Özeti', to: '/' },
+  { label: '👤 Hasta Kaydı', to: '/patients/demo' },
+  { label: '🧠 AI Klinik Değerlendirme', to: '/clinical-hypotheses' },
+  { label: '📈 Trend Analizi', to: '/timeline' },
+  { label: '📄 Hasta Arşivi', to: '/patient-history' },
 ];
 
 const workflowGroups = [
   {
-    label: 'Laboratuvar',
+    label: '🩸 Laboratuvar Analizi',
     to: '/analysis/mock',
     children: [
       { label: 'PDF yoluyla ekleme', to: '/analysis/mock?entry=pdf' },
@@ -17,12 +18,30 @@ const workflowGroups = [
     ],
   },
   {
-    label: 'Radyoloji',
+    label: '🩻 Radyoloji Raporları',
     to: '/radiology',
     children: [
       { label: 'PDF yoluyla ekleme', to: '/radiology?entry=pdf' },
       { label: 'Manuel yolla ekleme', to: '/radiology?entry=manual' },
     ],
+  },
+];
+
+const roadmapItems = [
+  {
+    label: '🩻 Görüntüleme',
+    to: '/roadmap/imaging',
+    phase: 'Faz 2',
+  },
+  {
+    label: '🧫 Patoloji',
+    to: '/roadmap/pathology',
+    phase: 'Faz 3',
+  },
+  {
+    label: '🫀 Kardiyoloji',
+    to: '/roadmap/cardiology',
+    phase: 'Faz 3.1',
   },
 ];
 
@@ -77,6 +96,33 @@ export default function Sidebar() {
             </div>
           ))}
 
+          <div className="pt-3">
+            <p className="px-3 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
+              Geliştirme yol haritası
+            </p>
+            <div className="mt-2 space-y-1">
+              {roadmapItems.map((item) => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  className={({ isActive }) =>
+                    [
+                      'flex items-center justify-between gap-3 rounded-lg px-4 py-3 text-sm font-medium transition',
+                      isActive
+                        ? 'bg-amber-50 text-amber-900 ring-1 ring-amber-100'
+                        : 'text-slate-600 hover:bg-slate-100 hover:text-slate-950',
+                    ].join(' ')
+                  }
+                >
+                  <span>{item.label}</span>
+                  <span className="rounded-full bg-amber-100 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-amber-800">
+                    {item.phase}
+                  </span>
+                </NavLink>
+              ))}
+            </div>
+          </div>
+
           {mainItems.slice(2).map((item) => (
             <NavLink key={item.to} to={item.to} className={getLinkClassName}>
               {item.label}
@@ -94,7 +140,11 @@ export default function Sidebar() {
 
       <div className="border-b border-slate-200 bg-white px-4 py-3 lg:hidden">
         <nav className="flex gap-2 overflow-x-auto">
-          {[...mainItems, ...workflowGroups.flatMap((group) => group.children)].map((item) => (
+          {[
+            ...mainItems,
+            ...workflowGroups.flatMap((group) => group.children),
+            ...roadmapItems,
+          ].map((item) => (
             <NavLink
               key={`${item.to}-${item.label}`}
               to={item.to}
