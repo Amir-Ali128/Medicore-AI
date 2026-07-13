@@ -32,11 +32,6 @@ const researchItems: NavItem[] = [
   { label: '🖼️ Medikal Görüntüleme', to: '/roadmap/imaging', status: 'Araştırma', tone: 'research' },
 ];
 
-const developmentItems: NavItem[] = [
-  { label: '👨‍⚕️ Doktor Geri Bildirimi', to: '/doctor-review' },
-  { label: '📋 İnceleme Kuyruğu', to: '/doctor-worklist' },
-];
-
 const statusClasses: Record<NonNullable<NavItem['tone']>, string> = {
   active: 'bg-emerald-100 text-emerald-800',
   beta: 'bg-sky-100 text-sky-800',
@@ -83,13 +78,7 @@ function NavigationSection({ title, items }: { title: string; items: NavItem[] }
   );
 }
 
-const mobileItems = [
-  ...topItems,
-  ...coreItems,
-  ...clinicalItems,
-  ...researchItems,
-  ...developmentItems,
-];
+const mobileItems = [...topItems, ...coreItems, ...clinicalItems, ...researchItems];
 
 export default function Sidebar() {
   return (
@@ -117,7 +106,6 @@ export default function Sidebar() {
           <NavigationSection title="Temel modüller" items={coreItems} />
           <NavigationSection title="Klinik branşlar" items={clinicalItems} />
           <NavigationSection title="Araştırma modülleri" items={researchItems} />
-          <NavigationSection title="Klinik geliştirme" items={developmentItems} />
         </nav>
 
         <div className="mt-4 rounded-lg border border-blue-100 bg-blue-50 p-4">
