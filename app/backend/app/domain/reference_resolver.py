@@ -78,7 +78,7 @@ class ReferenceResolver:
             request.extracted_reference_min is not None
             or request.extracted_reference_max is not None
         ):
-            return self._from_extracted(request)
+            return await self._from_extracted(request)
 
 
         patient_sex = self._request_patient_sex(request)
@@ -145,27 +145,69 @@ class ReferenceResolver:
 
 
     # -- Priority 1 ------------------------------------------------------
-    def _from_extracted(
+    async def _from_extracted(
         self, request: ReferenceResolutionRequest
     ) -> ReferenceResolutionResult:
         has_min = request.extracted_reference_min is not None
         has_max = request.extracted_reference_max is not None
-        has_unit = bool(request.extracted_unit)
-        complete = has_min and has_max and has_unit
+        has_unit = bool(
+            request.extracted_unit
+            and request.extracted_unit.strip()
+        )
 
+        parameter = await self._parameters.get_by_id(
+            request.canonical_parameter_id
+        )
+
+        default_unit = (
+            (parameter.default_unit or "").strip()
+            if parameter is not None
+            else ""
+        )
+
+        # Empty default unit means the parameter is dimensionless.
+        # Example: BUN / Creatinine ratio.
+        is_dimensionless = (
+            parameter is not None
+            and not default_unit
+        )
+
+        complete = (
+            has_min
+            and has_max
+            and (has_unit or is_dimensionless)
+        )
 
         reason = "Using the reference range extracted from the report."
-        if not complete:
-            reason += " Extracted range is incomplete (missing a bound or unit)."
 
+        if is_dimensionless and not has_unit:
+            reason += (
+  " Parameter is dimensionless; "
+  "no physical unit is required."
+            )
+        elif not complete:
+            reason += (
+  " Extracted range is incomplete "
+  "(missing a bound or unit)."
+            )
+
+        resolved_unit = (
+            request.extracted_unit
+            if has_unit
+            else default_unit or None
+        )
 
         return ReferenceResolutionResult(
             canonical_parameter_id=request.canonical_parameter_id,
             reference_min=request.extracted_reference_min,
             reference_max=request.extracted_reference_max,
-            unit=request.extracted_unit,
+            unit=resolved_unit,
             reference_source=_EXTRACTED_SOURCE,
-            confidence=CONF_EXTRACTED_FULL if complete else CONF_EXTRACTED_PARTIAL,
+            confidence=(
+  CONF_EXTRACTED_FULL
+  if complete
+  else CONF_EXTRACTED_PARTIAL
+            ),
             reason=reason,
             needs_review=not complete,
             resolved_from=ReferenceStrategy.EXTRACTED,
