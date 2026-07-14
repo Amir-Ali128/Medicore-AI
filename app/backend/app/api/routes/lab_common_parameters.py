@@ -44,7 +44,7 @@ COMMON_PARAMETERS: dict[str, dict[str, Any]] = {
     "Magnezyum": {
         "code": "MAGNEZYUM",
         "unit": "mg/dL",
-        "aliases": ["MAGNEZYUM", "MAGNESIUM", "MG"],
+        "aliases": ["MAGNEZYUM", "MAGNESIUM"],
     },
     "Fosfor": {
         "code": "FOSFOR",
