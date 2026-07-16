@@ -10,7 +10,7 @@ function updateNode(root: Node) {
     let value = node.nodeValue ?? '';
 
     for (const [source, target] of REPLACEMENTS) {
-      value = value.replaceAll(source, target);
+      value = value.split(source).join(target);
     }
 
     if (value !== node.nodeValue) node.nodeValue = value;
