@@ -51,7 +51,9 @@ const getLinkClassName = ({ isActive }: { isActive: boolean }) =>
 function NavigationItem({ item }: { item: NavItem }) {
   return (
     <NavLink to={item.to} className={getLinkClassName}>
-      <span className="min-w-0 truncate">{item.label}</span>
+      <span className="min-w-0 flex-1 whitespace-normal break-words text-left leading-5">
+        {item.label}
+      </span>
       {item.status && item.tone ? (
         <span
           className={`shrink-0 rounded-full px-2 py-1 text-[9px] font-bold uppercase tracking-wide ${statusClasses[item.tone]}`}
