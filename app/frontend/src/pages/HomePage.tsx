@@ -52,7 +52,7 @@ export default function HomePage() {
 
       <section className="rounded-xl border border-amber-200 bg-amber-50 p-5">
         <h2 className="text-base font-semibold text-amber-950">
-          Önemli sağlık bilgilendirmesi
+          Yasal bilgilendirme
         </h2>
         <p className="mt-2 text-sm leading-7 text-amber-900">
           Sistemde sunulan tüm değerlendirme ve öneriler yalnızca tavsiye ve
