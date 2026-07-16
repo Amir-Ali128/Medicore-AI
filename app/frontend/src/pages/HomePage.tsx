@@ -19,9 +19,9 @@ const workflowCards = [
       'border-rose-200 bg-rose-50 text-rose-900 hover:bg-rose-100',
   },
   {
-    title: 'Radyoloji Raporları',
+    title: 'Radyoloji ve Tetkik Raporları',
     description:
-      'Radyoloji, görüntüleme ve ilgili tetkik raporlarını ekleyin veya mevcut raporları inceleyin.',
+      'Radyoloji, endoskopi ve diğer tanısal tetkik raporlarını sisteme ekleyin, görüntüleyin ve değerlendirin.',
     to: '/radiology',
     icon: '🩻',
     className:
