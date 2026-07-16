@@ -40,13 +40,13 @@ export default function HomePage() {
           Klinik Değerlendirme ve Karar Destek Sistemi
         </h1>
         <p className="mt-3 max-w-4xl text-sm leading-7 text-slate-600">
-          Bu sistem; bireyin veya hastanın cinsiyet, yaş, boy ve kilo bilgileriyle
-          birlikte kişisel ve ailesel hastalıklarını, kalıtsal durumlarını,
-          geçirdiği ameliyatları ve kullandığı ilaçları değerlendirir. Laboratuvar,
-          radyoloji, endoskopi ve benzeri tetkik sonuçlarını klinik bilgilerle
-          birlikte inceleyerek olası hastalıkların belirlenmesine, bilinen
-          hastalıkların gidişatının değerlendirilmesine ve izlenebilecek adımlar
-          hakkında bilgilendirme sunulmasına yardımcı olmayı amaçlar.
+          Bu sistem; bireyin veya hastanın cinsiyet, yaş, boy ve kilo bilgileri ile
+          kişisel ve ailesel hastalıklar, ameliyatlar ve kullanılan ilaçlar gibi öz
+          geçmiş ve soy geçmiş bilgilerini; laboratuvar, radyoloji, endoskopi ve
+          benzeri tetkik bulgularıyla birlikte yorumlayarak olası hastalıkların
+          saptanması, bilinen hastalıkların gidişatının değerlendirilmesi ve uygun
+          bir yol haritası oluşturulması hakkında bilgilendirme sağlamayı
+          amaçlamaktadır.
         </p>
       </header>
 
