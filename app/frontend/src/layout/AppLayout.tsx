@@ -2,6 +2,7 @@ import { Outlet } from 'react-router-dom';
 import DoctorFriendlyTurkish from '../components/DoctorFriendlyTurkish';
 import FrontendTurkishLocalizer from '../components/FrontendTurkishLocalizer';
 import PatientPersistenceBridge from '../components/PatientPersistenceBridge';
+import RadiologyTerminologyLocalizer from '../components/RadiologyTerminologyLocalizer';
 import WorkflowViewSimplifier from '../components/WorkflowViewSimplifier';
 import Sidebar from './Sidebar';
 import Topbar from './Topbar';
@@ -11,6 +12,7 @@ export default function AppLayout() {
     <div className="min-h-screen bg-slate-50 text-slate-950">
       <FrontendTurkishLocalizer />
       <DoctorFriendlyTurkish />
+      <RadiologyTerminologyLocalizer />
       <PatientPersistenceBridge />
       <WorkflowViewSimplifier />
       <Sidebar />
