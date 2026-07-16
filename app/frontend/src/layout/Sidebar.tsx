@@ -9,12 +9,12 @@ type NavItem = {
 
 const topItems: NavItem[] = [
   { label: '🏠 Ana Sayfa', to: '/' },
-  { label: '👤 Hasta Özeti', to: '/patients/demo' },
+  { label: '👤 Hasta Bilgileri', to: '/patients/demo' },
 ];
 
 const coreItems: NavItem[] = [
-  { label: '🩸 Laboratuvar Analizi', to: '/analysis/mock', status: 'Aktif', tone: 'active' },
-  { label: '🩻 Radyoloji Rapor Analizi', to: '/radiology', status: 'Test', tone: 'beta' },
+  { label: '🩸 Laboratuvar Sonuçları', to: '/analysis/mock', status: 'Aktif', tone: 'active' },
+  { label: '🩻 Radyoloji Raporları', to: '/radiology', status: 'Test', tone: 'beta' },
   { label: '🧠 Yapay Zekâ Klinik Değerlendirme', to: '/clinical-hypotheses', status: 'Aktif', tone: 'active' },
   { label: '📈 Trend Analizi', to: '/timeline', status: 'Test', tone: 'beta' },
   { label: '📄 Raporlar ve Arşiv', to: '/patient-history', status: 'Aktif', tone: 'active' },
