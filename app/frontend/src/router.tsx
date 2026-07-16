@@ -8,6 +8,7 @@ import ClinicalSpecialtyPreviewPage from './pages/ClinicalSpecialtyPreviewPage';
 import DoctorReviewPage from './pages/DoctorReviewPage';
 import DoctorWorklistPage from './pages/DoctorWorklistPage';
 import ExtractionReviewPage from './pages/ExtractionReviewPage';
+import HomePage from './pages/HomePage';
 import LoginPage from './pages/LoginPage';
 import MockAnalysisPage from './pages/MockAnalysisPage';
 import ModulePreviewPage from './pages/ModulePreviewPage';
@@ -26,7 +27,7 @@ export const router = createHashRouter([
       {
         element: <AppLayout />,
         children: [
-          { path: '/', element: <PatientRecordPage /> },
+          { path: '/', element: <HomePage /> },
           { path: '/patients/demo', element: <PatientRecordPage /> },
           { path: '/patient-detail', element: <PatientRecordPage /> },
           { path: '/analysis/mock', element: <MockAnalysisPage /> },
