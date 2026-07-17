@@ -62,6 +62,36 @@ function isRecommendation(text: string) {
   ].some((term) => value.includes(term));
 }
 
+function isPositiveClinicalFinding(text: string) {
+  if (isNegativeFinding(text) || isRecommendation(text)) return false;
+  const value = fold(text);
+  return [
+    'basili',
+    'basi',
+    'mukozal kalinlasma',
+    'kalinlasma',
+    'odem',
+    'hematom',
+    'hemoraji',
+    'kanama',
+    'sift',
+    'kitle etkisi',
+    'efüzyon',
+    'efuzyon',
+    'konsolidasyon',
+    'infiltrasyon',
+    'atelektazi',
+    'lezyon',
+    'nodul',
+    'dilatasyon',
+    'stenoz',
+    'koleksiyon',
+    'metastaz',
+    'hipodens',
+    'hiperdens',
+  ].some((term) => value.includes(term));
+}
+
 function isClinicallyEquivalent(left: string, right: string) {
   const a = fold(left);
   const b = fold(right);
@@ -123,15 +153,42 @@ function FindingGroup({
   );
 }
 
+function measurementLabel(measurement: RadiologyMeasurement) {
+  const context = measurement.context ?? '';
+  const unit = measurement.unit.replace(/\s+/g, '');
+  const escapedUnit = unit.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const multiAxis = new RegExp(
+    `(\\d+(?:[.,]\\d+)?)\\s*[x×*]\\s*(\\d+(?:[.,]\\d+)?)(?:\\s*[x×*]\\s*(\\d+(?:[.,]\\d+)?))?\\s*${escapedUnit}`,
+    'i',
+  ).exec(context);
+
+  if (multiAxis) {
+    const dimensions = [multiAxis[1], multiAxis[2], multiAxis[3]].filter(Boolean);
+    return `${dimensions.join(' × ')} ${measurement.unit}`;
+  }
+  return `${measurement.value} ${measurement.unit}`;
+}
+
+function uniqueMeasurements(measurements: RadiologyMeasurement[]) {
+  const seen = new Set<string>();
+  return measurements.filter((measurement) => {
+    const key = `${measurementLabel(measurement)}|${fold(measurement.context ?? '')}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 function MeasurementGroup({ measurements }: { measurements: RadiologyMeasurement[] }) {
-  if (measurements.length === 0) return null;
+  const unique = uniqueMeasurements(measurements);
+  if (unique.length === 0) return null;
   return (
     <section>
       <h2 className="font-semibold text-slate-950">Ölçümler</h2>
       <div className="mt-3 grid gap-3 md:grid-cols-2">
-        {measurements.map((measurement, index) => (
-          <div key={`${measurement.value}-${measurement.unit}-${index}`} className="rounded-lg border border-cyan-200 bg-cyan-50 p-3">
-            <p className="font-semibold text-cyan-950">{measurement.value} {measurement.unit}</p>
+        {unique.map((measurement, index) => (
+          <div key={`${measurementLabel(measurement)}-${index}`} className="rounded-lg border border-cyan-200 bg-cyan-50 p-3">
+            <p className="font-semibold text-cyan-950">{measurementLabel(measurement)}</p>
             <p className="mt-1 text-xs leading-5 text-slate-600">{measurement.context}</p>
           </div>
         ))}
@@ -146,7 +203,7 @@ function clinicalSummary(
   recommendations: RadiologyFinding[],
   impression: string | null,
 ) {
-  const priority = [...critical, ...positive].slice(0, 3).map((item) => item.text);
+  const priority = [...critical, ...positive].slice(0, 4).map((item) => item.text);
   const sentences = priority.length > 0 ? priority : impression ? [impression] : [];
   if (recommendations[0]) sentences.push(recommendations[0].text);
   return sentences.join(' ');
@@ -217,14 +274,15 @@ export default function RadiologyWorkspacePage() {
         !isRecommendation(item.text) &&
         !isNegativeFinding(item.text) &&
         !item.is_critical &&
-        item.classification === 'abnormal',
+        (item.classification === 'abnormal' || isPositiveClinicalFinding(item.text)),
     );
     const other = findings.filter(
       (item) =>
         !isRecommendation(item.text) &&
         !isNegativeFinding(item.text) &&
         !item.is_critical &&
-        item.classification !== 'abnormal',
+        item.classification !== 'abnormal' &&
+        !isPositiveClinicalFinding(item.text),
     );
     return { findings, recommendations, negatives, critical, positive, other };
   }, [result]);
