@@ -15,6 +15,11 @@ from app.api.routes import (
     patients,
     radiology_reports,
 )
+from app.domain.radiology_report_safety import analyze_radiology_report_safely
+
+# Keep the existing radiology routes intact while enforcing the conservative
+# second-pass evidence filter for every manual-text and PDF analysis request.
+radiology_reports.analyze_radiology_report = analyze_radiology_report_safely
 
 api_router = APIRouter()
 
