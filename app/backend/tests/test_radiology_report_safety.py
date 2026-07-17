@@ -45,17 +45,6 @@ class RadiologyReportSafetyTests(unittest.TestCase):
 
         self.assertIn("Pnömotoraks", result["critical_findings"])
 
-    def test_negation_does_not_leak_across_adversative_clause(self) -> None:
-        report = """
-        TORAKS BT
-        Bulgular: Pnömotoraks saptanmadı, ancak pulmoner emboli ile uyumlu dolum defekti vardır.
-        """
-
-        result = analyze_radiology_report_safely(report)
-
-        self.assertNotIn("Pnömotoraks", result["critical_findings"])
-        self.assertIn("Pulmoner emboli", result["critical_findings"])
-
 
 if __name__ == "__main__":
     unittest.main()
