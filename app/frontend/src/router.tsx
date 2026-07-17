@@ -14,7 +14,7 @@ import MockAnalysisPage from './pages/MockAnalysisPage';
 import ModulePreviewPage from './pages/ModulePreviewPage';
 import PatientHistoryPage from './pages/PatientHistoryPage';
 import PatientRecordPage from './pages/PatientRecordPage';
-import RadiologyPage from './pages/RadiologyPage';
+import RadiologyWorkspacePage from './pages/RadiologyWorkspacePage';
 import TimelinePage from './pages/TimelinePage';
 
 export const router = createHashRouter([
@@ -32,7 +32,7 @@ export const router = createHashRouter([
           { path: '/patients/demo', element: <PatientRecordPage /> },
           { path: '/patient-detail', element: <PatientRecordPage /> },
           { path: '/analysis/mock', element: <MockAnalysisPage /> },
-          { path: '/radiology', element: <RadiologyPage /> },
+          { path: '/radiology', element: <RadiologyWorkspacePage /> },
           { path: '/roadmap/radiology', element: <ModulePreviewPage module="radiology" /> },
           { path: '/roadmap/imaging', element: <ModulePreviewPage module="imaging" /> },
           { path: '/roadmap/pathology', element: <ModulePreviewPage module="pathology" /> },
