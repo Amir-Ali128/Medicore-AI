@@ -21,75 +21,61 @@ function fold(value: string) {
     .replace(/ı/g, 'i');
 }
 
-function normalizedWords(value: string) {
-  return new Set(
-    fold(value)
-      .replace(/[^a-z0-9ğüşöçı]+/g, ' ')
-      .split(/\s+/)
-      .filter((word) => word.length > 3 && !['yaklasik', 'mevcuttur', 'izlenmektedir'].includes(word)),
-  );
-}
-
 function isNegativeFinding(text: string) {
   const value = fold(text);
   return [
-    'saptanmadi',
-    'saptanmamistir',
-    'saptanmamaktadir',
-    'izlenmedi',
-    'izlenmemistir',
-    'izlenmemektedir',
-    'gorulmedi',
-    'gorulmemistir',
-    'gorulmemektedir',
-    'mevcut degildir',
-    'mevcut degil',
-    'bulgu yok',
-    'patoloji yok',
-    'negatif',
+    'saptanmadi', 'saptanmamistir', 'saptanmamaktadir',
+    'izlenmedi', 'izlenmemistir', 'izlenmemektedir',
+    'gorulmedi', 'gorulmemistir', 'gorulmemektedir',
+    'mevcut degildir', 'mevcut degil', 'bulgu yok',
+    'patoloji yok', 'negatif',
   ].some((term) => value.includes(term));
 }
 
 function isRecommendation(text: string) {
   const value = fold(text);
-  return [
-    'onerilir',
-    'onerilmektedir',
-    'konsultasyon',
-    'takip',
-    'kontrol',
-    'acil degerlendirme',
-  ].some((term) => value.includes(term));
+  return ['onerilir', 'onerilmektedir', 'konsultasyon', 'takip', 'kontrol', 'acil degerlendirme']
+    .some((term) => value.includes(term));
 }
 
 function isPositiveClinicalFinding(text: string) {
   if (isNegativeFinding(text) || isRecommendation(text)) return false;
   const value = fold(text);
   return [
-    'basili',
-    'basi',
-    'mukozal kalinlasma',
-    'kalinlasma',
-    'odem',
-    'hematom',
-    'hemoraji',
-    'kanama',
-    'sift',
-    'kitle etkisi',
-    'efüzyon',
-    'efuzyon',
-    'konsolidasyon',
-    'infiltrasyon',
-    'atelektazi',
-    'lezyon',
-    'nodul',
-    'dilatasyon',
-    'stenoz',
-    'koleksiyon',
-    'metastaz',
-    'hipodens',
-    'hiperdens',
+    'basili', 'basi', 'mukozal kalinlasma', 'kalinlasma', 'duvar kalinligi',
+    'odem', 'hematom', 'hemoraji', 'kanama', 'sift', 'kitle etkisi',
+    'efüzyon', 'efuzyon', 'konsolidasyon', 'infiltrasyon', 'atelektazi',
+    'lezyon', 'nodul', 'dilatasyon', 'stenoz', 'koleksiyon', 'metastaz',
+    'hipodens', 'hiperdens', 'kalkul', 'kolelitiazis', 'tas',
+    'trombus', 'tromboz', 'kompresyon kaybi', 'akim izlenmemektedir',
+    'kirlenme', 'periappendikuler', 'apandisit',
   ].some((term) => value.includes(term));
+}
+
+function isCriticalUltrasoundFinding(text: string) {
+  if (isNegativeFinding(text)) return false;
+  const value = fold(text);
+  return [
+    'akut derin ven trombozu',
+    'derin ven trombozu',
+    'dvt',
+    'testis torsiyonu',
+    'ektopik gebelik',
+    'rüptüre ektopik',
+    'rupture ektopik',
+    'aort anevrizmasi rüptürü',
+    'aort anevrizmasi rupturu',
+    'tam venoz okluzyon',
+  ].some((term) => value.includes(term));
+}
+
+function normalizedWords(value: string) {
+  return new Set(
+    fold(value)
+      .replace(/[^a-z0-9]+/g, ' ')
+      .split(/\s+/)
+      .filter((word) => word.length > 3 && !['yaklasik', 'mevcuttur', 'izlenmektedir'].includes(word)),
+  );
 }
 
 function isClinicallyEquivalent(left: string, right: string) {
@@ -97,6 +83,9 @@ function isClinicallyEquivalent(left: string, right: string) {
   const b = fold(right);
   const sameConcept =
     (/(hematom|hemoraji|kanama)/.test(a) && /(hematom|hemoraji|kanama)/.test(b)) ||
+    (/(nodul)/.test(a) && /(nodul)/.test(b)) ||
+    (/(trombus|tromboz)/.test(a) && /(trombus|tromboz)/.test(b)) ||
+    (/(kalkul|kolelitiazis|tas)/.test(a) && /(kalkul|kolelitiazis|tas)/.test(b)) ||
     (a.includes('orta hat sifti') && b.includes('orta hat sifti')) ||
     (a.includes('kitle etkisi') && b.includes('kitle etkisi'));
   if (!sameConcept) return false;
@@ -120,6 +109,17 @@ function uniqueFindings(findings: RadiologyFinding[]) {
     if (!duplicate) output.push(finding);
   }
   return output;
+}
+
+function inferDisplayBodyPart(report: RadiologyReport) {
+  const text = fold(report.original_text ?? '');
+  if (/alt ekstremite|femoral ven|popliteal ven|venoz doppler|derin ven trombozu/.test(text)) {
+    return 'LOWER_EXTREMITY';
+  }
+  if (/tiroid/.test(text)) return 'NECK';
+  if (/skrotal|testis/.test(text)) return 'SCROTUM';
+  if (/obstetrik|gebelik|fetus|plasenta/.test(text)) return 'OBSTETRIC';
+  return report.body_part;
 }
 
 function FindingGroup({
@@ -161,7 +161,6 @@ function measurementLabel(measurement: RadiologyMeasurement) {
     `(\\d+(?:[.,]\\d+)?)\\s*[x×*]\\s*(\\d+(?:[.,]\\d+)?)(?:\\s*[x×*]\\s*(\\d+(?:[.,]\\d+)?))?\\s*${escapedUnit}`,
     'i',
   ).exec(context);
-
   if (multiAxis) {
     const dimensions = [multiAxis[1], multiAxis[2], multiAxis[3]].filter(Boolean);
     return `${dimensions.join(' × ')} ${measurement.unit}`;
@@ -170,13 +169,18 @@ function measurementLabel(measurement: RadiologyMeasurement) {
 }
 
 function uniqueMeasurements(measurements: RadiologyMeasurement[]) {
-  const seen = new Set<string>();
-  return measurements.filter((measurement) => {
-    const key = `${measurementLabel(measurement)}|${fold(measurement.context ?? '')}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+  const output: RadiologyMeasurement[] = [];
+  for (const measurement of measurements) {
+    const label = measurementLabel(measurement);
+    const duplicate = output.some((existing) => {
+      if (measurementLabel(existing) !== label) return false;
+      const a = normalizedWords(existing.context ?? '');
+      const b = normalizedWords(measurement.context ?? '');
+      return [...a].filter((word) => b.has(word)).length >= 2;
+    });
+    if (!duplicate) output.push(measurement);
+  }
+  return output;
 }
 
 function MeasurementGroup({ measurements }: { measurements: RadiologyMeasurement[] }) {
@@ -267,27 +271,33 @@ export default function RadiologyWorkspacePage() {
     const recommendations = findings.filter((item) => isRecommendation(item.text));
     const negatives = findings.filter((item) => !isRecommendation(item.text) && isNegativeFinding(item.text));
     const critical = findings.filter(
-      (item) => !isRecommendation(item.text) && !isNegativeFinding(item.text) && item.is_critical,
+      (item) =>
+        !isRecommendation(item.text) &&
+        !isNegativeFinding(item.text) &&
+        (item.is_critical || isCriticalUltrasoundFinding(item.text)),
     );
     const positive = findings.filter(
       (item) =>
         !isRecommendation(item.text) &&
         !isNegativeFinding(item.text) &&
-        !item.is_critical &&
+        !critical.includes(item) &&
         (item.classification === 'abnormal' || isPositiveClinicalFinding(item.text)),
     );
     const other = findings.filter(
       (item) =>
         !isRecommendation(item.text) &&
         !isNegativeFinding(item.text) &&
-        !item.is_critical &&
-        item.classification !== 'abnormal' &&
-        !isPositiveClinicalFinding(item.text),
+        !critical.includes(item) &&
+        !positive.includes(item),
     );
     return { findings, recommendations, negatives, critical, positive, other };
   }, [result]);
 
-  const criticalWarnings = Array.isArray(result?.critical_findings) ? result.critical_findings : [];
+  const backendWarnings = Array.isArray(result?.critical_findings) ? result.critical_findings : [];
+  const derivedWarnings = view.critical
+    .filter((item) => isCriticalUltrasoundFinding(item.text))
+    .map(() => 'Akut derin ven trombozu');
+  const criticalWarnings = [...new Set([...backendWarnings, ...derivedWarnings])];
   const measurements = Array.isArray(result?.measurements) ? result.measurements : [];
   const urgency = criticalWarnings.length > 0 ? 'ACİL' : view.positive.length > 0 ? 'DİKKAT' : 'RUTİN';
   const urgencyClass =
@@ -299,6 +309,7 @@ export default function RadiologyWorkspacePage() {
   const summary = result
     ? clinicalSummary(view.critical, view.positive, view.recommendations, result.impression)
     : '';
+  const displayBodyPart = result ? inferDisplayBodyPart(result) : '';
 
   return (
     <div className="space-y-6">
@@ -330,7 +341,7 @@ export default function RadiologyWorkspacePage() {
       </form>
 
       {result ? (
-        <SectionCard title="Analiz sonucu" description={`${result.modality} · ${result.body_part}`}>
+        <SectionCard title="Analiz sonucu" description={`${result.modality} · ${displayBodyPart}`}>
           <div className="space-y-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <span className={`rounded-full border px-4 py-2 text-sm font-extrabold tracking-wide ${urgencyClass}`}>
