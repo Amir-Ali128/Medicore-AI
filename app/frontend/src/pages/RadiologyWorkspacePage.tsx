@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useMemo, useState, type FormEvent } from 'react';
 
 import SectionCard from '../components/ui/SectionCard';
 import { evaluateClaudeAbnormalResults } from '../services/claudeReviewClient';
@@ -6,6 +6,7 @@ import {
   createManualRadiologyReport,
   uploadRadiologyReportPdf,
   type RadiologyFinding,
+  type RadiologyMeasurement,
   type RadiologyReport,
 } from '../services/radiologyClient';
 
@@ -20,16 +21,29 @@ function fold(value: string) {
     .replace(/ı/g, 'i');
 }
 
+function normalizedWords(value: string) {
+  return new Set(
+    fold(value)
+      .replace(/[^a-z0-9ğüşöçı]+/g, ' ')
+      .split(/\s+/)
+      .filter((word) => word.length > 3 && !['yaklasik', 'mevcuttur', 'izlenmektedir'].includes(word)),
+  );
+}
+
 function isNegativeFinding(text: string) {
   const value = fold(text);
   return [
     'saptanmadi',
     'saptanmamistir',
+    'saptanmamaktadir',
     'izlenmedi',
     'izlenmemistir',
+    'izlenmemektedir',
     'gorulmedi',
     'gorulmemistir',
+    'gorulmemektedir',
     'mevcut degildir',
+    'mevcut degil',
     'bulgu yok',
     'patoloji yok',
     'negatif',
@@ -38,19 +52,44 @@ function isNegativeFinding(text: string) {
 
 function isRecommendation(text: string) {
   const value = fold(text);
-  return ['onerilir', 'degerlendirme onerilir', 'konsultasyon', 'takip onerilir'].some((term) =>
-    value.includes(term),
-  );
+  return [
+    'onerilir',
+    'onerilmektedir',
+    'konsultasyon',
+    'takip',
+    'kontrol',
+    'acil degerlendirme',
+  ].some((term) => value.includes(term));
+}
+
+function isClinicallyEquivalent(left: string, right: string) {
+  const a = fold(left);
+  const b = fold(right);
+  const sameConcept =
+    (/(hematom|hemoraji|kanama)/.test(a) && /(hematom|hemoraji|kanama)/.test(b)) ||
+    (a.includes('orta hat sifti') && b.includes('orta hat sifti')) ||
+    (a.includes('kitle etkisi') && b.includes('kitle etkisi'));
+  if (!sameConcept) return false;
+
+  const leftWords = normalizedWords(left);
+  const rightWords = normalizedWords(right);
+  const overlap = [...leftWords].filter((word) => rightWords.has(word)).length;
+  return overlap >= 2 || (a.includes('frontal') && b.includes('frontal'));
 }
 
 function uniqueFindings(findings: RadiologyFinding[]) {
-  const seen = new Set<string>();
-  return findings.filter((finding) => {
-    const key = fold(finding.text).replace(/[^a-z0-9]+/g, ' ').trim();
-    if (!key || seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+  const output: RadiologyFinding[] = [];
+  for (const finding of findings) {
+    const exactKey = fold(finding.text).replace(/[^a-z0-9]+/g, ' ').trim();
+    if (!exactKey) continue;
+    const duplicate = output.some(
+      (existing) =>
+        fold(existing.text).replace(/[^a-z0-9]+/g, ' ').trim() === exactKey ||
+        isClinicallyEquivalent(existing.text, finding.text),
+    );
+    if (!duplicate) output.push(finding);
+  }
+  return output;
 }
 
 function FindingGroup({
@@ -82,6 +121,35 @@ function FindingGroup({
       </div>
     </section>
   );
+}
+
+function MeasurementGroup({ measurements }: { measurements: RadiologyMeasurement[] }) {
+  if (measurements.length === 0) return null;
+  return (
+    <section>
+      <h2 className="font-semibold text-slate-950">Ölçümler</h2>
+      <div className="mt-3 grid gap-3 md:grid-cols-2">
+        {measurements.map((measurement, index) => (
+          <div key={`${measurement.value}-${measurement.unit}-${index}`} className="rounded-lg border border-cyan-200 bg-cyan-50 p-3">
+            <p className="font-semibold text-cyan-950">{measurement.value} {measurement.unit}</p>
+            <p className="mt-1 text-xs leading-5 text-slate-600">{measurement.context}</p>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function clinicalSummary(
+  critical: RadiologyFinding[],
+  positive: RadiologyFinding[],
+  recommendations: RadiologyFinding[],
+  impression: string | null,
+) {
+  const priority = [...critical, ...positive].slice(0, 3).map((item) => item.text);
+  const sentences = priority.length > 0 ? priority : impression ? [impression] : [];
+  if (recommendations[0]) sentences.push(recommendations[0].text);
+  return sentences.join(' ');
 }
 
 export default function RadiologyWorkspacePage() {
@@ -137,29 +205,42 @@ export default function RadiologyWorkspacePage() {
     }
   }
 
-  const findings = uniqueFindings(Array.isArray(result?.findings) ? result.findings : []);
-  const criticalFindings = Array.isArray(result?.critical_findings) ? result.critical_findings : [];
-  const recommendationFindings = findings.filter((item) => isRecommendation(item.text));
-  const negativeFindings = findings.filter(
-    (item) => !isRecommendation(item.text) && isNegativeFinding(item.text),
-  );
-  const criticalSentences = findings.filter(
-    (item) => !isRecommendation(item.text) && !isNegativeFinding(item.text) && item.is_critical,
-  );
-  const positiveFindings = findings.filter(
-    (item) =>
-      !isRecommendation(item.text) &&
-      !isNegativeFinding(item.text) &&
-      !item.is_critical &&
-      item.classification === 'abnormal',
-  );
-  const otherFindings = findings.filter(
-    (item) =>
-      !isRecommendation(item.text) &&
-      !isNegativeFinding(item.text) &&
-      !item.is_critical &&
-      item.classification !== 'abnormal',
-  );
+  const view = useMemo(() => {
+    const findings = uniqueFindings(Array.isArray(result?.findings) ? result.findings : []);
+    const recommendations = findings.filter((item) => isRecommendation(item.text));
+    const negatives = findings.filter((item) => !isRecommendation(item.text) && isNegativeFinding(item.text));
+    const critical = findings.filter(
+      (item) => !isRecommendation(item.text) && !isNegativeFinding(item.text) && item.is_critical,
+    );
+    const positive = findings.filter(
+      (item) =>
+        !isRecommendation(item.text) &&
+        !isNegativeFinding(item.text) &&
+        !item.is_critical &&
+        item.classification === 'abnormal',
+    );
+    const other = findings.filter(
+      (item) =>
+        !isRecommendation(item.text) &&
+        !isNegativeFinding(item.text) &&
+        !item.is_critical &&
+        item.classification !== 'abnormal',
+    );
+    return { findings, recommendations, negatives, critical, positive, other };
+  }, [result]);
+
+  const criticalWarnings = Array.isArray(result?.critical_findings) ? result.critical_findings : [];
+  const measurements = Array.isArray(result?.measurements) ? result.measurements : [];
+  const urgency = criticalWarnings.length > 0 ? 'ACİL' : view.positive.length > 0 ? 'DİKKAT' : 'RUTİN';
+  const urgencyClass =
+    urgency === 'ACİL'
+      ? 'border-red-300 bg-red-600 text-white'
+      : urgency === 'DİKKAT'
+        ? 'border-amber-300 bg-amber-100 text-amber-950'
+        : 'border-emerald-300 bg-emerald-100 text-emerald-950';
+  const summary = result
+    ? clinicalSummary(view.critical, view.positive, view.recommendations, result.impression)
+    : '';
 
   return (
     <div className="space-y-6">
@@ -193,22 +274,36 @@ export default function RadiologyWorkspacePage() {
       {result ? (
         <SectionCard title="Analiz sonucu" description={`${result.modality} · ${result.body_part}`}>
           <div className="space-y-5">
-            <p className="text-sm leading-7 text-slate-700">{result.summary}</p>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <span className={`rounded-full border px-4 py-2 text-sm font-extrabold tracking-wide ${urgencyClass}`}>
+                Klinik öncelik: {urgency}
+              </span>
+              <span className="text-xs text-slate-500">Hekim doğrulaması zorunludur.</span>
+            </div>
 
-            {criticalFindings.length > 0 ? (
+            {summary ? (
+              <section className="rounded-xl border border-blue-200 bg-blue-50 p-5">
+                <h2 className="font-semibold text-blue-950">AI klinik özeti</h2>
+                <p className="mt-2 text-sm leading-7 text-blue-950">{summary}</p>
+                <p className="mt-3 text-xs text-blue-800">Bu özet yalnızca rapor metninden otomatik oluşturulmuştur; tanı veya tedavi kararı değildir.</p>
+              </section>
+            ) : null}
+
+            {criticalWarnings.length > 0 ? (
               <div className="rounded-lg border border-red-200 bg-red-50 p-4">
                 <p className="font-semibold text-red-900">Kritik uyarılar</p>
-                <p className="mt-2 text-sm text-red-800">{criticalFindings.join(' · ')}</p>
+                <p className="mt-2 text-sm text-red-800">{criticalWarnings.join(' · ')}</p>
               </div>
             ) : (
               <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">Kritik ifade saptanmadı. Hekim doğrulaması gereklidir.</div>
             )}
 
-            <FindingGroup title="Kritik bulgular" findings={criticalSentences} tone="red" />
-            <FindingGroup title="Diğer pozitif bulgular" findings={positiveFindings} tone="amber" />
-            <FindingGroup title="Negatif bulgular" findings={negativeFindings} tone="emerald" />
-            <FindingGroup title="Diğer rapor bulguları" findings={otherFindings} tone="slate" />
-            <FindingGroup title="Öneri / izlem" findings={recommendationFindings} tone="slate" />
+            <FindingGroup title="Kritik bulgular" findings={view.critical} tone="red" />
+            <FindingGroup title="Diğer pozitif bulgular" findings={view.positive} tone="amber" />
+            <FindingGroup title="Negatif bulgular" findings={view.negatives} tone="emerald" />
+            <MeasurementGroup measurements={measurements} />
+            <FindingGroup title="Diğer rapor bulguları" findings={view.other} tone="slate" />
+            <FindingGroup title="Öneri / izlem" findings={view.recommendations} tone="slate" />
 
             {result.impression ? (
               <section className="rounded-lg border border-violet-200 bg-violet-50 p-4">
