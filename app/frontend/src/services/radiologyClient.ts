@@ -84,13 +84,32 @@ async function readErrorMessage(response: Response): Promise<string> {
   return response.text();
 }
 
+function normalizeReport(report: RadiologyReport): RadiologyReport {
+  return {
+    ...report,
+    modality: report.modality || 'UNKNOWN',
+    body_part: report.body_part || 'OTHER',
+    original_text: report.original_text || '',
+    summary: report.summary || 'Rapor özeti oluşturulamadı.',
+    findings: Array.isArray(report.findings) ? report.findings : [],
+    measurements: Array.isArray(report.measurements) ? report.measurements : [],
+    dexa_metrics: Array.isArray(report.dexa_metrics) ? report.dexa_metrics : [],
+    critical_findings: Array.isArray(report.critical_findings)
+      ? report.critical_findings
+      : [],
+    metadata_json:
+      report.metadata_json && typeof report.metadata_json === 'object'
+        ? report.metadata_json
+        : {},
+  };
+}
+
 async function parseReportResponse(response: Response): Promise<RadiologyReport> {
   if (!response.ok) {
     const message = await readErrorMessage(response);
     throw new Error(`Radyoloji analizi başarısız: ${response.status} ${message}`);
   }
-  const report = (await response.json()) as RadiologyReport;
-  report.dexa_metrics ??= [];
+  const report = normalizeReport((await response.json()) as RadiologyReport);
   localStorage.setItem(LAST_RADIOLOGY_REPORT_ID_KEY, report.id);
   return report;
 }
@@ -150,8 +169,5 @@ export async function listPatientRadiologyReports(
     throw new Error(`Radyoloji geçmişi yüklenemedi: ${response.status} ${message}`);
   }
   const reports = (await response.json()) as RadiologyReport[];
-  return reports.map((report) => ({
-    ...report,
-    dexa_metrics: report.dexa_metrics ?? [],
-  }));
+  return Array.isArray(reports) ? reports.map(normalizeReport) : [];
 }
