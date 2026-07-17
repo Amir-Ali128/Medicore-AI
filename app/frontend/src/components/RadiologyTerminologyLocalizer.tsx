@@ -5,6 +5,14 @@ const REPLACEMENTS: Array<[string, string]> = [
   ['Radyoloji Raporları', 'Radyoloji ve Tetkik Raporları'],
 ];
 
+const EXTRA_REPORT_TYPES = [
+  'Endoskopi raporu',
+  'Kolonoskopi raporu',
+  'EKG / EKO raporu',
+  'EEG / EMG raporu',
+  'DEXA raporu',
+];
+
 function updateNode(root: Node) {
   const updateText = (node: Text) => {
     let value = node.nodeValue ?? '';
@@ -33,9 +41,31 @@ function updateNode(root: Node) {
   }
 }
 
+function addExtraReportTypes() {
+  const headings = Array.from(document.querySelectorAll('p'));
+  const heading = headings.find(
+    (element) => element.textContent?.trim() === 'Planlanan rapor türleri',
+  );
+
+  const chipContainer = heading?.nextElementSibling;
+  if (!(chipContainer instanceof HTMLElement)) return;
+  if (chipContainer.dataset.extraReportTypesAdded === 'true') return;
+
+  for (const reportType of EXTRA_REPORT_TYPES) {
+    const chip = document.createElement('span');
+    chip.className =
+      'rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700';
+    chip.textContent = reportType;
+    chipContainer.appendChild(chip);
+  }
+
+  chipContainer.dataset.extraReportTypesAdded = 'true';
+}
+
 export default function RadiologyTerminologyLocalizer() {
   useEffect(() => {
     updateNode(document.body);
+    addExtraReportTypes();
 
     const observer = new MutationObserver((mutations) => {
       for (const mutation of mutations) {
@@ -45,6 +75,8 @@ export default function RadiologyTerminologyLocalizer() {
           for (const node of mutation.addedNodes) updateNode(node);
         }
       }
+
+      addExtraReportTypes();
     });
 
     observer.observe(document.body, {
