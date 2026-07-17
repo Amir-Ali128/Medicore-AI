@@ -1,10 +1,4 @@
-"""Conservative safety layer for radiology report text parsing.
-
-The base parser intentionally uses deterministic keyword extraction. This module
-adds a second evidence check so terms mentioned only in clinical history,
-indication, pre-diagnosis, or explicitly negated clauses are not presented as
-active findings.
-"""
+"""Conservative safety and presentation layer for radiology text parsing."""
 
 from __future__ import annotations
 
@@ -15,7 +9,7 @@ from typing import Any
 
 from app.domain.radiology_report_parser import analyze_radiology_report
 
-SAFETY_VERSION = "radiology-evidence-safety-v1"
+SAFETY_VERSION = "radiology-evidence-safety-v2"
 
 _CRITICAL_VARIANTS: dict[str, tuple[str, ...]] = {
     "Pnömotoraks": ("pnomotoraks",),
@@ -23,9 +17,14 @@ _CRITICAL_VARIANTS: dict[str, tuple[str, ...]] = {
     "İntrakraniyal kanama": (
         "intrakraniyal kanama",
         "intraserebral kanama",
+        "intraparenkimal hemoraji",
+        "intraparenkimal hematom",
         "subaraknoid kanama",
         "subdural hematom",
+        "epidural hematom",
     ),
+    "Orta hat şifti": ("orta hat sifti", "midline shift"),
+    "Kitle etkisi": ("kitle etkisi", "mass effect"),
     "Akut enfarkt": ("akut enfarkt", "akut infarkt", "akut iskemi"),
     "Aort diseksiyonu": ("aort diseksiyonu", "diseksiyon flebi"),
     "Serbest hava": ("serbest hava", "pnomoperitoneum"),
@@ -39,30 +38,13 @@ _CRITICAL_VARIANTS: dict[str, tuple[str, ...]] = {
 }
 
 _EXCLUDED_SECTION_HEADINGS = {
-    "klinik",
-    "klinik bilgi",
-    "klinik bilgiler",
-    "endikasyon",
-    "istem nedeni",
-    "tetkik istem nedeni",
-    "on tani",
-    "ontani",
-    "preoperatif tani",
-    "anamnez",
-    "oyku",
-    "hikaye",
-    "hasta hikayesi",
-    "sikayet",
+    "klinik", "klinik bilgi", "klinik bilgiler", "endikasyon", "istem nedeni",
+    "tetkik istem nedeni", "on tani", "ontani", "preoperatif tani", "anamnez",
+    "oyku", "hikaye", "hasta hikayesi", "sikayet", "teknik", "tetkik",
 }
 
 _ACTIVE_SECTION_HEADINGS = {
-    "bulgu",
-    "bulgular",
-    "findings",
-    "sonuc",
-    "izlenim",
-    "degerlendirme",
-    "impression",
+    "bulgu", "bulgular", "findings", "sonuc", "izlenim", "degerlendirme", "impression",
 }
 
 _NEGATION_PATTERNS = tuple(
@@ -84,9 +66,6 @@ _NEGATION_PATTERNS = tuple(
     )
 )
 
-# These expressions describe a reason for the examination, not a confirmed
-# current finding. They are ignored unless the same term also has positive
-# evidence in an active findings/result section.
 _INDICATION_PATTERNS = tuple(
     re.compile(pattern)
     for pattern in (
@@ -99,24 +78,10 @@ _INDICATION_PATTERNS = tuple(
 
 
 def _ascii_fold(value: str) -> str:
-    translated = value.translate(
-        str.maketrans(
-            {
-                "ı": "i",
-                "İ": "i",
-                "ş": "s",
-                "Ş": "s",
-                "ğ": "g",
-                "Ğ": "g",
-                "ü": "u",
-                "Ü": "u",
-                "ö": "o",
-                "Ö": "o",
-                "ç": "c",
-                "Ç": "c",
-            }
-        )
-    )
+    translated = value.translate(str.maketrans({
+        "ı": "i", "İ": "i", "ş": "s", "Ş": "s", "ğ": "g", "Ğ": "g",
+        "ü": "u", "Ü": "u", "ö": "o", "Ö": "o", "ç": "c", "Ç": "c",
+    }))
     normalized = unicodedata.normalize("NFKD", translated)
     return "".join(char for char in normalized if not unicodedata.combining(char)).lower()
 
@@ -130,11 +95,9 @@ def _heading(value: str) -> str:
 
 
 def _clauses(sentence: str) -> list[str]:
-    """Split a sentence into local clauses to avoid cross-clause negation leaks."""
-    normalized = _compact(sentence)
     pieces = re.split(
         r"[.;\n]+|\s*,\s*|\s+(?:ancak|fakat|lakin|bununla birlikte|buna karsin|buna karşılık)\s+",
-        normalized,
+        _compact(sentence),
         flags=re.IGNORECASE,
     )
     return [piece.strip() for piece in pieces if piece.strip()]
@@ -151,7 +114,6 @@ def _looks_like_indication(clause: str) -> bool:
 
 
 def _iter_evidence_clauses(text: str) -> Iterable[tuple[str, bool]]:
-    """Yield clauses with whether they belong to an active finding section."""
     excluded_section = False
     active_section = False
 
@@ -167,7 +129,6 @@ def _iter_evidence_clauses(text: str) -> Iterable[tuple[str, bool]]:
             excluded_section = True
             active_section = False
             if separator and inline.strip():
-                # The inline content is intentionally excluded.
                 continue
             continue
 
@@ -190,7 +151,6 @@ def _iter_evidence_clauses(text: str) -> Iterable[tuple[str, bool]]:
 def _term_has_positive_evidence(text: str, variants: Iterable[str]) -> bool:
     folded_variants = tuple(_ascii_fold(item) for item in variants)
     fallback_candidate = False
-
     for clause, active_section in _iter_evidence_clauses(text):
         folded_clause = f" {_compact(_ascii_fold(clause))} "
         if not any(variant in folded_clause for variant in folded_variants):
@@ -202,74 +162,69 @@ def _term_has_positive_evidence(text: str, variants: Iterable[str]) -> bool:
         if active_section:
             return True
         fallback_candidate = True
-
     return fallback_candidate
 
 
-def _downgrade_unsupported_findings(
-    findings: list[dict[str, Any]],
-    unsupported_labels: set[str],
-) -> None:
-    unsupported_terms = {
-        variant
-        for label in unsupported_labels
-        for variant in _CRITICAL_VARIANTS.get(label, ())
-    }
+def _active_clause_keys(text: str) -> set[str]:
+    active = {_heading(clause) for clause, is_active in _iter_evidence_clauses(text) if is_active}
+    return {item for item in active if item}
+
+
+def _filter_findings_to_active_sections(text: str, findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    active_keys = _active_clause_keys(text)
+    if not active_keys:
+        return findings
+
+    filtered: list[dict[str, Any]] = []
+    for finding in findings:
+        finding_text = str(finding.get("text", ""))
+        key = _heading(finding_text)
+        if key in active_keys or any(key in active or active in key for active in active_keys if len(active) > 8):
+            filtered.append(finding)
+    return filtered
+
+
+def _apply_critical_evidence(text: str, findings: list[dict[str, Any]]) -> list[str]:
+    supported = [
+        label for label, variants in _CRITICAL_VARIANTS.items()
+        if _term_has_positive_evidence(text, variants)
+    ]
 
     for finding in findings:
-        if not finding.get("is_critical"):
-            continue
-        matched = {_ascii_fold(str(term)) for term in finding.get("matched_terms", [])}
-        if matched and not matched.intersection(unsupported_terms):
-            continue
-        finding["classification"] = "observation"
-        finding["is_critical"] = False
-        finding["matched_terms"] = [
-            term
-            for term in finding.get("matched_terms", [])
-            if _ascii_fold(str(term)) not in unsupported_terms
+        finding_text = f" {_compact(_ascii_fold(str(finding.get('text', ''))))} "
+        matched_labels = [
+            label for label in supported
+            if any(_ascii_fold(variant) in finding_text for variant in _CRITICAL_VARIANTS[label])
+            and not _is_negated_clause(str(finding.get("text", "")))
         ]
-        finding["safety_note"] = (
-            "Critical term was mentioned without positive current-report evidence "
-            "and was suppressed to prevent a false-positive alert."
-        )
+        if matched_labels:
+            finding["classification"] = "critical"
+            finding["is_critical"] = True
+            finding["matched_terms"] = sorted(set(finding.get("matched_terms", []) + matched_labels))
+    return supported
 
 
 def analyze_radiology_report_safely(text: str) -> dict[str, Any]:
-    """Run the base parser and suppress unsupported critical-term alerts."""
+    """Return section-aware, conservative findings and verified emergency alerts."""
     result = analyze_radiology_report(text)
-    original_labels = list(result.get("critical_findings", []))
-    supported_labels = [
-        label
-        for label in original_labels
-        if _term_has_positive_evidence(text, _CRITICAL_VARIANTS.get(label, (label,)))
-    ]
-    unsupported_labels = set(original_labels) - set(supported_labels)
+    findings = _filter_findings_to_active_sections(text, list(result.get("findings", [])))
+    supported_labels = _apply_critical_evidence(text, findings)
 
+    result["findings"] = findings
     result["critical_findings"] = supported_labels
-    _downgrade_unsupported_findings(result.get("findings", []), unsupported_labels)
-
-    warnings = list(result.get("warnings", []))
-    if unsupported_labels:
-        warnings.append(
-            "Safety filter suppressed unsupported critical mentions: "
-            + ", ".join(sorted(unsupported_labels))
-            + "."
-        )
-    result["warnings"] = warnings
     result["safety_version"] = SAFETY_VERSION
 
-    abnormal_count = sum(
-        1
-        for finding in result.get("findings", [])
-        if finding.get("classification") == "abnormal"
-    )
+    abnormal_count = sum(1 for item in findings if item.get("classification") == "abnormal")
+    critical_count = sum(1 for item in findings if item.get("is_critical"))
     result["summary"] = (
-        f"{result.get('modality', 'UNKNOWN')} / {result.get('body_part', 'OTHER')} report: "
-        f"{len(result.get('findings', []))} finding sentences, "
-        f"{abnormal_count} non-critical abnormal signals, "
-        f"{len(result.get('measurements', []))} measurements and "
-        f"{len(supported_labels)} verified critical-term alerts were extracted. "
-        "All outputs require physician verification against the original report."
+        f"{result.get('modality', 'UNKNOWN')} / {result.get('body_part', 'OTHER')} raporu: "
+        f"{len(findings)} klinik bulgu cümlesi, {abnormal_count} dikkat gerektiren bulgu, "
+        f"{len(result.get('measurements', []))} ölçüm ve {len(supported_labels)} doğrulanmış kritik uyarı çıkarıldı. "
+        "Sonuçlar orijinal raporla hekim tarafından doğrulanmalıdır."
     )
+
+    warnings = list(result.get("warnings", []))
+    if critical_count:
+        warnings.append("Acil/kritik ifadeler saptandı; gecikmeden hekim değerlendirmesi gerekir.")
+    result["warnings"] = warnings
     return result
