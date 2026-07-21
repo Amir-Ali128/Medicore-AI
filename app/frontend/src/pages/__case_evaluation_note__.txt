@@ -1,0 +1,8 @@
+Two-stage case evaluation verification
+
+- Clinical intake is restored from the active case draft.
+- Laboratory results are restored by the latest persisted analysis run id.
+- Radiology reports are restored from the patient report endpoint and deduplicated.
+- Radiology evaluation no longer triggers combined clinical evaluation.
+- Combined evaluation is enabled only when clinical, laboratory, and radiology data are all present.
+- Combined AI output is scoped by the analysis run and latest radiology report.
