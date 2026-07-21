@@ -5,6 +5,7 @@ import {
   evaluateClaudeAbnormalResults,
   type ClaudeReviewGenerationResult,
 } from '../services/claudeReviewClient';
+import { calculateAcuteCholecystitisCompatibility } from '../services/clinicalCompatibilityScore';
 import {
   getAnalysisRunResults,
   LAST_ANALYSIS_RUN_ID_KEY,
@@ -218,6 +219,20 @@ export default function RadiologyWorkspacePage() {
       : urgency === 'DİKKAT'
         ? 'border-amber-300 bg-amber-100 text-amber-950'
         : 'border-emerald-300 bg-emerald-100 text-emerald-950';
+  const scoredReports = reports.length > 0 ? reports : result ? [result] : [];
+  const compatibility = calculateAcuteCholecystitisCompatibility({
+    clinicalContext,
+    labResults,
+    reports: scoredReports,
+  });
+  const compatibilityClass =
+    compatibility.score >= 85
+      ? 'border-emerald-300 bg-emerald-50 text-emerald-950'
+      : compatibility.score >= 70
+        ? 'border-blue-300 bg-blue-50 text-blue-950'
+        : compatibility.score >= 50
+          ? 'border-amber-300 bg-amber-50 text-amber-950'
+          : 'border-slate-300 bg-slate-50 text-slate-950';
 
   return (
     <div className="space-y-6">
@@ -322,6 +337,78 @@ export default function RadiologyWorkspacePage() {
             ) : (
               <p className="text-sm text-slate-600">Görüntüleme raporu bulunamadı.</p>
             )}
+          </SectionCard>
+
+          <SectionCard
+            title="Klinik uyum skoru"
+            description="Tanı olasılığı değil; yapılandırılmış bulguların belirli bir klinik hipotezle deterministik uyumudur."
+          >
+            <div className={`rounded-xl border p-5 ${compatibilityClass}`}>
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <p className="text-xs font-extrabold uppercase tracking-wide">Değerlendirilen hipotez</p>
+                  <h2 className="mt-2 text-xl font-semibold">{compatibility.display_name}</h2>
+                  <p className="mt-2 text-sm font-semibold">{compatibility.level_label}</p>
+                </div>
+                <div className="rounded-xl border border-current/20 bg-white/70 px-6 py-4 text-center">
+                  <p className="text-4xl font-black">{compatibility.score}</p>
+                  <p className="mt-1 text-sm font-semibold">/ {compatibility.maximum_score}</p>
+                </div>
+              </div>
+
+              <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                {compatibility.breakdown.map((item) => (
+                  <div key={item.domain} className="rounded-lg border border-current/15 bg-white/70 p-3">
+                    <p className="text-xs font-semibold uppercase opacity-70">{item.label}</p>
+                    <p className="mt-2 text-lg font-bold">{item.score}/{item.maximum_score}</p>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-5 flex flex-wrap items-center gap-3 text-xs font-semibold">
+                <span className="rounded-full border border-current/20 bg-white/70 px-3 py-1.5">
+                  Veri tamlığı: %{compatibility.data_completeness_percent}
+                </span>
+                <span className="rounded-full border border-current/20 bg-white/70 px-3 py-1.5">
+                  Hesap türü: Kural tabanlı uyum
+                </span>
+                <span className="rounded-full border border-current/20 bg-white/70 px-3 py-1.5">
+                  Tahmini olasılık: Üretilmiyor
+                </span>
+              </div>
+            </div>
+
+            <div className="mt-5 grid gap-5 lg:grid-cols-[1.2fr_0.8fr]">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-950">Skoru destekleyen bulgular</h3>
+                {compatibility.supporting_evidence.length > 0 ? (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {compatibility.supporting_evidence.slice(0, 12).map((item) => (
+                      <span key={item.code} title={item.detail} className="rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1.5 text-xs font-semibold text-cyan-900">
+                        {item.label} · +{item.points}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-3 text-sm text-slate-600">Bu hipotezi destekleyen yapılandırılmış bulgu bulunamadı.</p>
+                )}
+              </div>
+
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                <h3 className="text-sm font-semibold text-slate-950">Veri kalite kontrolü</h3>
+                {compatibility.missing_data.length > 0 ? (
+                  <ul className="mt-3 space-y-2 text-sm text-slate-700">
+                    {compatibility.missing_data.map((item) => <li key={item}>• Eksik: {item}</li>)}
+                  </ul>
+                ) : (
+                  <p className="mt-3 text-sm text-slate-700">Klinik, laboratuvar ve görüntüleme alanları değerlendirmeye katıldı.</p>
+                )}
+              </div>
+            </div>
+
+            <p className="mt-5 rounded-lg border border-blue-200 bg-blue-50 p-4 text-xs leading-6 text-blue-900">
+              {compatibility.disclaimer}
+            </p>
           </SectionCard>
 
           <SectionCard title="Birleşik AI klinik değerlendirmesi" description="Kan, klinik bilgi ve iki rapor birlikte değerlendirilir.">
