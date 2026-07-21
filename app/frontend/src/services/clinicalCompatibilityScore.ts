@@ -81,13 +81,7 @@ function hasAny(text: string, terms: string[]) {
 
 function hasPositiveMurphy(text: string) {
   if (!text.includes('murphy')) return false;
-  return !/murphy.{0,28}(negatif|negative|yok|saptanmadi|izlenmedi)/.test(text);
-}
-
-function numericValue(result: LabAnalysisResult | undefined) {
-  if (!result) return null;
-  const parsed = Number.parseFloat(result.normalized_value.replace(',', '.'));
-  return Number.isFinite(parsed) ? parsed : null;
+  return !/murphy.{0,32}(negatif|negative|yok|saptanmadi|izlenmedi)/.test(text);
 }
 
 function findLabResult(results: LabAnalysisResult[], aliases: string[]) {
@@ -99,10 +93,6 @@ function findLabResult(results: LabAnalysisResult[], aliases: string[]) {
     );
     return aliases.some((alias) => haystack.includes(fold(alias)));
   });
-}
-
-function isNormal(result: LabAnalysisResult | undefined) {
-  return result?.result_status === 'normal';
 }
 
 function isHigh(result: LabAnalysisResult | undefined) {
@@ -135,7 +125,9 @@ function imagingText(reports: RadiologyReport[]) {
         report.original_text,
         report.summary,
         report.impression,
-        ...report.findings.map((finding) => finding.text),
+        ...(Array.isArray(report.findings)
+          ? report.findings.map((finding) => finding.text)
+          : []),
       ])
       .filter(Boolean)
       .join(' '),
@@ -174,7 +166,9 @@ function evidence(
   };
 }
 
-function scoreLevel(score: number): Pick<ClinicalCompatibilityScore, 'level' | 'level_label'> {
+function scoreLevel(
+  score: number,
+): Pick<ClinicalCompatibilityScore, 'level' | 'level_label'> {
   if (score >= 85) return { level: 'very_high', level_label: 'Çok yüksek uyum' };
   if (score >= 70) return { level: 'high', level_label: 'Yüksek uyum' };
   if (score >= 50) return { level: 'moderate', level_label: 'Orta uyum' };
@@ -186,7 +180,8 @@ function calculateCompleteness(input: ScoreInput) {
   const clinicalAvailable = Boolean(clinicalText(input.clinicalContext));
   const labsAvailable = input.labResults.length > 0;
   const imagingAvailable = Boolean(imagingText(input.reports));
-  const crossModalAvailable = [clinicalAvailable, labsAvailable, imagingAvailable].filter(Boolean).length >= 2;
+  const crossModalAvailable =
+    [clinicalAvailable, labsAvailable, imagingAvailable].filter(Boolean).length >= 2;
 
   const score =
     (clinicalAvailable ? 30 : 0) +
@@ -202,6 +197,15 @@ function calculateCompleteness(input: ScoreInput) {
   return { score, missing };
 }
 
+function measuredGallbladderWallThickening(text: string) {
+  const match = text.match(
+    /(?:safra kesesi\s+)?duvar kalinligi\s*(?:[:=]|olarak)?\s*(\d+(?:[.,]\d+)?)\s*mm/,
+  );
+  if (!match) return false;
+  const value = Number.parseFloat(match[1].replace(',', '.'));
+  return Number.isFinite(value) && value > 3;
+}
+
 export function calculateAcuteCholecystitisCompatibility(
   input: ScoreInput,
 ): ClinicalCompatibilityScore {
@@ -211,13 +215,32 @@ export function calculateAcuteCholecystitisCompatibility(
   const temperature = input.clinicalContext?.physical_exam.temperature_c ?? null;
 
   const wbc = findLabResult(input.labResults, ['wbc', 'lökosit', 'lokosit', 'leukocyte']);
-  const neutrophil = findLabResult(input.labResults, ['neutrophil', 'nötrofil', 'notrofil', 'neu']);
+  const neutrophil = findLabResult(input.labResults, [
+    'neutrophil',
+    'nötrofil',
+    'notrofil',
+    'neu',
+    'parçalı mutlak',
+    'parcali mutlak',
+  ]);
   const crp = findLabResult(input.labResults, ['crp', 'c-reaktif', 'c reaktif']);
-  const procalcitonin = findLabResult(input.labResults, ['prokalsitonin', 'procalcitonin', 'pct']);
-  const lipase = findLabResult(input.labResults, ['lipaz', 'lipase']);
-  const bilirubin = findLabResult(input.labResults, ['total bilirubin', 'bilirubin total', 'tbil']);
-  const urineLeukocyte = findLabResult(input.labResults, ['idrar lökosit', 'urine leukocyte']);
-  const urineNitrite = findLabResult(input.labResults, ['nitrit', 'nitrite']);
+  const procalcitonin = findLabResult(input.labResults, [
+    'prokalsitonin',
+    'procalcitonin',
+  ]);
+  const esr = findLabResult(input.labResults, ['esr', 'sedim', 'sedimentasyon']);
+  const bilirubin = findLabResult(input.labResults, [
+    'total bilirubin',
+    'bilirubin total',
+    'tbil',
+  ]);
+  const directBilirubin = findLabResult(input.labResults, [
+    'direkt bilirubin',
+    'direct bilirubin',
+    'dbil',
+  ]);
+  const alp = findLabResult(input.labResults, ['alp', 'alkalen fosfataz']);
+  const ggt = findLabResult(input.labResults, ['ggt', 'gama glutamil', 'gamma glutamyl']);
 
   const rightUpperQuadrantPain = hasAny(clinical, [
     'sağ üst kadran',
@@ -228,7 +251,9 @@ export function calculateAcuteCholecystitisCompatibility(
     'sag subkostal',
   ]);
   const murphyPositive = hasPositiveMurphy(clinical);
-  const fever = (temperature !== null && temperature >= 38) || hasAny(clinical, ['ateş', 'ates', 'fever']);
+  const fever =
+    (temperature !== null && Number(temperature) >= 38) ||
+    hasAny(clinical, ['ateş', 'ates', 'fever']);
   const durationOverSixHours = durationHours !== null && durationHours > 6;
   const durationPoints = durationHours !== null && durationHours > 24 ? 5 : 4;
 
@@ -236,19 +261,20 @@ export function calculateAcuteCholecystitisCompatibility(
     hasAny(imaging, ['impakte', 'hareketsiz yerleşimli', 'hareketsiz yerlesimli']) &&
     hasAny(imaging, ['kese boynu', 'safra kesesi boynu', 'gallbladder neck']) &&
     hasAny(imaging, ['taş', 'tas', 'kalkül', 'kalkul', 'stone']);
-  const wallThickening = hasAny(imaging, [
-    'duvar kalınlaş',
-    'duvar kalinlas',
-    'duvar kalınlığı art',
-    'duvar kalinligi art',
-    'wall thickening',
-  ]);
-  const sonographicMurphy = hasPositiveMurphy(imaging) && hasAny(imaging, ['sonografik', 'ultrason', 'prob']);
-  const pericholecysticFluid = hasAny(imaging, [
-    'perikolesistik sıvı',
-    'perikolesistik sivi',
-    'pericholecystic fluid',
-  ]);
+  const wallThickening =
+    measuredGallbladderWallThickening(imaging) ||
+    hasAny(imaging, [
+      'duvar kalınlaş',
+      'duvar kalinlas',
+      'duvar kalınlığı art',
+      'duvar kalinligi art',
+      'wall thickening',
+    ]);
+  const sonographicMurphy =
+    hasPositiveMurphy(imaging) && hasAny(imaging, ['sonografik', 'ultrason', 'prob']);
+  const pericholecysticFluid =
+    /perikolesistik.{0,45}(sivi|serbest sivi)/.test(imaging) ||
+    /pericholecystic.{0,45}fluid/.test(imaging);
   const minimalPericholecysticFluid =
     pericholecysticFluid && hasAny(imaging, ['minimal', 'ince tabaka', 'az miktarda']);
   const gallbladderDistension = hasAny(imaging, [
@@ -271,6 +297,25 @@ export function calculateAcuteCholecystitisCompatibility(
     'koledokta tas saptanmadi',
     'common bile duct stone yok',
   ]);
+  const bileDuctDilatation =
+    !noBileDuctDilatation &&
+    ((hasAny(imaging, ['koledok', 'safra yolu', 'safra yollari']) &&
+      hasAny(imaging, ['dilate', 'dilatasyon', 'geniş', 'genis', 'belirgin'])) ||
+      /koledok.{0,30}\b([7-9]|\d{2,})(?:[.,]\d+)?\s*mm/.test(imaging));
+
+  const inflammatoryLabSupport = isHigh(wbc) || isHigh(neutrophil) || isHigh(crp);
+  const keyImagingSupport =
+    impactedNeckStone ||
+    wallThickening ||
+    sonographicMurphy ||
+    pericholecysticFluid ||
+    gallbladderDistension;
+  const cholestaticLabSupport =
+    isHigh(bilirubin) ||
+    isHigh(directBilirubin) ||
+    isHigh(alp) ||
+    isHigh(ggt);
+  const additionalInflammationPoints = isHigh(procalcitonin) ? 3 : isHigh(esr) ? 2 : 0;
 
   const evidenceItems: CompatibilityEvidence[] = [
     evidence('ruq_pain', 'Sağ üst kadran ağrısı veya hassasiyeti', 'clinical_findings', 8, 8, rightUpperQuadrantPain, rightUpperQuadrantPain ? 'Klinik metinde sağ üst kadran ağrısı/hassasiyeti bulundu.' : 'Sağ üst kadran ağrısı açıkça bulunamadı.'),
@@ -281,22 +326,27 @@ export function calculateAcuteCholecystitisCompatibility(
     evidence('leukocytosis', 'Lökositoz', 'laboratory_findings', 8, 8, isHigh(wbc), isHigh(wbc) ? `Lökosit yüksek (${wbc?.normalized_value} ${wbc?.unit}).` : 'Yüksek lökosit sonucu bulunamadı.'),
     evidence('neutrophilia', 'Nötrofili', 'laboratory_findings', 4, 4, isHigh(neutrophil), isHigh(neutrophil) ? `Nötrofil yüksek (${neutrophil?.normalized_value} ${neutrophil?.unit}).` : 'Nötrofili bulunamadı.'),
     evidence('elevated_crp', 'CRP yüksekliği', 'laboratory_findings', 10, 10, isHigh(crp), isHigh(crp) ? `CRP yüksek (${crp?.normalized_value} ${crp?.unit}).` : 'Yüksek CRP sonucu bulunamadı.'),
-    evidence('additional_inflammation', 'Ek inflamasyon desteği', 'laboratory_findings', 3, 3, isHigh(procalcitonin), isHigh(procalcitonin) ? `Prokalsitonin yüksek (${procalcitonin?.normalized_value} ${procalcitonin?.unit}).` : 'Ek inflamasyon belirteci desteği bulunamadı.'),
+    evidence('additional_inflammation', 'Ek inflamasyon desteği', 'laboratory_findings', additionalInflammationPoints, 3, additionalInflammationPoints > 0, isHigh(procalcitonin) ? `Prokalsitonin yüksek (${procalcitonin?.normalized_value} ${procalcitonin?.unit}).` : isHigh(esr) ? `Sedimentasyon yüksek (${esr?.normalized_value} ${esr?.unit}).` : 'Ek inflamasyon belirteci desteği bulunamadı.'),
 
     evidence('impacted_neck_stone', 'Safra kesesi boynunda impakte taş', 'imaging_findings', 10, 10, impactedNeckStone, impactedNeckStone ? 'Kese boynunda impakte/hareketsiz kalkül ifadesi bulundu.' : 'Kese boynunda impakte taş doğrulanamadı.'),
-    evidence('wall_thickening', 'Safra kesesi duvar kalınlaşması', 'imaging_findings', 8, 8, wallThickening, wallThickening ? 'Duvar kalınlaşması raporlandı.' : 'Duvar kalınlaşması bulunamadı.'),
+    evidence('wall_thickening', 'Safra kesesi duvar kalınlaşması', 'imaging_findings', 8, 8, wallThickening, wallThickening ? 'Duvar kalınlığı 3 mm üzerinde veya kalınlaşmış olarak raporlandı.' : 'Duvar kalınlaşması bulunamadı.'),
     evidence('sonographic_murphy', 'Sonografik Murphy bulgusu', 'imaging_findings', 8, 8, sonographicMurphy, sonographicMurphy ? 'Sonografik Murphy bulgusu pozitif.' : 'Pozitif sonografik Murphy bulgusu bulunamadı.'),
     evidence('pericholecystic_fluid', 'Perikolesistik sıvı', 'imaging_findings', minimalPericholecysticFluid ? 6 : 7, 7, pericholecysticFluid, pericholecysticFluid ? `${minimalPericholecysticFluid ? 'Minimal ' : ''}perikolesistik sıvı bulundu.` : 'Perikolesistik sıvı bulunamadı.'),
     evidence('gallbladder_distension', 'Safra kesesi distansiyonu', 'imaging_findings', 5, 5, gallbladderDistension, gallbladderDistension ? 'Safra kesesi distansiyonu raporlandı.' : 'Safra kesesi distansiyonu bulunamadı.'),
     evidence('normal_bile_duct', 'Koledokta taş veya dilatasyon olmaması', 'imaging_findings', (noBileDuctDilatation ? 1 : 0) + (noCommonBileDuctStone ? 1 : 0), 2, noBileDuctDilatation || noCommonBileDuctStone, [noBileDuctDilatation ? 'Safra yolu dilatasyonu yok.' : '', noCommonBileDuctStone ? 'Koledok taşı yok.' : ''].filter(Boolean).join(' ') || 'Koledok için destekleyici negatif bulgu bulunamadı.'),
 
-    evidence('normal_lipase', 'Normal lipaz ile pankreatitin zayıflaması', 'cross_modal_consistency', 2, 2, isNormal(lipase), isNormal(lipase) ? `Lipaz normal (${lipase?.normalized_value} ${lipase?.unit}).` : 'Normal lipaz sonucu bulunamadı.'),
-    evidence('normal_bilirubin_and_cbd', 'Normal bilirubin ve dilate olmayan koledok', 'cross_modal_consistency', 2, 2, isNormal(bilirubin) && noBileDuctDilatation, isNormal(bilirubin) && noBileDuctDilatation ? `Bilirubin normal (${bilirubin?.normalized_value} ${bilirubin?.unit}) ve safra yolu dilate değil.` : 'Bilirubin-koledok tutarlılığı doğrulanamadı.'),
-    evidence('normal_urinalysis', 'Üriner nedenleri zayıflatan normal idrar bulguları', 'cross_modal_consistency', 1, 1, isNormal(urineLeukocyte) && isNormal(urineNitrite), isNormal(urineLeukocyte) && isNormal(urineNitrite) ? 'İdrar lökosit ve nitrit sonuçları normal.' : 'Normal idrar lökosit ve nitrit sonuçlarının ikisi birlikte bulunamadı.'),
+    evidence('clinical_lab_agreement', 'Klinik inflamasyon ile laboratuvar uyumu', 'cross_modal_consistency', 2, 2, (fever || rightUpperQuadrantPain || murphyPositive) && inflammatoryLabSupport, inflammatoryLabSupport ? 'Klinik inflamasyon bulgularına lökosit/nötrofil/CRP yüksekliği eşlik ediyor.' : 'Klinik ve inflamatuvar laboratuvar uyumu doğrulanamadı.'),
+    evidence('clinical_imaging_agreement', 'Klinik lokalizasyon ile görüntüleme uyumu', 'cross_modal_consistency', 2, 2, (rightUpperQuadrantPain || murphyPositive) && keyImagingSupport, keyImagingSupport ? 'Sağ üst kadran/Murphy bulguları safra kesesi görüntüleme bulgularıyla aynı odağı destekliyor.' : 'Klinik lokalizasyon ile görüntüleme uyumu doğrulanamadı.'),
+    evidence('cholestatic_imaging_agreement', 'Kolestatik laboratuvar ile safra yolu uyumu', 'cross_modal_consistency', 1, 1, cholestaticLabSupport && bileDuctDilatation, cholestaticLabSupport && bileDuctDilatation ? 'Kolestatik laboratuvar yüksekliği ile koledok/safra yolu genişliği birlikte bulundu.' : 'Kolestatik laboratuvar ve safra yolu görüntüleme uyumu doğrulanamadı.'),
   ];
 
   const breakdown: CompatibilityBreakdown[] = (
-    ['clinical_findings', 'laboratory_findings', 'imaging_findings', 'cross_modal_consistency'] as CompatibilityDomain[]
+    [
+      'clinical_findings',
+      'laboratory_findings',
+      'imaging_findings',
+      'cross_modal_consistency',
+    ] as CompatibilityDomain[]
   ).map((domain) => ({
     domain,
     label: DOMAIN_LABELS[domain],
@@ -327,6 +377,7 @@ export function calculateAcuteCholecystitisCompatibility(
     supporting_evidence: evidenceItems.filter((item) => item.matched && item.points > 0),
     missing_data: completeness.missing,
     requires_clinician_review: true,
-    disclaimer: 'Bu puan tanı olasılığı değildir. Yapılandırılmış bulguların akut kalkülöz kolesistit hipoteziyle uyumunu gösterir ve hekim değerlendirmesinin yerine geçmez.',
+    disclaimer:
+      'Bu puan tanı olasılığı değildir. Yapılandırılmış bulguların akut kalkülöz kolesistit hipoteziyle uyumunu gösterir ve hekim değerlendirmesinin yerine geçmez.',
   };
 }
