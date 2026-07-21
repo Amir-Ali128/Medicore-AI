@@ -15,6 +15,7 @@ const topItems: NavItem[] = [
 const coreItems: NavItem[] = [
   { label: '🩸 Laboratuvar Sonuçları', to: '/analysis/mock', status: 'Aktif', tone: 'active' },
   { label: '🩻 Radyoloji ve Tetkik Raporları', to: '/radiology', status: 'Test', tone: 'beta' },
+  { label: '🧩 Birleşik Vaka Değerlendirme', to: '/combined-evaluation', status: 'Aktif', tone: 'active' },
   { label: '🧠 Yapay Zekâ Klinik Değerlendirme', to: '/clinical-hypotheses', status: 'Aktif', tone: 'active' },
   { label: '📈 Trend Analizi', to: '/timeline', status: 'Test', tone: 'beta' },
   { label: '📄 Raporlar ve Arşiv', to: '/patient-history', status: 'Aktif', tone: 'active' },
