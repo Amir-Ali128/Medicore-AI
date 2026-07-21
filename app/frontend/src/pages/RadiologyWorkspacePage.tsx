@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 
 import SectionCard from '../components/ui/SectionCard';
 import {
@@ -22,6 +22,13 @@ import {
 const INPUT_CLASS =
   'mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950';
 const ACTIVE_CLINICAL_INTAKE_KEY = 'medicore:activeClinicalIntake';
+const LAST_COMBINED_REVIEW_SCOPE_KEY = 'medicore:lastCombinedReviewScope';
+const LAST_COMBINED_REVIEW_KEY = 'medicore:lastCombinedReview';
+
+const inFlightReviewRequests = new Map<
+  string,
+  Promise<ClaudeReviewGenerationResult>
+>();
 
 function reportSummary(report: RadiologyReport | null) {
   if (!report) return '';
@@ -66,8 +73,19 @@ function readClinicalContext(): ClinicalIntakeInput | null {
   }
 }
 
+function sortLatestReports(reports: RadiologyReport[]) {
+  return [...reports]
+    .sort((left, right) => {
+      const leftDate = Date.parse(left.report_date ?? left.created_at ?? '') || 0;
+      const rightDate = Date.parse(right.report_date ?? right.created_at ?? '') || 0;
+      return rightDate - leftDate;
+    })
+    .slice(0, 2);
+}
+
 function reviewSummary(review: ClaudeReviewGenerationResult | null) {
   if (!review) return '';
+
   const hypotheses = review.created_hypotheses?.length
     ? review.created_hypotheses
     : review.hypotheses ?? [];
@@ -75,6 +93,58 @@ function reviewSummary(review: ClaudeReviewGenerationResult | null) {
   return [...new Set(hypotheses.map((item) => item.summary?.trim()).filter(Boolean))]
     .slice(0, 4)
     .join('\n\n');
+}
+
+function reviewScope(analysisRunId: string, latestReportId: string | null) {
+  return `${analysisRunId}:${latestReportId ?? 'no-radiology-report'}`;
+}
+
+function readCachedReview(scope: string): ClaudeReviewGenerationResult | null {
+  try {
+    if (localStorage.getItem(LAST_COMBINED_REVIEW_SCOPE_KEY) !== scope) {
+      return null;
+    }
+
+    const raw = localStorage.getItem(LAST_COMBINED_REVIEW_KEY);
+    return raw ? (JSON.parse(raw) as ClaudeReviewGenerationResult) : null;
+  } catch {
+    return null;
+  }
+}
+
+function rememberReview(
+  scope: string,
+  review: ClaudeReviewGenerationResult,
+): ClaudeReviewGenerationResult {
+  localStorage.setItem(LAST_COMBINED_REVIEW_SCOPE_KEY, scope);
+  localStorage.setItem(LAST_COMBINED_REVIEW_KEY, JSON.stringify(review));
+  return review;
+}
+
+function loadOrCreateReview(
+  analysisRunId: string,
+  latestReportId: string | null,
+  context: ClinicalIntakeInput,
+): Promise<ClaudeReviewGenerationResult> {
+  const scope = reviewScope(analysisRunId, latestReportId);
+  const cached = readCachedReview(scope);
+  if (cached) return Promise.resolve(cached);
+
+  const existing = inFlightReviewRequests.get(scope);
+  if (existing) return existing;
+
+  const request = evaluateClaudeAbnormalResults(
+    analysisRunId,
+    5,
+    context,
+  )
+    .then((review) => rememberReview(scope, review))
+    .finally(() => {
+      inFlightReviewRequests.delete(scope);
+    });
+
+  inFlightReviewRequests.set(scope, request);
+  return request;
 }
 
 function LabResultCard({ result }: { result: LabAnalysisResult }) {
@@ -101,7 +171,9 @@ function LabResultCard({ result }: { result: LabAnalysisResult }) {
           {statusLabel}
         </span>
       </div>
-      {result.reason ? <p className="mt-2 text-xs leading-5 text-slate-500">{result.reason}</p> : null}
+      {result.reason ? (
+        <p className="mt-2 text-xs leading-5 text-slate-500">{result.reason}</p>
+      ) : null}
     </div>
   );
 }
@@ -133,10 +205,83 @@ export default function RadiologyWorkspacePage() {
   const [clinicalContext, setClinicalContext] = useState<ClinicalIntakeInput | null>(null);
   const [labResults, setLabResults] = useState<LabAnalysisResult[]>([]);
   const [reports, setReports] = useState<RadiologyReport[]>([]);
-  const [combinedReview, setCombinedReview] = useState<ClaudeReviewGenerationResult | null>(null);
+  const [combinedReview, setCombinedReview] =
+    useState<ClaudeReviewGenerationResult | null>(null);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function hydrateStoredCase() {
+      const context = readClinicalContext();
+      const analysisRunId = localStorage.getItem(LAST_ANALYSIS_RUN_ID_KEY);
+
+      if (!cancelled) {
+        setClinicalContext(context);
+        setStatus('Kayıtlı klinik, laboratuvar ve radyoloji verileri yükleniyor…');
+        setError('');
+      }
+
+      try {
+        const [allReports, latestLabResults] = await Promise.all([
+          listPatientRadiologyReports(),
+          analysisRunId ? getAnalysisRunResults(analysisRunId) : Promise.resolve([]),
+        ]);
+
+        if (cancelled) return;
+
+        const latestTwoReports = sortLatestReports(allReports);
+        setReports(latestTwoReports);
+        setResult(latestTwoReports[0] ?? null);
+        setLabResults(latestLabResults);
+
+        if (!analysisRunId) {
+          setStatus('Görüntüleme kaydı yüklendi; bu hasta için laboratuvar analizi bulunamadı.');
+          return;
+        }
+
+        if (!context) {
+          setStatus('Kan ve radyoloji verileri yüklendi; klinik hasta bağlamı bulunamadı.');
+          return;
+        }
+
+        if (latestLabResults.length === 0) {
+          setStatus('Klinik ve radyoloji verileri yüklendi; yapılandırılmış kan sonucu bulunamadı.');
+          return;
+        }
+
+        const review = await loadOrCreateReview(
+          analysisRunId,
+          latestTwoReports[0]?.id ?? null,
+          context,
+        );
+
+        if (cancelled) return;
+
+        setCombinedReview(review);
+        setStatus(
+          'Kayıtlı kan sonuçları, klinik hasta bilgileri ve görüntüleme raporları birlikte yüklendi.',
+        );
+      } catch (loadError) {
+        if (cancelled) return;
+
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : 'Kayıtlı birleşik hasta verileri yüklenemedi.',
+        );
+        setStatus('');
+      }
+    }
+
+    void hydrateStoredCase();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -170,33 +315,46 @@ export default function RadiologyWorkspacePage() {
       setClinicalContext(context);
 
       const allReports = await listPatientRadiologyReports();
-      const latestTwoReports = allReports
-        .sort((left, right) => {
-          const leftDate = Date.parse(left.report_date ?? left.created_at ?? '') || 0;
-          const rightDate = Date.parse(right.report_date ?? right.created_at ?? '') || 0;
-          return rightDate - leftDate;
-        })
-        .slice(0, 2);
+      const latestTwoReports = sortLatestReports(allReports);
       setReports(latestTwoReports);
 
       const analysisRunId = localStorage.getItem(LAST_ANALYSIS_RUN_ID_KEY);
       if (!analysisRunId) {
         setLabResults([]);
-        setStatus('Rapor kaydedildi. Kan sonuçları eklenince birleşik değerlendirme de oluşturulacak.');
+        setStatus(
+          'Rapor kaydedildi. Kan sonuçları eklenince birleşik değerlendirme de oluşturulacak.',
+        );
         return;
       }
 
-      const [latestLabResults, review] = await Promise.all([
-        getAnalysisRunResults(analysisRunId),
-        evaluateClaudeAbnormalResults(analysisRunId, 5, context ?? undefined),
-      ]);
-
+      const latestLabResults = await getAnalysisRunResults(analysisRunId);
       setLabResults(latestLabResults);
+
+      if (!context || latestLabResults.length === 0) {
+        setStatus(
+          'Rapor kaydedildi; birleşik AI değerlendirmesi için klinik bağlam ve yapılandırılmış kan sonuçları gerekli.',
+        );
+        return;
+      }
+
+      const scope = reviewScope(
+        analysisRunId,
+        latestTwoReports[0]?.id ?? report.id,
+      );
+      const review = rememberReview(
+        scope,
+        await evaluateClaudeAbnormalResults(analysisRunId, 5, context),
+      );
+
       setCombinedReview(review);
-      setStatus('Kan sonuçları, klinik hasta bilgileri ve son iki rapor tek sayfada birlikte değerlendirildi.');
+      setStatus(
+        'Kan sonuçları, klinik hasta bilgileri ve son iki rapor tek sayfada birlikte değerlendirildi.',
+      );
     } catch (submitError) {
       setError(
-        submitError instanceof Error ? submitError.message : 'Birleşik değerlendirme başarısız.',
+        submitError instanceof Error
+          ? submitError.message
+          : 'Birleşik değerlendirme başarısız.',
       );
     } finally {
       setBusy(false);
@@ -209,7 +367,9 @@ export default function RadiologyWorkspacePage() {
   const abnormalLabResults = labResults.filter((item) =>
     ['high', 'low', 'needs_review'].includes(item.result_status),
   );
-  const displayedLabResults = (abnormalLabResults.length > 0 ? abnormalLabResults : labResults).slice(0, 8);
+  const displayedLabResults = (
+    abnormalLabResults.length > 0 ? abnormalLabResults : labResults
+  ).slice(0, 8);
   const patient = clinicalContext?.patient_information;
   const complaint = clinicalContext?.presenting_complaint;
   const history = clinicalContext?.clinical_history_details;
@@ -237,20 +397,36 @@ export default function RadiologyWorkspacePage() {
   return (
     <div className="space-y-6">
       <header>
-        <p className="text-sm font-semibold uppercase tracking-wide text-cyan-700">Raporlama</p>
-        <h1 className="mt-2 text-3xl font-semibold text-slate-950">Birleşik hasta değerlendirmesi</h1>
+        <p className="text-sm font-semibold uppercase tracking-wide text-cyan-700">
+          Raporlama
+        </p>
+        <h1 className="mt-2 text-3xl font-semibold text-slate-950">
+          Birleşik hasta değerlendirmesi
+        </h1>
         <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
-          Kan sonuçlarını, klinik hasta bilgilerini ve son iki görüntüleme raporunu aynı sayfada değerlendirir.
+          Kan sonuçlarını, klinik hasta bilgilerini ve son iki görüntüleme raporunu
+          aynı sayfada değerlendirir.
         </p>
       </header>
 
       <form onSubmit={submit}>
-        <SectionCard title="Yeni görüntüleme raporu" description="Metni yapıştır veya PDF yükle.">
+        <SectionCard
+          title="Yeni görüntüleme raporu"
+          description="Metni yapıştır veya PDF yükle."
+        >
           <div className="flex gap-2">
-            <button type="button" onClick={() => setMode('manual')} className="rounded-lg border px-4 py-2 text-sm font-semibold">
+            <button
+              type="button"
+              onClick={() => setMode('manual')}
+              className="rounded-lg border px-4 py-2 text-sm font-semibold"
+            >
               Rapor metni
             </button>
-            <button type="button" onClick={() => setMode('pdf')} className="rounded-lg border px-4 py-2 text-sm font-semibold">
+            <button
+              type="button"
+              onClick={() => setMode('pdf')}
+              className="rounded-lg border px-4 py-2 text-sm font-semibold"
+            >
               PDF yükle
             </button>
           </div>
@@ -275,67 +451,135 @@ export default function RadiologyWorkspacePage() {
             />
           )}
 
-          {status ? <p className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">{status}</p> : null}
-          {error ? <p className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-900">{error}</p> : null}
+          {status ? (
+            <p className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+              {status}
+            </p>
+          ) : null}
+          {error ? (
+            <p className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-900">
+              {error}
+            </p>
+          ) : null}
 
-          <button type="submit" disabled={busy} className="mt-5 rounded-lg bg-blue-600 px-5 py-3 text-sm font-semibold text-white disabled:opacity-60">
-            {busy ? 'Tüm veriler değerlendiriliyor…' : 'Kaydet ve tüm verilerle değerlendir'}
+          <button
+            type="submit"
+            disabled={busy}
+            className="mt-5 rounded-lg bg-blue-600 px-5 py-3 text-sm font-semibold text-white disabled:opacity-60"
+          >
+            {busy
+              ? 'Tüm veriler değerlendiriliyor…'
+              : 'Kaydet ve tüm verilerle değerlendir'}
           </button>
         </SectionCard>
       </form>
 
       {result ? (
         <div className="space-y-6">
-          <SectionCard title="Yeni raporun özeti" description={`${result.modality} · ${result.body_part}`}>
+          <SectionCard
+            title="Yeni raporun özeti"
+            description={`${result.modality} · ${result.body_part}`}
+          >
             <div className="space-y-5">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <span className={`rounded-full border px-4 py-2 text-sm font-extrabold tracking-wide ${urgencyClass}`}>
+                <span
+                  className={`rounded-full border px-4 py-2 text-sm font-extrabold tracking-wide ${urgencyClass}`}
+                >
                   Klinik öncelik: {urgency}
                 </span>
-                <span className="text-xs text-slate-500">Hekim doğrulaması zorunludur.</span>
+                <span className="text-xs text-slate-500">
+                  Hekim doğrulaması zorunludur.
+                </span>
               </div>
               <section className="rounded-xl border border-blue-200 bg-blue-50 p-5">
                 <h2 className="font-semibold text-blue-950">AI radyoloji özeti</h2>
-                <p className="mt-3 text-sm leading-7 text-blue-950">{summary || 'Bu rapor için özet oluşturulamadı.'}</p>
+                <p className="mt-3 text-sm leading-7 text-blue-950">
+                  {summary || 'Bu rapor için özet oluşturulamadı.'}
+                </p>
               </section>
             </div>
           </SectionCard>
 
           <div className="grid gap-6 xl:grid-cols-2">
-            <SectionCard title="Klinik hasta bilgileri" description="Aktif hasta kaydından alınır.">
+            <SectionCard
+              title="Klinik hasta bilgileri"
+              description="Aktif hasta kaydından alınır."
+            >
               {patient || complaint || history ? (
                 <div className="space-y-4 text-sm text-slate-700">
                   <div className="grid gap-3 sm:grid-cols-2">
-                    <p><span className="font-semibold text-slate-950">Hasta:</span> {patient?.full_name || 'Belirtilmedi'}</p>
-                    <p><span className="font-semibold text-slate-950">Yaş / cinsiyet:</span> {[patient?.age, patient?.sex].filter(Boolean).join(' / ') || 'Belirtilmedi'}</p>
+                    <p>
+                      <span className="font-semibold text-slate-950">Hasta:</span>{' '}
+                      {patient?.full_name || 'Belirtilmedi'}
+                    </p>
+                    <p>
+                      <span className="font-semibold text-slate-950">
+                        Yaş / cinsiyet:
+                      </span>{' '}
+                      {[patient?.age, patient?.sex].filter(Boolean).join(' / ') ||
+                        'Belirtilmedi'}
+                    </p>
                   </div>
-                  <p><span className="font-semibold text-slate-950">Başvuru nedeni:</span> {complaint?.reason_for_visit || complaint?.chief_complaint || 'Belirtilmedi'}</p>
-                  <p><span className="font-semibold text-slate-950">Semptomlar:</span> {complaint?.associated_symptoms || 'Belirtilmedi'}</p>
-                  <p><span className="font-semibold text-slate-950">Klinik öykü:</span> {history?.history_of_present_illness || history?.current_medical_conditions || 'Belirtilmedi'}</p>
+                  <p>
+                    <span className="font-semibold text-slate-950">
+                      Başvuru nedeni:
+                    </span>{' '}
+                    {complaint?.reason_for_visit ||
+                      complaint?.chief_complaint ||
+                      'Belirtilmedi'}
+                  </p>
+                  <p>
+                    <span className="font-semibold text-slate-950">Semptomlar:</span>{' '}
+                    {complaint?.associated_symptoms || 'Belirtilmedi'}
+                  </p>
+                  <p>
+                    <span className="font-semibold text-slate-950">
+                      Klinik öykü:
+                    </span>{' '}
+                    {history?.history_of_present_illness ||
+                      history?.current_medical_conditions ||
+                      'Belirtilmedi'}
+                  </p>
                 </div>
               ) : (
-                <p className="text-sm text-slate-600">Aktif klinik hasta bilgisi bulunamadı.</p>
+                <p className="text-sm text-slate-600">
+                  Aktif klinik hasta bilgisi bulunamadı.
+                </p>
               )}
             </SectionCard>
 
-            <SectionCard title="Kan sonuçları" description="Öncelikle anormal sonuçlar gösterilir.">
+            <SectionCard
+              title="Kan sonuçları"
+              description="Öncelikle anormal sonuçlar gösterilir."
+            >
               {displayedLabResults.length > 0 ? (
                 <div className="grid gap-3 sm:grid-cols-2">
-                  {displayedLabResults.map((item) => <LabResultCard key={item.lab_result_id} result={item} />)}
+                  {displayedLabResults.map((item) => (
+                    <LabResultCard key={item.lab_result_id} result={item} />
+                  ))}
                 </div>
               ) : (
-                <p className="text-sm text-slate-600">Bu hasta için analiz edilmiş kan sonucu bulunamadı.</p>
+                <p className="text-sm text-slate-600">
+                  Bu hasta için analiz edilmiş kan sonucu bulunamadı.
+                </p>
               )}
             </SectionCard>
           </div>
 
-          <SectionCard title="Son iki görüntüleme raporu" description="En güncel iki rapor birlikte gösterilir.">
+          <SectionCard
+            title="Son iki görüntüleme raporu"
+            description="En güncel iki rapor birlikte gösterilir."
+          >
             {reports.length > 0 ? (
               <div className="grid gap-4 lg:grid-cols-2">
-                {reports.map((report, index) => <ReportCard key={report.id} report={report} index={index} />)}
+                {reports.map((report, index) => (
+                  <ReportCard key={report.id} report={report} index={index} />
+                ))}
               </div>
             ) : (
-              <p className="text-sm text-slate-600">Görüntüleme raporu bulunamadı.</p>
+              <p className="text-sm text-slate-600">
+                Görüntüleme raporu bulunamadı.
+              </p>
             )}
           </SectionCard>
 
@@ -346,21 +590,36 @@ export default function RadiologyWorkspacePage() {
             <div className={`rounded-xl border p-5 ${compatibilityClass}`}>
               <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                 <div>
-                  <p className="text-xs font-extrabold uppercase tracking-wide">Değerlendirilen hipotez</p>
-                  <h2 className="mt-2 text-xl font-semibold">{compatibility.display_name}</h2>
-                  <p className="mt-2 text-sm font-semibold">{compatibility.level_label}</p>
+                  <p className="text-xs font-extrabold uppercase tracking-wide">
+                    Değerlendirilen hipotez
+                  </p>
+                  <h2 className="mt-2 text-xl font-semibold">
+                    {compatibility.display_name}
+                  </h2>
+                  <p className="mt-2 text-sm font-semibold">
+                    {compatibility.level_label}
+                  </p>
                 </div>
                 <div className="rounded-xl border border-current/20 bg-white/70 px-6 py-4 text-center">
                   <p className="text-4xl font-black">{compatibility.score}</p>
-                  <p className="mt-1 text-sm font-semibold">/ {compatibility.maximum_score}</p>
+                  <p className="mt-1 text-sm font-semibold">
+                    / {compatibility.maximum_score}
+                  </p>
                 </div>
               </div>
 
               <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                 {compatibility.breakdown.map((item) => (
-                  <div key={item.domain} className="rounded-lg border border-current/15 bg-white/70 p-3">
-                    <p className="text-xs font-semibold uppercase opacity-70">{item.label}</p>
-                    <p className="mt-2 text-lg font-bold">{item.score}/{item.maximum_score}</p>
+                  <div
+                    key={item.domain}
+                    className="rounded-lg border border-current/15 bg-white/70 p-3"
+                  >
+                    <p className="text-xs font-semibold uppercase opacity-70">
+                      {item.label}
+                    </p>
+                    <p className="mt-2 text-lg font-bold">
+                      {item.score}/{item.maximum_score}
+                    </p>
                   </div>
                 ))}
               </div>
@@ -380,28 +639,45 @@ export default function RadiologyWorkspacePage() {
 
             <div className="mt-5 grid gap-5 lg:grid-cols-[1.2fr_0.8fr]">
               <div>
-                <h3 className="text-sm font-semibold text-slate-950">Skoru destekleyen bulgular</h3>
+                <h3 className="text-sm font-semibold text-slate-950">
+                  Skoru destekleyen bulgular
+                </h3>
                 {compatibility.supporting_evidence.length > 0 ? (
                   <div className="mt-3 flex flex-wrap gap-2">
-                    {compatibility.supporting_evidence.slice(0, 12).map((item) => (
-                      <span key={item.code} title={item.detail} className="rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1.5 text-xs font-semibold text-cyan-900">
-                        {item.label} · +{item.points}
-                      </span>
-                    ))}
+                    {compatibility.supporting_evidence
+                      .slice(0, 12)
+                      .map((item) => (
+                        <span
+                          key={item.code}
+                          title={item.detail}
+                          className="rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1.5 text-xs font-semibold text-cyan-900"
+                        >
+                          {item.label} · +{item.points}
+                        </span>
+                      ))}
                   </div>
                 ) : (
-                  <p className="mt-3 text-sm text-slate-600">Bu hipotezi destekleyen yapılandırılmış bulgu bulunamadı.</p>
+                  <p className="mt-3 text-sm text-slate-600">
+                    Bu hipotezi destekleyen yapılandırılmış bulgu bulunamadı.
+                  </p>
                 )}
               </div>
 
               <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-                <h3 className="text-sm font-semibold text-slate-950">Veri kalite kontrolü</h3>
+                <h3 className="text-sm font-semibold text-slate-950">
+                  Veri kalite kontrolü
+                </h3>
                 {compatibility.missing_data.length > 0 ? (
                   <ul className="mt-3 space-y-2 text-sm text-slate-700">
-                    {compatibility.missing_data.map((item) => <li key={item}>• Eksik: {item}</li>)}
+                    {compatibility.missing_data.map((item) => (
+                      <li key={item}>• Eksik: {item}</li>
+                    ))}
                   </ul>
                 ) : (
-                  <p className="mt-3 text-sm text-slate-700">Klinik, laboratuvar ve görüntüleme alanları değerlendirmeye katıldı.</p>
+                  <p className="mt-3 text-sm text-slate-700">
+                    Klinik, laboratuvar ve görüntüleme alanları değerlendirmeye
+                    katıldı.
+                  </p>
                 )}
               </div>
             </div>
@@ -411,13 +687,18 @@ export default function RadiologyWorkspacePage() {
             </p>
           </SectionCard>
 
-          <SectionCard title="Birleşik AI klinik değerlendirmesi" description="Kan, klinik bilgi ve iki rapor birlikte değerlendirilir.">
+          <SectionCard
+            title="Birleşik AI klinik değerlendirmesi"
+            description="Kan, klinik bilgi ve iki rapor birlikte değerlendirilir."
+          >
             <section className="rounded-xl border border-violet-200 bg-violet-50 p-5">
               <p className="whitespace-pre-line text-sm leading-7 text-violet-950">
-                {combinedSummary || 'Birleşik klinik değerlendirme için kan analizi ve klinik hasta bilgileri gereklidir.'}
+                {combinedSummary ||
+                  'Birleşik klinik değerlendirme için kan analizi ve klinik hasta bilgileri gereklidir.'}
               </p>
               <p className="mt-4 text-xs text-violet-800">
-                Bu çıktı karar destek amaçlıdır; tanı veya tedavi kararı değildir. Hekim doğrulaması zorunludur.
+                Bu çıktı karar destek amaçlıdır; tanı veya tedavi kararı değildir.
+                Hekim doğrulaması zorunludur.
               </p>
             </section>
           </SectionCard>
