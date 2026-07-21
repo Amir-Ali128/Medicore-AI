@@ -82,6 +82,40 @@ function readStoredClinicalContext(): ClaudeClinicalContext | undefined {
   }
 }
 
+function fold(value: string | null | undefined) {
+  return (value ?? '')
+    .toLocaleLowerCase('tr-TR')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/ı/g, 'i')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function reportFingerprint(report: RadiologyReport) {
+  const original = fold(report.original_text);
+  if (original) return `${report.modality}:${report.body_part}:${original}`;
+  return fold([report.summary, report.impression].filter(Boolean).join(' ')) || report.id;
+}
+
+function uniqueLatestReports(reports: RadiologyReport[]) {
+  const seen = new Set<string>();
+  return [...reports]
+    .sort((left, right) => {
+      const leftDate = Date.parse(left.created_at ?? left.report_date ?? '') || 0;
+      const rightDate = Date.parse(right.created_at ?? right.report_date ?? '') || 0;
+      return rightDate - leftDate;
+    })
+    .filter((report) => {
+      const key = reportFingerprint(report);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 2);
+}
+
 function compactReport(report: RadiologyReport) {
   const measurements = report.measurements
     .slice(0, 20)
@@ -126,7 +160,7 @@ function mergeRadiologyIntoContext(
     pathology: [],
   };
 
-  for (const report of reports.slice(0, 20)) {
+  for (const report of reports) {
     const text = compactReport(report);
     switch (report.modality) {
       case 'XRAY':
@@ -155,8 +189,18 @@ function mergeRadiologyIntoContext(
   }
 
   const existing = context.imaging_results;
-  const combine = (current: string | null, values: string[]) =>
-    [current, ...values].filter(Boolean).join('\n\n---\n\n') || null;
+  const combine = (current: string | null, values: string[]) => {
+    const seen = new Set<string>();
+    return [current, ...values]
+      .filter((value): value is string => Boolean(value?.trim()))
+      .filter((value) => {
+        const key = fold(value);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .join('\n\n---\n\n') || null;
+  };
 
   return {
     ...context,
@@ -178,7 +222,7 @@ async function buildUnifiedClinicalContext(
   if (!baseContext) return { context: undefined, radiologyCount: 0 };
 
   try {
-    const reports = await listPatientRadiologyReports();
+    const reports = uniqueLatestReports(await listPatientRadiologyReports());
     return {
       context: mergeRadiologyIntoContext(baseContext, reports),
       radiologyCount: reports.length,
