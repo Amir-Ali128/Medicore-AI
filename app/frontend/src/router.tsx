@@ -5,12 +5,12 @@ import AppLayout from './layout/AppLayout';
 import AnalysisResultsPage from './pages/AnalysisResultsPage';
 import ClinicalHypothesesPage from './pages/ClinicalHypothesesPage';
 import ClinicalSpecialtyPreviewPage from './pages/ClinicalSpecialtyPreviewPage';
+import CombinedCaseWorkspacePage from './pages/CombinedCaseWorkspacePage';
 import DoctorReviewPage from './pages/DoctorReviewPage';
 import DoctorWorklistPage from './pages/DoctorWorklistPage';
 import ExtractionReviewPage from './pages/ExtractionReviewPage';
 import HomePage from './pages/HomePage';
 import LoginPage from './pages/LoginPage';
-import MockAnalysisPage from './pages/MockAnalysisPage';
 import ModulePreviewPage from './pages/ModulePreviewPage';
 import PatientHistoryPage from './pages/PatientHistoryPage';
 import PatientRecordPage from './pages/PatientRecordPage';
@@ -31,7 +31,8 @@ export const router = createHashRouter([
           { path: '/', element: <HomePage /> },
           { path: '/patients/demo', element: <PatientRecordPage /> },
           { path: '/patient-detail', element: <PatientRecordPage /> },
-          { path: '/analysis/mock', element: <MockAnalysisPage /> },
+          { path: '/analysis/mock', element: <CombinedCaseWorkspacePage /> },
+          { path: '/case-import', element: <CombinedCaseWorkspacePage /> },
           { path: '/radiology', element: <RadiologyWorkspacePage /> },
           { path: '/roadmap/radiology', element: <ModulePreviewPage module="radiology" /> },
           { path: '/roadmap/imaging', element: <ModulePreviewPage module="imaging" /> },
