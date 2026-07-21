@@ -1,6 +1,15 @@
-import type { ChangeEvent, ReactNode } from 'react';
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type ReactNode,
+} from 'react';
 
 import type { ClinicalIntakeInput } from '../../services/labAnalysisClient';
+
+export const ACTIVE_CLINICAL_INTAKE_KEY = 'medicore:activeClinicalIntake';
+const CLINICAL_INTAKE_UPDATED_EVENT = 'medicore:clinical-intake-updated';
 
 type ClinicalIntakeFormProps = {
   value: ClinicalIntakeInput;
@@ -64,6 +73,66 @@ export function createEmptyClinicalIntake(): ClinicalIntakeInput {
   };
 }
 
+function normalizeStoredClinicalIntake(raw: unknown): ClinicalIntakeInput | null {
+  if (!raw || typeof raw !== 'object') return null;
+
+  const source = raw as Partial<ClinicalIntakeInput>;
+  const empty = createEmptyClinicalIntake();
+
+  return {
+    patient_information: {
+      ...empty.patient_information,
+      ...(source.patient_information ?? {}),
+    },
+    presenting_complaint: {
+      ...empty.presenting_complaint,
+      ...(source.presenting_complaint ?? {}),
+    },
+    clinical_history_details: {
+      ...empty.clinical_history_details,
+      ...(source.clinical_history_details ?? {}),
+    },
+    physical_exam: {
+      ...empty.physical_exam,
+      ...(source.physical_exam ?? {}),
+    },
+    imaging_results: {
+      ...empty.imaging_results,
+      ...(source.imaging_results ?? {}),
+    },
+    attachments: Array.isArray(source.attachments) ? source.attachments : [],
+  };
+}
+
+export function readStoredClinicalIntake(): ClinicalIntakeInput | null {
+  try {
+    const raw = localStorage.getItem(ACTIVE_CLINICAL_INTAKE_KEY);
+    if (!raw) return null;
+    return normalizeStoredClinicalIntake(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
+
+export function persistClinicalIntake(value: ClinicalIntakeInput): void {
+  try {
+    localStorage.setItem(ACTIVE_CLINICAL_INTAKE_KEY, JSON.stringify(value));
+    window.dispatchEvent(
+      new CustomEvent(CLINICAL_INTAKE_UPDATED_EVENT, { detail: value }),
+    );
+  } catch {
+    // Storage may be unavailable in private/restricted browser contexts.
+  }
+}
+
+export function clearStoredClinicalIntake(): void {
+  try {
+    localStorage.removeItem(ACTIVE_CLINICAL_INTAKE_KEY);
+  } catch {
+    // Storage may be unavailable in private/restricted browser contexts.
+  }
+}
+
 function FormSection({ title, description, children }: SectionProps) {
   return (
     <section className="rounded-xl border border-slate-200 bg-white p-5">
@@ -85,15 +154,44 @@ function numberOrNull(value: string): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function savedTimeLabel(value: Date | null) {
+  if (!value) return 'Henüz değişiklik yapılmadı';
+  return `Son kayıt: ${value.toLocaleTimeString('tr-TR', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })}`;
+}
+
 export default function ClinicalIntakeForm({
   value,
   onChange,
 }: ClinicalIntakeFormProps) {
+  const hydratedRef = useRef(false);
+  const [savedAt, setSavedAt] = useState<Date | null>(null);
+
+  useEffect(() => {
+    if (hydratedRef.current) return;
+    hydratedRef.current = true;
+
+    const stored = readStoredClinicalIntake();
+    if (stored) {
+      onChange(stored);
+      setSavedAt(new Date());
+    }
+  }, [onChange]);
+
+  const emitChange = (nextValue: ClinicalIntakeInput) => {
+    persistClinicalIntake(nextValue);
+    setSavedAt(new Date());
+    onChange(nextValue);
+  };
+
   const updatePatient = (
     key: keyof ClinicalIntakeInput['patient_information'],
     fieldValue: string | number | null,
   ) => {
-    onChange({
+    emitChange({
       ...value,
       patient_information: {
         ...value.patient_information,
@@ -106,7 +204,7 @@ export default function ClinicalIntakeForm({
     key: keyof ClinicalIntakeInput['presenting_complaint'],
     fieldValue: string | number | null,
   ) => {
-    onChange({
+    emitChange({
       ...value,
       presenting_complaint: {
         ...value.presenting_complaint,
@@ -119,7 +217,7 @@ export default function ClinicalIntakeForm({
     key: keyof ClinicalIntakeInput['clinical_history_details'],
     fieldValue: string | null,
   ) => {
-    onChange({
+    emitChange({
       ...value,
       clinical_history_details: {
         ...value.clinical_history_details,
@@ -132,7 +230,7 @@ export default function ClinicalIntakeForm({
     key: keyof ClinicalIntakeInput['physical_exam'],
     fieldValue: string | number | null,
   ) => {
-    onChange({
+    emitChange({
       ...value,
       physical_exam: {
         ...value.physical_exam,
@@ -143,6 +241,22 @@ export default function ClinicalIntakeForm({
 
   return (
     <div className="space-y-5">
+      <div className="flex flex-col gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-sm font-semibold text-emerald-950">
+            Klinik bilgiler otomatik kaydedilir
+          </p>
+          <p className="mt-1 text-xs leading-5 text-emerald-800">
+            Kan veya radyoloji ekranına geçip geri döndüğünde bu tarayıcıdaki klinik
+            taslak yeniden yüklenir. Laboratuvar raporu oluşturulduğunda klinik bağlam
+            rapor kaydına da eklenir.
+          </p>
+        </div>
+        <div className="shrink-0 text-xs font-semibold text-emerald-800">
+          {savedTimeLabel(savedAt)}
+        </div>
+      </div>
+
       <FormSection
         title="Hasta bilgileri"
         description="Analizin doğru hastaya ait olduğunu doğrulamak için temel bilgiler."
@@ -226,31 +340,58 @@ export default function ClinicalIntakeForm({
       </FormSection>
 
       <FormSection
-        title="Şikayet ve belirtiler"
-        description="Ana şikayet, ne kadar süredir devam ettiği ve eşlik eden belirtiler."
+        title="Şikâyet ve belirtiler"
+        description="Başvuru nedeni, ana şikâyet, süresi ve eşlik eden belirtiler."
       >
         <div className="grid gap-4 lg:grid-cols-2">
           <label className="text-sm font-medium text-slate-700 lg:col-span-2">
-            Ana şikayet
+            Başvuru nedeni
+            <textarea
+              rows={2}
+              value={value.presenting_complaint.reason_for_visit ?? ''}
+              onChange={(event: ChangeEvent<HTMLTextAreaElement>) =>
+                updateComplaint('reason_for_visit', textOrNull(event.target.value))
+              }
+              placeholder="Hastanın bugün başvurma nedeni"
+              className={TEXTAREA_CLASS}
+            />
+          </label>
+
+          <label className="text-sm font-medium text-slate-700 lg:col-span-2">
+            Ana şikâyet
             <textarea
               rows={3}
               value={value.presenting_complaint.chief_complaint ?? ''}
               onChange={(event: ChangeEvent<HTMLTextAreaElement>) =>
                 updateComplaint('chief_complaint', textOrNull(event.target.value))
               }
-              placeholder="Örn: Halsizlik, baş dönmesi ve çabuk yorulma"
+              placeholder="Örn: Sağ üst kadran ağrısı, ateş ve bulantı"
               className={TEXTAREA_CLASS}
             />
           </label>
 
-          <label className="text-sm font-medium text-slate-700 lg:col-span-2">
-            Şikayetin süresi
+          <label className="text-sm font-medium text-slate-700">
+            Şikâyetin süresi
             <input
               value={value.presenting_complaint.complaint_duration ?? ''}
               onChange={(event: ChangeEvent<HTMLInputElement>) =>
                 updateComplaint('complaint_duration', textOrNull(event.target.value))
               }
-              placeholder="Örn: 3 gündür, 2 aydır, aralıklı"
+              placeholder="Örn: 18 saattir"
+              className={INPUT_CLASS}
+            />
+          </label>
+
+          <label className="text-sm font-medium text-slate-700">
+            Şiddet (0–10)
+            <input
+              type="number"
+              min={0}
+              max={10}
+              value={value.presenting_complaint.severity_score ?? ''}
+              onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                updateComplaint('severity_score', numberOrNull(event.target.value))
+              }
               className={INPUT_CLASS}
             />
           </label>
@@ -263,7 +404,7 @@ export default function ClinicalIntakeForm({
               onChange={(event: ChangeEvent<HTMLTextAreaElement>) =>
                 updateComplaint('associated_symptoms', textOrNull(event.target.value))
               }
-              placeholder="Ateş, bulantı, kilo kaybı, nefes darlığı, ağrı veya diğer belirtiler"
+              placeholder="Ateş, bulantı, kusma, iştahsızlık veya diğer belirtiler"
               className={TEXTAREA_CLASS}
             />
           </label>
@@ -272,14 +413,19 @@ export default function ClinicalIntakeForm({
 
       <FormSection
         title="Tıbbi öykü"
-        description="Geçmiş sağlık bilgileri, ilaçlar ve risk faktörleri."
+        description="Mevcut hastalıklar, geçmiş sağlık bilgileri, ilaçlar ve risk faktörleri."
       >
         <div className="grid gap-4 lg:grid-cols-2">
           {[
             [
               'history_of_present_illness',
-              'Şikayetin öyküsü',
+              'Şikâyetin öyküsü',
               'Başlangıcı, seyri, artıran veya azaltan durumlar',
+            ],
+            [
+              'current_medical_conditions',
+              'Mevcut hastalıklar',
+              'Hâlen takip edilen hastalıklar ve önemli tanılar',
             ],
             [
               'past_medical_history',
@@ -351,8 +497,7 @@ export default function ClinicalIntakeForm({
                 min={Number(min)}
                 max={Number(max)}
                 step={
-                  key === 'temperature_c' ||
-                  key === 'oxygen_saturation_percent'
+                  key === 'temperature_c' || key === 'oxygen_saturation_percent'
                     ? '0.1'
                     : '1'
                 }
@@ -389,7 +534,9 @@ export default function ClinicalIntakeForm({
       </FormSection>
 
       <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-900">
-        Laboratuvar sonuçları aşağıdaki laboratuvar bölümünden, radyoloji ve DEXA raporları ise ayrı Radyoloji ekranından eklenir.
+        Laboratuvar sonuçları aşağıdaki laboratuvar bölümünden, radyoloji ve DEXA
+        raporları ise ayrı Radyoloji ekranından eklenir. Klinik taslak bu ekranlar
+        arasında geçiş yaptığında korunur.
       </div>
     </div>
   );
