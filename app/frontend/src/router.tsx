@@ -3,6 +3,7 @@ import { createHashRouter } from 'react-router-dom';
 import ProtectedRoute from './components/ProtectedRoute';
 import AppLayout from './layout/AppLayout';
 import AnalysisResultsPage from './pages/AnalysisResultsPage';
+import CaseEvaluationPage from './pages/CaseEvaluationPage';
 import ClinicalHypothesesPage from './pages/ClinicalHypothesesPage';
 import ClinicalSpecialtyPreviewPage from './pages/ClinicalSpecialtyPreviewPage';
 import CombinedCaseWorkspacePage from './pages/CombinedCaseWorkspacePage';
@@ -14,7 +15,7 @@ import LoginPage from './pages/LoginPage';
 import ModulePreviewPage from './pages/ModulePreviewPage';
 import PatientHistoryPage from './pages/PatientHistoryPage';
 import PatientRecordPage from './pages/PatientRecordPage';
-import RadiologyWorkspacePage from './pages/RadiologyWorkspacePage';
+import RadiologyEvaluationPage from './pages/RadiologyEvaluationPage';
 import TimelinePage from './pages/TimelinePage';
 
 export const router = createHashRouter([
@@ -33,7 +34,8 @@ export const router = createHashRouter([
           { path: '/patient-detail', element: <PatientRecordPage /> },
           { path: '/analysis/mock', element: <CombinedCaseWorkspacePage /> },
           { path: '/case-import', element: <CombinedCaseWorkspacePage /> },
-          { path: '/radiology', element: <RadiologyWorkspacePage /> },
+          { path: '/radiology', element: <RadiologyEvaluationPage /> },
+          { path: '/combined-evaluation', element: <CaseEvaluationPage /> },
           { path: '/roadmap/radiology', element: <ModulePreviewPage module="radiology" /> },
           { path: '/roadmap/imaging', element: <ModulePreviewPage module="imaging" /> },
           { path: '/roadmap/pathology', element: <ModulePreviewPage module="pathology" /> },

@@ -159,13 +159,19 @@ export default function CombinedCaseWorkspacePage() {
                 to="/analysis/results"
                 className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800"
               >
-                Kan sonuçlarını aç
+                Kan sonucunu ayrı değerlendir
               </Link>
               <Link
                 to="/radiology"
                 className="rounded-lg bg-violet-700 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-800"
               >
-                Birleşik değerlendirmeyi aç
+                Radyolojiyi ayrı değerlendir
+              </Link>
+              <Link
+                to="/combined-evaluation"
+                className="rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-800"
+              >
+                Üç veriyi birlikte değerlendir
               </Link>
             </div>
           </div>
