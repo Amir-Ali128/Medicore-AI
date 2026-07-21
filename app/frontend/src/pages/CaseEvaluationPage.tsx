@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 
-import SectionCard from '../components/ui/SectionCard';
 import {
   evaluateClaudeAbnormalResults,
   type ClaudeReviewGenerationResult,
@@ -21,6 +20,35 @@ import {
 const ACTIVE_CLINICAL_INTAKE_KEY = 'medicore:activeClinicalIntake';
 const CASE_REVIEW_SCOPE_KEY = 'medicore:caseEvaluationScope:v1';
 const CASE_REVIEW_RESULT_KEY = 'medicore:caseEvaluationResult:v1';
+
+const METRIC_VISUALS = {
+  clinical_findings: {
+    emoji: '🩺',
+    labelClass: 'text-sky-700',
+    scoreClass: 'text-sky-900',
+    iconClass: 'bg-sky-50 ring-sky-100',
+  },
+  laboratory_findings: {
+    emoji: '🧪',
+    labelClass: 'text-violet-700',
+    scoreClass: 'text-violet-900',
+    iconClass: 'bg-violet-50 ring-violet-100',
+  },
+  imaging_findings: {
+    emoji: '🩻',
+    labelClass: 'text-emerald-700',
+    scoreClass: 'text-emerald-900',
+    iconClass: 'bg-emerald-50 ring-emerald-100',
+  },
+  cross_modal_consistency: {
+    emoji: '🧩',
+    labelClass: 'text-amber-700',
+    scoreClass: 'text-amber-900',
+    iconClass: 'bg-amber-50 ring-amber-100',
+  },
+} as const;
+
+const AI_ROW_EMOJIS = ['🫀', '🩸', '🛡️', '🩻', '🧠', '⚕️'];
 
 function fold(value: string | null | undefined) {
   return (value ?? '')
@@ -57,7 +85,9 @@ function hasClinicalContent(context: ClinicalIntakeInput | null) {
     context.physical_exam.temperature_c,
     context.physical_exam.pulse_bpm,
   ];
-  return values.some((value) => value !== null && value !== undefined && String(value).trim());
+  return values.some(
+    (value) => value !== null && value !== undefined && String(value).trim(),
+  );
 }
 
 function reportFingerprint(report: RadiologyReport) {
@@ -123,7 +153,9 @@ function labPriority(result: LabAnalysisResult) {
     [['gfr'], 79],
     [['glukoz'], 75],
   ];
-  const match = priorities.find(([aliases]) => aliases.some((alias) => text.includes(fold(alias))));
+  const match = priorities.find(([aliases]) =>
+    aliases.some((alias) => text.includes(fold(alias))),
+  );
   const abnormalBoost = ['high', 'low'].includes(result.result_status) ? 20 : 0;
   return (match?.[1] ?? 0) + abnormalBoost;
 }
@@ -137,14 +169,24 @@ function sexLabel(value: string | null | undefined) {
   return value || 'Belirtilmedi';
 }
 
-function reviewText(review: ClaudeReviewGenerationResult | null) {
-  if (!review) return '';
+function reviewItems(review: ClaudeReviewGenerationResult | null) {
+  if (!review) return [];
   const hypotheses = review.created_hypotheses?.length
     ? review.created_hypotheses
     : review.hypotheses ?? [];
-  return [...new Set(hypotheses.map((item) => item.summary?.trim()).filter(Boolean))]
-    .slice(0, 6)
-    .join('\n\n');
+
+  return [...new Set(
+    hypotheses
+      .map((item) => {
+        const title = item.title?.trim();
+        const summary = item.summary?.trim();
+        if (title && summary && !fold(summary).startsWith(fold(title))) {
+          return `${title}: ${summary}`;
+        }
+        return summary || title || '';
+      })
+      .filter(Boolean),
+  )].slice(0, 6);
 }
 
 function reviewScope(analysisRunId: string, reportId: string) {
@@ -166,43 +208,112 @@ function rememberReview(scope: string, review: ClaudeReviewGenerationResult) {
   localStorage.setItem(CASE_REVIEW_RESULT_KEY, JSON.stringify(review));
 }
 
-function StatusCard({
-  step,
+function evidenceEmoji(code: string, domain: string) {
+  const byCode: Record<string, string> = {
+    ruq_pain: '🩺',
+    clinical_murphy: '🫁',
+    fever: '🌡️',
+    pain_duration: '⏱️',
+    leukocytosis: '🩸',
+    neutrophilia: '🧬',
+    elevated_crp: '📈',
+    additional_inflammation: '🔥',
+    impacted_neck_stone: '🪨',
+    wall_thickening: '🧱',
+    sonographic_murphy: '🩻',
+    pericholecystic_fluid: '💧',
+    gallbladder_distension: '🎈',
+    normal_bile_duct: '✅',
+    clinical_lab_agreement: '🔗',
+    clinical_imaging_agreement: '🧩',
+    cholestatic_imaging_agreement: '⚖️',
+  };
+  if (byCode[code]) return byCode[code];
+  if (domain === 'laboratory_findings') return '🧪';
+  if (domain === 'imaging_findings') return '🩻';
+  if (domain === 'cross_modal_consistency') return '🔗';
+  return '🩺';
+}
+
+function MetricCard({
+  emoji,
+  label,
+  score,
+  maximum,
+  labelClass,
+  scoreClass,
+  iconClass,
+}: {
+  emoji: string;
+  label: string;
+  score: number;
+  maximum: number;
+  labelClass: string;
+  scoreClass: string;
+  iconClass: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white px-3 py-4 text-center shadow-sm sm:px-4">
+      <div
+        className={`mx-auto flex h-11 w-11 items-center justify-center rounded-2xl text-2xl ring-1 ${iconClass}`}
+        aria-hidden="true"
+      >
+        {emoji}
+      </div>
+      <p className={`mt-3 min-h-9 text-[10px] font-extrabold uppercase leading-4 tracking-wide ${labelClass}`}>
+        {label}
+      </p>
+      <p className={`mt-2 text-2xl font-black tracking-tight ${scoreClass}`}>
+        {score}
+        <span className="text-base font-bold"> / {maximum}</span>
+      </p>
+    </div>
+  );
+}
+
+function SourceCard({
+  emoji,
   title,
   ready,
   detail,
+  link,
+  linkLabel,
 }: {
-  step: number;
+  emoji: string;
   title: string;
   ready: boolean;
   detail: string;
+  link: string;
+  linkLabel: string;
 }) {
   return (
-    <div
-      className={`rounded-xl border p-4 ${
-        ready
-          ? 'border-emerald-200 bg-emerald-50'
-          : 'border-amber-200 bg-amber-50'
-      }`}
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-            Adım {step}
-          </p>
-          <h3 className="mt-1 font-semibold text-slate-950">{title}</h3>
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="flex items-start gap-3">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-50 text-xl ring-1 ring-slate-200">
+          {emoji}
         </div>
-        <span
-          className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
-            ready
-              ? 'bg-emerald-100 text-emerald-800'
-              : 'bg-amber-100 text-amber-900'
-          }`}
-        >
-          {ready ? 'Hazır' : 'Eksik'}
-        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="font-bold text-slate-950">{title}</h3>
+            <span
+              className={`rounded-full px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wide ${
+                ready
+                  ? 'bg-emerald-100 text-emerald-800'
+                  : 'bg-amber-100 text-amber-900'
+              }`}
+            >
+              {ready ? 'Hazır' : 'Eksik'}
+            </span>
+          </div>
+          <p className="mt-2 text-sm leading-6 text-slate-600">{detail}</p>
+          <Link
+            to={link}
+            className="mt-3 inline-flex rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700 transition hover:bg-slate-100"
+          >
+            {linkLabel} →
+          </Link>
+        </div>
       </div>
-      <p className="mt-3 text-sm leading-6 text-slate-600">{detail}</p>
     </div>
   );
 }
@@ -240,7 +351,9 @@ export default function CaseEvaluationPage() {
         setReports(uniqueReports);
 
         if (analysisRunId && uniqueReports[0]?.id) {
-          setCombinedReview(readCachedReview(reviewScope(analysisRunId, uniqueReports[0].id)));
+          setCombinedReview(
+            readCachedReview(reviewScope(analysisRunId, uniqueReports[0].id)),
+          );
         }
       } catch (loadError) {
         if (!cancelled) {
@@ -283,7 +396,7 @@ export default function CaseEvaluationPage() {
       [...labResults]
         .filter((item) => item.result_status !== 'normal')
         .sort((left, right) => labPriority(right) - labPriority(left))
-        .slice(0, 8),
+        .slice(0, 5),
     [labResults],
   );
 
@@ -297,21 +410,30 @@ export default function CaseEvaluationPage() {
     [clinicalContext, labResults, reports],
   );
 
+  const aiItems = useMemo(() => reviewItems(combinedReview), [combinedReview]);
+  const patient = clinicalContext?.patient_information;
+
   async function evaluateAllSources() {
     if (!analysisRunId || !latestReport || !clinicalContext || !allReady) {
-      setError('Birleşik değerlendirme için klinik kayıt, kan analizi ve radyoloji raporu birlikte hazır olmalıdır.');
+      setError(
+        'Birleşik değerlendirme için klinik kayıt, kan analizi ve radyoloji raporu birlikte hazır olmalıdır.',
+      );
       return;
     }
 
     try {
       setEvaluating(true);
       setError('');
-      setStatus('Klinik, laboratuvar ve radyoloji verileri birlikte değerlendiriliyor…');
-      const result = await evaluateClaudeAbnormalResults(analysisRunId, 6, clinicalContext);
+      setStatus('🧠 Klinik, laboratuvar ve radyoloji verileri birlikte değerlendiriliyor…');
+      const result = await evaluateClaudeAbnormalResults(
+        analysisRunId,
+        6,
+        clinicalContext,
+      );
       const scope = reviewScope(analysisRunId, latestReport.id);
       rememberReview(scope, result);
       setCombinedReview(result);
-      setStatus('Üç veri kaynağının birleşik değerlendirmesi tamamlandı ve bu vaka için saklandı.');
+      setStatus('✅ Üç veri kaynağının birleşik değerlendirmesi tamamlandı ve saklandı.');
     } catch (evaluationError) {
       setError(
         evaluationError instanceof Error
@@ -326,267 +448,255 @@ export default function CaseEvaluationPage() {
 
   if (loading) {
     return (
-      <div className="rounded-xl border border-slate-200 bg-white p-8 text-sm text-slate-600">
-        Kayıtlı klinik, laboratuvar ve radyoloji verileri yükleniyor…
+      <div className="mx-auto max-w-6xl rounded-3xl border border-slate-200 bg-white p-8 text-sm text-slate-600 shadow-sm">
+        ⏳ Kayıtlı klinik, laboratuvar ve radyoloji verileri yükleniyor…
       </div>
     );
   }
 
-  const patient = clinicalContext?.patient_information;
-  const combinedText = reviewText(combinedReview);
-
   return (
-    <div className="space-y-8">
-      <header>
-        <p className="text-sm font-semibold uppercase tracking-wide text-cyan-700">
-          Vaka değerlendirme merkezi
-        </p>
-        <h1 className="mt-2 text-3xl font-semibold text-slate-950">
-          Bağımsız analizler ve birleşik klinik değerlendirme
-        </h1>
-        <p className="mt-3 max-w-4xl text-sm leading-6 text-slate-600">
-          Klinik kayıt, kan analizi ve radyoloji raporu saklanır. Kan ve radyoloji önce
-          kendi modüllerinde değerlendirilir; ardından üç kaynak tek vaka olarak birlikte
-          ele alınır.
-        </p>
+    <div className="mx-auto max-w-6xl space-y-6 pb-10">
+      <header className="px-1">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <p className="text-xs font-black uppercase tracking-[0.2em] text-blue-700">
+              🧠 Klinik karar desteği
+            </p>
+            <h1 className="mt-2 text-2xl font-black tracking-tight text-[#14234b] sm:text-3xl">
+              Klinik uyum skoru
+            </h1>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
+              Tanı olasılığı değil; yapılandırılmış bulguların belirli bir klinik hipotezle
+              deterministik uyumudur.
+            </p>
+          </div>
+          <div className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-600 shadow-sm">
+            👤 {patient?.full_name || 'Aktif hasta'} · {patient?.age ?? '—'} ·{' '}
+            {sexLabel(patient?.sex)}
+          </div>
+        </div>
       </header>
 
       {error ? (
-        <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm leading-6 text-red-800">
-          {error}
+        <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm leading-6 text-red-800 shadow-sm">
+          ⚠️ {error}
         </div>
       ) : null}
       {status ? (
-        <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm leading-6 text-emerald-900">
+        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-sm leading-6 text-emerald-900 shadow-sm">
           {status}
         </div>
       ) : null}
 
-      <SectionCard
-        title="Aktif vaka ve kayıt durumu"
-        description="Her kaynak ayrı saklanır; sayfa değiştirildiğinde kayıtlar backend ve aktif vaka anahtarları üzerinden yeniden yüklenir."
-      >
-        <div className="mb-5 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
-          <strong className="text-slate-950">
-            {patient?.full_name || 'Aktif hasta adı belirtilmedi'}
-          </strong>
-          {' · '}
-          {patient?.age ?? 'Yaş belirtilmedi'}
-          {' · '}
-          {sexLabel(patient?.sex)}
-        </div>
-        <div className="grid gap-4 md:grid-cols-3">
-          <StatusCard
-            step={1}
-            title="Klinik kayıt"
-            ready={clinicalReady}
-            detail={
-              clinicalReady
-                ? 'Hasta veya doktor tarafından girilen klinik form saklandı.'
-                : 'Önce klinik formda şikâyet, öykü veya muayene bilgisi girilmelidir.'
-            }
-          />
-          <StatusCard
-            step={2}
-            title="Kan analizi"
-            ready={laboratoryReady}
-            detail={
-              laboratoryReady
-                ? `${labResults.length} yapılandırılmış sonuç kalıcı analiz kaydından yüklendi.`
-                : 'Kan PDF’i yüklenmeli veya laboratuvar sonuçları manuel girilmelidir.'
-            }
-          />
-          <StatusCard
-            step={3}
-            title="Radyoloji değerlendirmesi"
-            ready={radiologyReady}
-            detail={
-              radiologyReady
-                ? `${reports.length} benzersiz radyoloji raporu hasta kaydından yüklendi.`
-                : 'Radyoloji raporu PDF veya metin olarak eklenmelidir.'
-            }
-          />
-        </div>
-      </SectionCard>
-
-      <SectionCard
-        title="Aşama 1 — Kaynakların ayrı değerlendirilmesi"
-        description="Kan sonuçları ve radyoloji raporu önce kendi verileri içinde analiz edilir."
-      >
-        <div className="grid gap-5 xl:grid-cols-2">
-          <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-5">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <h3 className="text-lg font-semibold text-slate-950">Kan sonucu değerlendirmesi</h3>
-                <p className="mt-1 text-sm text-slate-600">
-                  Referans, alias ve kural motoru sonucu.
-                </p>
-              </div>
-              <Link
-                to="/analysis/results"
-                className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white"
-              >
-                Ayrıntılı kan analizini aç
-              </Link>
-            </div>
-            {laboratoryReady ? (
-              <>
-                <div className="mt-5 grid grid-cols-3 gap-3 text-center">
-                  <div className="rounded-lg border bg-white p-3">
-                    <p className="text-2xl font-semibold text-red-700">{labCounts.high}</p>
-                    <p className="text-xs text-slate-500">Yüksek</p>
-                  </div>
-                  <div className="rounded-lg border bg-white p-3">
-                    <p className="text-2xl font-semibold text-amber-700">{labCounts.low}</p>
-                    <p className="text-xs text-slate-500">Düşük</p>
-                  </div>
-                  <div className="rounded-lg border bg-white p-3">
-                    <p className="text-2xl font-semibold text-violet-700">{labCounts.review}</p>
-                    <p className="text-xs text-slate-500">Kontrol</p>
-                  </div>
-                </div>
-                <div className="mt-4 flex flex-wrap gap-2">
-                  {priorityLabs.map((result) => (
-                    <span
-                      key={result.lab_result_id}
-                      className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700"
-                    >
-                      {labName(result)}: {result.normalized_value} {result.unit}
-                    </span>
-                  ))}
-                </div>
-              </>
-            ) : (
-              <p className="mt-5 rounded-lg border border-dashed border-amber-300 bg-white p-4 text-sm text-slate-600">
-                Kaydedilmiş kan analizi bulunmuyor.
-              </p>
-            )}
-          </div>
-
-          <div className="rounded-xl border border-violet-200 bg-violet-50/40 p-5">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <h3 className="text-lg font-semibold text-slate-950">Radyoloji değerlendirmesi</h3>
-                <p className="mt-1 text-sm text-slate-600">
-                  Rapor metni, bulgular, ölçümler ve sonuç bölümü.
-                </p>
-              </div>
-              <Link
-                to="/radiology"
-                className="rounded-lg bg-violet-700 px-4 py-2 text-sm font-semibold text-white"
-              >
-                Radyoloji bölümünü aç
-              </Link>
-            </div>
-            {latestReport ? (
-              <div className="mt-5 rounded-xl border border-violet-100 bg-white p-4">
-                <p className="text-xs font-semibold uppercase tracking-wide text-violet-700">
-                  {latestReport.modality} · {latestReport.body_part}
-                </p>
-                <p className="mt-3 whitespace-pre-wrap text-sm leading-7 text-slate-700">
-                  {reportSummary(latestReport)}
-                </p>
-                <div className="mt-4 flex flex-wrap gap-2 text-xs">
-                  <span className="rounded-full bg-slate-100 px-3 py-1.5 text-slate-700">
-                    {latestReport.findings.length} bulgu
-                  </span>
-                  <span className="rounded-full bg-slate-100 px-3 py-1.5 text-slate-700">
-                    {latestReport.measurements.length} ölçüm
-                  </span>
-                  <span className="rounded-full bg-red-50 px-3 py-1.5 text-red-700">
-                    {latestReport.critical_findings.length} kritik ifade
-                  </span>
-                </div>
-              </div>
-            ) : (
-              <p className="mt-5 rounded-lg border border-dashed border-amber-300 bg-white p-4 text-sm text-slate-600">
-                Kaydedilmiş radyoloji raporu bulunmuyor.
-              </p>
-            )}
-          </div>
-        </div>
-      </SectionCard>
-
-      <SectionCard
-        title="Aşama 2 — Üç verinin birlikte değerlendirilmesi"
-        description="Klinik form, yapılandırılmış kan sonuçları ve kaydedilmiş radyoloji raporu aynı vaka bağlamında değerlendirilir."
-      >
-        <div className="grid gap-5 lg:grid-cols-[1fr_auto] lg:items-start">
-          <div>
-            <p className="text-sm leading-6 text-slate-600">
-              Bu aşama yalnızca üç veri kaynağı da hazır olduğunda çalışır. Önceki bağımsız
-              analizler silinmez; birleşik çıktı ayrıca vaka kapsamıyla saklanır.
+      <section className="overflow-hidden rounded-[28px] border border-[#cddcf4] bg-[#eef4ff] p-4 shadow-[0_18px_45px_rgba(37,99,235,0.08)] sm:p-6">
+        <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] font-black uppercase tracking-[0.16em] text-blue-700">
+              Değerlendirilen hipotez
             </p>
-            <div className="mt-4 flex flex-wrap gap-2 text-xs font-semibold">
-              <span className={`rounded-full px-3 py-1.5 ${clinicalReady ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-900'}`}>
-                Klinik {clinicalReady ? 'hazır' : 'eksik'}
-              </span>
-              <span className={`rounded-full px-3 py-1.5 ${laboratoryReady ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-900'}`}>
-                Kan {laboratoryReady ? 'hazır' : 'eksik'}
-              </span>
-              <span className={`rounded-full px-3 py-1.5 ${radiologyReady ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-900'}`}>
-                Radyoloji {radiologyReady ? 'hazır' : 'eksik'}
-              </span>
+            <h2 className="mt-2 text-2xl font-black tracking-tight text-[#12204a] sm:text-3xl">
+              {compatibility.display_name}
+            </h2>
+            <p className="mt-2 text-sm font-bold text-[#27345f]">
+              {compatibility.level_label}
+            </p>
+          </div>
+
+          <div className="w-full rounded-2xl border border-slate-200 bg-white px-6 py-5 text-center shadow-sm lg:w-40">
+            <p className="text-5xl font-black leading-none tracking-tight text-[#172353]">
+              {compatibility.score}
+            </p>
+            <p className="mt-2 text-sm font-bold text-[#172353]">/ 100</p>
+            <span className="mt-3 inline-flex rounded-full bg-blue-50 px-3 py-1 text-[9px] font-black uppercase tracking-wide text-blue-700 ring-1 ring-blue-100">
+              Genel uyum skoru
+            </span>
+          </div>
+        </div>
+
+        <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+          {compatibility.breakdown.map((item) => {
+            const visual = METRIC_VISUALS[item.domain];
+            return (
+              <MetricCard
+                key={item.domain}
+                emoji={visual.emoji}
+                label={item.label}
+                score={item.score}
+                maximum={item.maximum_score}
+                labelClass={visual.labelClass}
+                scoreClass={visual.scoreClass}
+                iconClass={visual.iconClass}
+              />
+            );
+          })}
+          <MetricCard
+            emoji="🛡️"
+            label="Genel uyum skoru"
+            score={compatibility.score}
+            maximum={compatibility.maximum_score}
+            labelClass="text-blue-700"
+            scoreClass="text-blue-900"
+            iconClass="bg-blue-50 ring-blue-100"
+          />
+        </div>
+
+        <div className="mt-5 flex flex-wrap gap-2">
+          {compatibility.supporting_evidence.map((item) => (
+            <span
+              key={item.code}
+              title={item.detail}
+              className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-[#effcf7] px-3 py-2 text-xs font-bold text-[#285a50] shadow-sm"
+            >
+              <span aria-hidden="true">{evidenceEmoji(item.code, item.domain)}</span>
+              {item.label}
+              <span className="text-emerald-700">· +{item.points}</span>
+            </span>
+          ))}
+        </div>
+
+        <div className="mt-5 grid gap-2 sm:grid-cols-3">
+          <div className="rounded-xl border border-slate-200 bg-white/75 px-4 py-3 text-xs font-bold text-slate-700">
+            📋 Veri tamlığı: %{compatibility.data_completeness_percent}
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-white/75 px-4 py-3 text-xs font-bold text-slate-700">
+            ⚖️ Hesap türü: Kural tabanlı uyum
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-white/75 px-4 py-3 text-xs font-bold text-slate-700">
+            🎯 Olasılık tahmini: Hesaplanmıyor
+          </div>
+        </div>
+      </section>
+
+      <section className="overflow-hidden rounded-[26px] border border-violet-200 bg-[#f6f1ff] shadow-[0_18px_45px_rgba(109,40,217,0.08)]">
+        <div className="flex flex-col gap-4 border-b border-violet-200/70 px-5 py-5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-3">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-violet-700 text-2xl text-white shadow-sm">
+              🧠
+            </div>
+            <div>
+              <h2 className="text-xl font-black text-[#2f1768]">
+                Birleşik AI klinik değerlendirmesi
+              </h2>
+              <p className="mt-1 text-sm leading-6 text-violet-800/70">
+                Klinik bilgiler, laboratuvar sonuçları ve görüntüleme bulguları birlikte
+                değerlendirilir.
+              </p>
             </div>
           </div>
           <button
             type="button"
             onClick={evaluateAllSources}
             disabled={!allReady || evaluating}
-            className="rounded-lg bg-blue-700 px-5 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-xl bg-violet-700 px-5 py-3 text-sm font-black text-white shadow-sm transition hover:bg-violet-800 disabled:cursor-not-allowed disabled:opacity-45"
           >
-            {evaluating ? 'Üç kaynak değerlendiriliyor…' : 'Üç veriyi birlikte değerlendir'}
+            {evaluating ? '🧠 Değerlendiriliyor…' : '✨ Üç veriyi birlikte değerlendir'}
           </button>
         </div>
 
-        {allReady ? (
-          <div className="mt-6 rounded-xl border border-blue-200 bg-blue-50 p-5">
-            <div className="flex flex-wrap items-center justify-between gap-4">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">
-                  Kural tabanlı klinik uyum
-                </p>
-                <h3 className="mt-1 text-xl font-semibold text-blue-950">
-                  {compatibility.display_name} · {compatibility.level_label}
-                </h3>
-              </div>
-              <p className="text-4xl font-extrabold text-blue-950">
-                {compatibility.score}
-                <span className="text-base font-semibold"> / 100</span>
-              </p>
-            </div>
-            <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              {compatibility.breakdown.map((item) => (
-                <div key={item.domain} className="rounded-lg border border-blue-100 bg-white p-4">
-                  <p className="text-xs font-semibold uppercase text-slate-500">{item.label}</p>
-                  <p className="mt-2 text-xl font-semibold text-slate-950">
-                    {item.score}/{item.maximum_score}
-                  </p>
+        {aiItems.length > 0 ? (
+          <div className="divide-y divide-violet-200/70 px-5">
+            {aiItems.map((item, index) => (
+              <div key={`${item}-${index}`} className="flex gap-3 py-4">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-violet-200 bg-white text-xl shadow-sm">
+                  {AI_ROW_EMOJIS[index % AI_ROW_EMOJIS.length]}
                 </div>
-              ))}
-            </div>
-          </div>
-        ) : null}
-
-        {combinedReview ? (
-          <div className="mt-6 rounded-xl border border-violet-200 bg-violet-50 p-5">
-            <h3 className="font-semibold text-violet-950">Birleşik AI klinik değerlendirmesi</h3>
-            <p className="mt-3 whitespace-pre-wrap text-sm leading-8 text-violet-950">
-              {combinedText || 'AI değerlendirmesi oluşturuldu ancak gösterilebilir bir özet bulunamadı.'}
-            </p>
+                <p className="pt-1 text-sm font-medium leading-7 text-[#3d286f]">{item}</p>
+              </div>
+            ))}
           </div>
         ) : (
-          <p className="mt-6 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-5 text-sm text-slate-600">
-            Birleşik AI değerlendirmesi henüz çalıştırılmadı. Bağımsız kan ve radyoloji
-            değerlendirmeleri bundan etkilenmez.
-          </p>
+          <div className="px-5 py-6">
+            <div className="rounded-2xl border border-dashed border-violet-300 bg-white/65 p-5 text-sm leading-7 text-violet-900">
+              🧠 Birleşik AI değerlendirmesi henüz çalıştırılmadı. Klinik, kan ve radyoloji
+              kayıtlarının üçü de hazır olduğunda yukarıdaki düğmeyle ikinci aşamayı
+              başlatabilirsin.
+            </div>
+          </div>
         )}
 
-        <p className="mt-5 text-xs leading-6 text-slate-500">
-          Bu çıktılar tanı veya tedavi kararı değildir. Kural tabanlı uyum skoru ve AI
-          değerlendirmesi hekim doğrulaması gerektiren karar destek çıktılarıdır.
-        </p>
-      </SectionCard>
+        <div className="border-t border-violet-200/70 px-5 py-4">
+          <div className="flex gap-3 rounded-2xl bg-white/65 p-4 text-xs leading-6 text-violet-900">
+            <span className="text-lg" aria-hidden="true">⚠️</span>
+            <p>
+              Bu çıktı karar destek amaçlıdır; tanı veya tedavi kararı değildir. Hekim
+              doğrulaması zorunludur.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section className="rounded-[26px] border border-slate-200 bg-slate-50 p-4 sm:p-5">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">
+              Aşama 1
+            </p>
+            <h2 className="mt-1 text-lg font-black text-slate-950">
+              Kaynakların ayrı değerlendirilmesi
+            </h2>
+          </div>
+          <span className="rounded-full bg-white px-3 py-1.5 text-xs font-bold text-slate-500 ring-1 ring-slate-200">
+            💾 Kayıtlar korunur
+          </span>
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-3">
+          <SourceCard
+            emoji="🩺"
+            title="Klinik kayıt"
+            ready={clinicalReady}
+            detail={
+              clinicalReady
+                ? 'Hasta veya doktor tarafından girilen klinik form aktif vaka içinde saklanıyor.'
+                : 'Şikâyet, öykü veya muayene bilgisi eksik.'
+            }
+            link="/patients/demo"
+            linkLabel="Klinik kaydı aç"
+          />
+          <SourceCard
+            emoji="🧪"
+            title="Kan sonucu değerlendirmesi"
+            ready={laboratoryReady}
+            detail={
+              laboratoryReady
+                ? `${labResults.length} sonuç kaydedildi · ${labCounts.high} yüksek · ${labCounts.low} düşük · ${labCounts.review} kontrol.`
+                : 'Kan PDF’i yüklenmeli veya sonuçlar manuel girilmelidir.'
+            }
+            link="/analysis/results"
+            linkLabel="Kan analizini aç"
+          />
+          <SourceCard
+            emoji="🩻"
+            title="Radyoloji değerlendirmesi"
+            ready={radiologyReady}
+            detail={
+              latestReport
+                ? `${latestReport.modality} · ${latestReport.body_part} · ${latestReport.findings.length} bulgu. ${reportSummary(latestReport).slice(0, 110)}`
+                : 'Radyoloji PDF’i veya rapor metni eklenmelidir.'
+            }
+            link="/radiology"
+            linkLabel="Radyoloji raporunu aç"
+          />
+        </div>
+
+        {priorityLabs.length > 0 ? (
+          <div className="mt-4 flex flex-wrap gap-2">
+            {priorityLabs.map((result) => (
+              <span
+                key={result.lab_result_id}
+                className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600"
+              >
+                🩸 {labName(result)}: {result.normalized_value} {result.unit}
+              </span>
+            ))}
+          </div>
+        ) : null}
+      </section>
+
+      <p className="text-center text-xs leading-6 text-slate-500">
+        ℹ️ Not: Bu sistem doktorun yerini almaz; hekim kararını desteklemek için
+        geliştirilmiştir.
+      </p>
     </div>
   );
 }
