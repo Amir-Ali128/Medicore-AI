@@ -16,7 +16,6 @@ router = APIRouter(prefix="/patients", tags=["patients"])
 
 def _metadata_from_payload(payload: PatientRecordUpsert) -> dict:
     return {
-        "full_name": payload.full_name.strip(),
         "age": payload.age,
         "height_cm": payload.height_cm,
         "weight_kg": payload.weight_kg,
@@ -73,6 +72,7 @@ async def update_patient_record(
         **dict(patient.metadata_json or {}),
         **_metadata_from_payload(payload),
     }
+    patient.metadata_json.pop("full_name", None)
     await session.commit()
     await session.refresh(patient)
     return patient
