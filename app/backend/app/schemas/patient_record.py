@@ -12,7 +12,6 @@ from app.domain.enums import Sex
 
 
 class PatientRecordUpsert(BaseModel):
-    full_name: str = Field(min_length=1, max_length=200)
     age: int | None = Field(default=None, ge=0, le=130)
     sex: Sex = Sex.UNKNOWN
     height_cm: float | None = Field(default=None, ge=30, le=260)
