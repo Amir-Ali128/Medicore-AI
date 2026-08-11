@@ -15,6 +15,9 @@ const ACTIVE_PATIENT_KEYS = [
 export type PatientHistoryRecord = {
   id: string;
   archivedAt: string;
+  // Kept as a generic label for backward-compatible UI typing.
+  // It no longer contains the patient's real name.
+  displayName: string;
   age: string | null;
   sex: string | null;
   birthDate: string | null;
@@ -70,6 +73,7 @@ export function archiveActivePatientSession(): PatientHistoryRecord | null {
   const record: PatientHistoryRecord = {
     id: crypto.randomUUID(),
     archivedAt: new Date().toISOString(),
+    displayName: 'Hasta kaydı',
     age: getFirstStoredValue([
       'medicore:lastPatientAge',
       'medicore:last_patient_age',
