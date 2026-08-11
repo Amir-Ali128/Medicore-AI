@@ -27,14 +27,9 @@ function readStoredClinicalIntake(): ClinicalIntakeInput {
   }
 }
 
-function patientName(value: ClinicalIntakeInput) {
-  return value.patient_information.full_name?.trim() || 'Yeni hasta';
-}
-
 function hasClinicalContent(value: ClinicalIntakeInput) {
   return Boolean(
-    value.patient_information.full_name ||
-      value.presenting_complaint.chief_complaint ||
+    value.presenting_complaint.chief_complaint ||
       value.clinical_history_details.history_of_present_illness ||
       value.clinical_history_details.past_medical_history ||
       value.physical_exam.examination_findings,
@@ -58,13 +53,9 @@ export default function PatientRecordPage() {
       JSON.stringify(clinicalIntake),
     );
 
-    const patient = clinicalIntake.patient_information;
-    if (patient.full_name) {
-      localStorage.setItem('medicore:lastPatientDisplayName', patient.full_name);
-    } else {
-      localStorage.removeItem('medicore:lastPatientDisplayName');
-    }
+    localStorage.removeItem('medicore:lastPatientDisplayName');
 
+    const patient = clinicalIntake.patient_information;
     if (patient.age !== null) {
       localStorage.setItem('medicore:lastPatientAge', String(patient.age));
     } else {
@@ -142,7 +133,7 @@ export default function PatientRecordPage() {
             Hasta kaydı
           </p>
           <h1 className="mt-2 text-3xl font-semibold text-slate-950">
-            {patientName(clinicalIntake)}
+            Klinik hasta kaydı
           </h1>
           <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-500">
             Klinik bilgiler, laboratuvar sonuçları ve görüntüleme raporları aynı hasta kaydına bağlanır.
