@@ -84,10 +84,10 @@ function normalizeStoredClinicalIntake(raw: unknown): ClinicalIntakeInput | null
   return {
     patient_information: {
       full_name: null,
-      age: patient.age ?? empty.patient_information.age,
-      sex: patient.sex ?? empty.patient_information.sex,
-      height_cm: patient.height_cm ?? empty.patient_information.height_cm,
-      weight_kg: patient.weight_kg ?? empty.patient_information.weight_kg,
+      age: patient.age ?? null,
+      sex: patient.sex ?? null,
+      height_cm: patient.height_cm ?? null,
+      weight_kg: patient.weight_kg ?? null,
     },
     presenting_complaint: {
       ...empty.presenting_complaint,
@@ -221,15 +221,12 @@ export default function ClinicalIntakeForm({
     });
   };
 
-  const updateComplaint = (
-    key: keyof ClinicalIntakeInput['presenting_complaint'],
-    fieldValue: string | number | null,
-  ) => {
+  const updateComplaint = (fieldValue: string | null) => {
     emitChange({
       ...value,
       presenting_complaint: {
         ...value.presenting_complaint,
-        [key]: fieldValue,
+        chief_complaint: fieldValue,
       },
     });
   };
@@ -268,9 +265,7 @@ export default function ClinicalIntakeForm({
             Klinik bilgiler otomatik kaydedilir
           </p>
           <p className="mt-1 text-xs leading-5 text-emerald-800">
-            Kan veya radyoloji ekranına geçip geri döndüğünde bu tarayıcıdaki klinik
-            taslak yeniden yüklenir. Laboratuvar raporu oluşturulduğunda klinik bağlam
-            rapor kaydına da eklenir.
+            Girdiğiniz bilgiler bu tarayıcıda korunur ve diğer değerlendirme ekranlarında kullanılabilir.
           </p>
         </div>
         <div className="shrink-0 text-xs font-semibold text-emerald-800">
@@ -279,10 +274,10 @@ export default function ClinicalIntakeForm({
       </div>
 
       <FormSection
-        title="Hasta bilgileri"
-        description="Analizin doğru hastaya ait olduğunu doğrulamak için temel bilgiler."
+        title="Temel bilgiler"
+        description="Klinik değerlendirme için gerekli temel bilgiler."
       >
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <div className="grid gap-4 md:grid-cols-3">
           <label className="text-sm font-medium text-slate-700">
             Yaş
             <input
@@ -315,21 +310,6 @@ export default function ClinicalIntakeForm({
           </label>
 
           <label className="text-sm font-medium text-slate-700">
-            Boy (cm)
-            <input
-              type="number"
-              min={30}
-              max={260}
-              step="0.1"
-              value={value.patient_information.height_cm ?? ''}
-              onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                updatePatient('height_cm', numberOrNull(event.target.value))
-              }
-              className={INPUT_CLASS}
-            />
-          </label>
-
-          <label className="text-sm font-medium text-slate-700">
             Kilo (kg)
             <input
               type="number"
@@ -348,74 +328,17 @@ export default function ClinicalIntakeForm({
 
       <FormSection
         title="Şikâyet ve belirtiler"
-        description="Başvuru nedeni, ana şikâyet, süresi ve eşlik eden belirtiler."
+        description="Başvuru şikâyetini ve eşlik eden belirtileri tek alanda yazın."
       >
-        <div className="grid gap-4 lg:grid-cols-2">
-          <label className="text-sm font-medium text-slate-700 lg:col-span-2">
-            Başvuru nedeni
-            <textarea
-              rows={2}
-              value={value.presenting_complaint.reason_for_visit ?? ''}
-              onChange={(event: ChangeEvent<HTMLTextAreaElement>) =>
-                updateComplaint('reason_for_visit', textOrNull(event.target.value))
-              }
-              placeholder="Hastanın bugün başvurma nedeni"
-              className={TEXTAREA_CLASS}
-            />
-          </label>
-
-          <label className="text-sm font-medium text-slate-700 lg:col-span-2">
-            Ana şikâyet
-            <textarea
-              rows={3}
-              value={value.presenting_complaint.chief_complaint ?? ''}
-              onChange={(event: ChangeEvent<HTMLTextAreaElement>) =>
-                updateComplaint('chief_complaint', textOrNull(event.target.value))
-              }
-              placeholder="Örn: Sağ üst kadran ağrısı, ateş ve bulantı"
-              className={TEXTAREA_CLASS}
-            />
-          </label>
-
-          <label className="text-sm font-medium text-slate-700">
-            Şikâyetin süresi
-            <input
-              value={value.presenting_complaint.complaint_duration ?? ''}
-              onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                updateComplaint('complaint_duration', textOrNull(event.target.value))
-              }
-              placeholder="Örn: 18 saattir"
-              className={INPUT_CLASS}
-            />
-          </label>
-
-          <label className="text-sm font-medium text-slate-700">
-            Şiddet (0–10)
-            <input
-              type="number"
-              min={0}
-              max={10}
-              value={value.presenting_complaint.severity_score ?? ''}
-              onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                updateComplaint('severity_score', numberOrNull(event.target.value))
-              }
-              className={INPUT_CLASS}
-            />
-          </label>
-
-          <label className="text-sm font-medium text-slate-700 lg:col-span-2">
-            Eşlik eden belirtiler
-            <textarea
-              rows={3}
-              value={value.presenting_complaint.associated_symptoms ?? ''}
-              onChange={(event: ChangeEvent<HTMLTextAreaElement>) =>
-                updateComplaint('associated_symptoms', textOrNull(event.target.value))
-              }
-              placeholder="Ateş, bulantı, kusma, iştahsızlık veya diğer belirtiler"
-              className={TEXTAREA_CLASS}
-            />
-          </label>
-        </div>
+        <textarea
+          rows={5}
+          value={value.presenting_complaint.chief_complaint ?? ''}
+          onChange={(event: ChangeEvent<HTMLTextAreaElement>) =>
+            updateComplaint(textOrNull(event.target.value))
+          }
+          placeholder="Şikâyet, belirtiler, süresi ve önemli ayrıntılar"
+          className={TEXTAREA_CLASS}
+        />
       </FormSection>
 
       <FormSection
@@ -424,42 +347,13 @@ export default function ClinicalIntakeForm({
       >
         <div className="grid gap-4 lg:grid-cols-2">
           {[
-            [
-              'history_of_present_illness',
-              'Şikâyetin öyküsü',
-              'Başlangıcı, seyri, artıran veya azaltan durumlar',
-            ],
-            [
-              'current_medical_conditions',
-              'Mevcut hastalıklar',
-              'Hâlen takip edilen hastalıklar ve önemli tanılar',
-            ],
-            [
-              'past_medical_history',
-              'Geçmiş sağlık öyküsü',
-              'Önceki hastalıklar, hastane yatışları ve önemli sağlık olayları',
-            ],
-            [
-              'family_history',
-              'Aile öyküsü',
-              'Ailede görülen önemli veya kalıtsal hastalıklar',
-            ],
-            [
-              'medications',
-              'Kullanılan ilaçlar',
-              'İlaç adı, doz ve kullanım sıklığı',
-            ],
+            ['current_medical_conditions', 'Mevcut hastalıklar', 'Hâlen takip edilen hastalıklar ve önemli tanılar'],
+            ['past_medical_history', 'Geçmiş sağlık öyküsü', 'Önceki hastalıklar, yatışlar ve önemli sağlık olayları'],
+            ['family_history', 'Aile öyküsü', 'Ailede görülen önemli veya kalıtsal hastalıklar'],
+            ['medications', 'Kullanılan ilaçlar', 'İlaç adı, doz ve kullanım sıklığı'],
             ['allergies', 'Alerjiler', 'Bilinen alerjiler ve oluşan reaksiyonlar'],
-            [
-              'tobacco_alcohol',
-              'Sigara ve alkol kullanımı',
-              'Miktar, sıklık ve kullanım süresi',
-            ],
-            [
-              'past_surgeries',
-              'Geçirilmiş ameliyatlar',
-              'Ameliyat türü, tarihi ve varsa komplikasyonlar',
-            ],
+            ['tobacco_alcohol', 'Sigara ve alkol kullanımı', 'Miktar, sıklık ve kullanım süresi'],
+            ['past_surgeries', 'Geçirilmiş ameliyatlar', 'Ameliyat türü, tarihi ve varsa komplikasyonlar'],
           ].map(([key, label, placeholder]) => (
             <label key={key} className="text-sm font-medium text-slate-700">
               {label}
@@ -486,7 +380,7 @@ export default function ClinicalIntakeForm({
 
       <FormSection
         title="Muayene ve yaşamsal bulgular"
-        description="Ölçülen yaşamsal bulgular ve hekim muayene notları."
+        description="Ölçülen yaşamsal bulgular ve muayene notları."
       >
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
           {[
@@ -539,12 +433,6 @@ export default function ClinicalIntakeForm({
           </label>
         </div>
       </FormSection>
-
-      <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-900">
-        Laboratuvar sonuçları aşağıdaki laboratuvar bölümünden, radyoloji ve DEXA
-        raporları ise ayrı Radyoloji ekranından eklenir. Klinik taslak bu ekranlar
-        arasında geçiş yaptığında korunur.
-      </div>
     </div>
   );
 }
