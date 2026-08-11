@@ -29,7 +29,7 @@ function RecordCard({
     <article className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <p className="text-lg font-semibold text-slate-950">{record.displayName}</p>
+          <p className="text-lg font-semibold text-slate-950">Hasta kaydı</p>
           <p className="mt-1 text-sm text-slate-500">
             {record.age ? `${record.age} yaş` : 'Yaş bilgisi yok'} ·{' '}
             {record.sex ?? 'Cinsiyet bilgisi yok'}
