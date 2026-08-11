@@ -78,7 +78,8 @@ function normalizeStoredClinicalIntake(raw: unknown): ClinicalIntakeInput | null
 
   const source = raw as Partial<ClinicalIntakeInput>;
   const empty = createEmptyClinicalIntake();
-  const patient = source.patient_information ?? {};
+  const patient: Partial<ClinicalIntakeInput['patient_information']> =
+    source.patient_information ?? {};
 
   return {
     patient_information: {
