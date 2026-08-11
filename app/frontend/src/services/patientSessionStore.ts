@@ -6,7 +6,6 @@ const ACTIVE_PATIENT_KEYS = [
   'medicore:lastAnalysisRunId',
   'medicore:lastLabReportId',
   'medicore:lastRadiologyReportId',
-  'medicore:lastPatientDisplayName',
   'medicore:lastPatientAge',
   'medicore:lastPatientSex',
   'medicore:lastPatientBirthDate',
@@ -16,7 +15,6 @@ const ACTIVE_PATIENT_KEYS = [
 export type PatientHistoryRecord = {
   id: string;
   archivedAt: string;
-  displayName: string;
   age: string | null;
   sex: string | null;
   birthDate: string | null;
@@ -72,11 +70,6 @@ export function archiveActivePatientSession(): PatientHistoryRecord | null {
   const record: PatientHistoryRecord = {
     id: crypto.randomUUID(),
     archivedAt: new Date().toISOString(),
-    displayName:
-      getFirstStoredValue([
-        'medicore:lastPatientDisplayName',
-        'medicore:last_patient_display_name',
-      ]) ?? 'İsimsiz hasta',
     age: getFirstStoredValue([
       'medicore:lastPatientAge',
       'medicore:last_patient_age',
@@ -103,6 +96,8 @@ export function archiveActivePatientSession(): PatientHistoryRecord | null {
 
 export function clearActivePatientSession() {
   ACTIVE_PATIENT_KEYS.forEach((key) => localStorage.removeItem(key));
+  localStorage.removeItem('medicore:lastPatientDisplayName');
+  localStorage.removeItem('medicore:last_patient_display_name');
 }
 
 export function startNewPatientSession() {
