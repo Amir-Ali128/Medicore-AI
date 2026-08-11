@@ -16,8 +16,22 @@ function readIntake(): ClinicalIntakeInput | null {
   }
 }
 
-function hasPatientName(intake: ClinicalIntakeInput | null): intake is ClinicalIntakeInput {
-  return Boolean(intake?.patient_information.full_name?.trim());
+function hasPatientData(intake: ClinicalIntakeInput | null): intake is ClinicalIntakeInput {
+  if (!intake) return false;
+
+  const patient = intake.patient_information;
+  return Boolean(
+    patient.age !== null ||
+      patient.sex ||
+      patient.height_cm !== null ||
+      patient.weight_kg !== null ||
+      intake.presenting_complaint.reason_for_visit ||
+      intake.presenting_complaint.chief_complaint ||
+      intake.presenting_complaint.associated_symptoms ||
+      intake.clinical_history_details.history_of_present_illness ||
+      intake.clinical_history_details.past_medical_history ||
+      intake.physical_exam.examination_findings,
+  );
 }
 
 export default function PatientPersistenceBridge() {
@@ -28,7 +42,7 @@ export default function PatientPersistenceBridge() {
     const timer = window.setInterval(async () => {
       const intake = readIntake();
 
-      if (!hasPatientName(intake)) {
+      if (!hasPatientData(intake)) {
         lastSaved.current = '';
         return;
       }
