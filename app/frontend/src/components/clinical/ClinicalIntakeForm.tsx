@@ -144,8 +144,7 @@ function FormSection({ title, description, children }: SectionProps) {
 }
 
 function textOrNull(value: string): string | null {
-  const trimmed = value.trim();
-  return trimmed || null;
+  return value === '' ? null : value;
 }
 
 function numberOrNull(value: string): number | null {
