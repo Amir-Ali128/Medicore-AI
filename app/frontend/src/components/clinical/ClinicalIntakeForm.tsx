@@ -78,11 +78,15 @@ function normalizeStoredClinicalIntake(raw: unknown): ClinicalIntakeInput | null
 
   const source = raw as Partial<ClinicalIntakeInput>;
   const empty = createEmptyClinicalIntake();
+  const patient = source.patient_information ?? {};
 
   return {
     patient_information: {
-      ...empty.patient_information,
-      ...(source.patient_information ?? {}),
+      full_name: null,
+      age: patient.age ?? empty.patient_information.age,
+      sex: patient.sex ?? empty.patient_information.sex,
+      height_cm: patient.height_cm ?? empty.patient_information.height_cm,
+      weight_kg: patient.weight_kg ?? empty.patient_information.weight_kg,
     },
     presenting_complaint: {
       ...empty.presenting_complaint,
@@ -116,9 +120,19 @@ export function readStoredClinicalIntake(): ClinicalIntakeInput | null {
 
 export function persistClinicalIntake(value: ClinicalIntakeInput): void {
   try {
-    localStorage.setItem(ACTIVE_CLINICAL_INTAKE_KEY, JSON.stringify(value));
+    const sanitizedValue: ClinicalIntakeInput = {
+      ...value,
+      patient_information: {
+        ...value.patient_information,
+        full_name: null,
+      },
+    };
+    localStorage.setItem(
+      ACTIVE_CLINICAL_INTAKE_KEY,
+      JSON.stringify(sanitizedValue),
+    );
     window.dispatchEvent(
-      new CustomEvent(CLINICAL_INTAKE_UPDATED_EVENT, { detail: value }),
+      new CustomEvent(CLINICAL_INTAKE_UPDATED_EVENT, { detail: sanitizedValue }),
     );
   } catch {
     // Storage may be unavailable in private/restricted browser contexts.
@@ -181,9 +195,16 @@ export default function ClinicalIntakeForm({
   }, [onChange]);
 
   const emitChange = (nextValue: ClinicalIntakeInput) => {
-    persistClinicalIntake(nextValue);
+    const sanitizedValue: ClinicalIntakeInput = {
+      ...nextValue,
+      patient_information: {
+        ...nextValue.patient_information,
+        full_name: null,
+      },
+    };
+    persistClinicalIntake(sanitizedValue);
     setSavedAt(new Date());
-    onChange(nextValue);
+    onChange(sanitizedValue);
   };
 
   const updatePatient = (
@@ -260,20 +281,7 @@ export default function ClinicalIntakeForm({
         title="Hasta bilgileri"
         description="Analizin doğru hastaya ait olduğunu doğrulamak için temel bilgiler."
       >
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-          <label className="text-sm font-medium text-slate-700 md:col-span-2">
-            Ad soyad
-            <input
-              value={value.patient_information.full_name ?? ''}
-              onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                updatePatient('full_name', textOrNull(event.target.value))
-              }
-              maxLength={200}
-              placeholder="Hastanın adı ve soyadı"
-              className={INPUT_CLASS}
-            />
-          </label>
-
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <label className="text-sm font-medium text-slate-700">
             Yaş
             <input
@@ -305,36 +313,35 @@ export default function ClinicalIntakeForm({
             </select>
           </label>
 
-          <div className="grid grid-cols-2 gap-3 md:col-span-2 xl:col-span-1">
-            <label className="text-sm font-medium text-slate-700">
-              Boy (cm)
-              <input
-                type="number"
-                min={30}
-                max={260}
-                step="0.1"
-                value={value.patient_information.height_cm ?? ''}
-                onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                  updatePatient('height_cm', numberOrNull(event.target.value))
-                }
-                className={INPUT_CLASS}
-              />
-            </label>
-            <label className="text-sm font-medium text-slate-700">
-              Kilo (kg)
-              <input
-                type="number"
-                min={1}
-                max={600}
-                step="0.1"
-                value={value.patient_information.weight_kg ?? ''}
-                onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                  updatePatient('weight_kg', numberOrNull(event.target.value))
-                }
-                className={INPUT_CLASS}
-              />
-            </label>
-          </div>
+          <label className="text-sm font-medium text-slate-700">
+            Boy (cm)
+            <input
+              type="number"
+              min={30}
+              max={260}
+              step="0.1"
+              value={value.patient_information.height_cm ?? ''}
+              onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                updatePatient('height_cm', numberOrNull(event.target.value))
+              }
+              className={INPUT_CLASS}
+            />
+          </label>
+
+          <label className="text-sm font-medium text-slate-700">
+            Kilo (kg)
+            <input
+              type="number"
+              min={1}
+              max={600}
+              step="0.1"
+              value={value.patient_information.weight_kg ?? ''}
+              onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                updatePatient('weight_kg', numberOrNull(event.target.value))
+              }
+              className={INPUT_CLASS}
+            />
+          </label>
         </div>
       </FormSection>
 
