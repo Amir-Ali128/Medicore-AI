@@ -1,34 +1,3 @@
-import { Link } from 'react-router-dom';
-
-const workflowCards = [
-  {
-    title: 'Hasta Bilgileri',
-    description:
-      'Cinsiyet, yaş, boy, kilo, kişisel ve ailesel hastalıklar, kalıtsal durumlar, ameliyatlar ve kullanılan ilaçlar gibi klinik bilgileri girin veya güncelleyin.',
-    to: '/patients/demo',
-    icon: '👤',
-    className: 'border-blue-200 bg-blue-50 text-blue-900 hover:bg-blue-100',
-  },
-  {
-    title: 'Laboratuvar Tetkikleri',
-    description:
-      'Mevcut laboratuvar sonuçlarını sisteme aktarın, kaydedin ve tetkik analizini başlatın.',
-    to: '/analysis/mock',
-    icon: '🩸',
-    className:
-      'border-rose-200 bg-rose-50 text-rose-900 hover:bg-rose-100',
-  },
-  {
-    title: 'Radyoloji ve Tetkik Raporları',
-    description:
-      'Radyoloji, endoskopi ve diğer tanısal tetkik raporlarını sisteme ekleyin, görüntüleyin ve değerlendirin.',
-    to: '/radiology',
-    icon: '🩻',
-    className:
-      'border-cyan-200 bg-cyan-50 text-cyan-900 hover:bg-cyan-100',
-  },
-];
-
 export default function HomePage() {
   return (
     <div className="space-y-6">
@@ -40,7 +9,7 @@ export default function HomePage() {
           Klinik Değerlendirme ve Karar Destek Sistemi
         </h1>
         <p className="mt-3 max-w-4xl text-sm leading-7 text-slate-600">
-          Bu sistem; bireyin veya hastanın cinsiyet, yaş, boy ve kilo bilgileri ile
+          Bu sistem; bireyin veya hastanın cinsiyet, yaş ve kilo bilgileri ile
           kişisel ve ailesel hastalıklar, ameliyatlar ve kullanılan ilaçlar gibi öz
           geçmiş ve soy geçmiş bilgilerini; laboratuvar, radyoloji, endoskopi ve
           benzeri tetkik bulgularıyla birlikte yorumlayarak olası hastalıkların
@@ -72,19 +41,12 @@ export default function HomePage() {
               A. İlk defa giriş yapanlar
             </h3>
             <ol className="mt-3 list-decimal space-y-3 pl-5 text-sm leading-7 text-slate-600">
-              <li>
-                <strong className="text-slate-900">Hasta Bilgileri</strong>
-                {' '}ekranından kendinize ve ailenize ait sağlık bilgilerini girin.
-              </li>
+              <li>Hasta bilgileri ekranından gerekli klinik bilgileri girin.</li>
               <li>
                 Laboratuvar, radyoloji ve diğer bulgulara ait mevcut sonuçları
-                ilgili bölümlere aktarın. Veri girişini tamamladıktan sonra tetkik
-                analizini başlatın ve işlemin tamamlanmasını bekleyin.
+                ilgili bölümlere aktarın ve analizi başlatın.
               </li>
-              <li>
-                Analiz sonuçlarını, klinik yorumları ve önerileri sırasıyla
-                inceleyin.
-              </li>
+              <li>Analiz sonuçlarını, klinik yorumları ve önerileri inceleyin.</li>
             </ol>
           </article>
 
@@ -93,38 +55,10 @@ export default function HomePage() {
               B. Tekrar giriş yapanlar
             </h3>
             <p className="mt-3 text-sm leading-7 text-slate-600">
-              Önceki sıralamayı takip ederek değişen bilgileri ilgili alanlarda
-              güncelleyin. İlaç veya doz değişikliği, yeni başlanan ilaçlar, yeni
-              tanılar, geçirilen ameliyatlar ve yeni tetkik sonuçları gibi bilgileri
-              kaydettikten sonra analiz ve değerlendirme adımlarına devam edin.
+              Değişen klinik bilgileri ve yeni tetkik sonuçlarını ilgili alanlarda
+              güncelledikten sonra analiz ve değerlendirme adımlarına devam edin.
             </p>
           </article>
-        </div>
-      </section>
-
-      <section>
-        <h2 className="text-xl font-semibold text-slate-950">İşleme başlayın</h2>
-        <p className="mt-2 text-sm text-slate-500">
-          Devam etmek istediğiniz bölümü seçin.
-        </p>
-
-        <div className="mt-4 grid gap-4 md:grid-cols-3">
-          {workflowCards.map((card) => (
-            <Link
-              key={card.to}
-              to={card.to}
-              className={`rounded-xl border p-5 transition ${card.className}`}
-            >
-              <span className="text-2xl" aria-hidden="true">
-                {card.icon}
-              </span>
-              <h3 className="mt-4 text-lg font-semibold">{card.title}</h3>
-              <p className="mt-2 text-sm leading-6 opacity-80">
-                {card.description}
-              </p>
-              <p className="mt-4 text-sm font-semibold">Bölümü aç →</p>
-            </Link>
-          ))}
         </div>
       </section>
     </div>
