@@ -14,7 +14,6 @@ export type PatientRecord = {
   date_of_birth: string | null;
   is_pregnant: boolean | null;
   metadata_json: {
-    full_name?: string | null;
     age?: number | null;
     height_cm?: number | null;
     weight_kg?: number | null;
@@ -36,7 +35,6 @@ function headers(): HeadersInit {
 function payloadFromIntake(intake: ClinicalIntakeInput) {
   const patient = intake.patient_information;
   return {
-    full_name: patient.full_name?.trim() ?? '',
     age: patient.age,
     sex: patient.sex ?? 'unknown',
     height_cm: patient.height_cm,
