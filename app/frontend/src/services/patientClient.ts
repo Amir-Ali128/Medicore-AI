@@ -14,6 +14,9 @@ export type PatientRecord = {
   date_of_birth: string | null;
   is_pregnant: boolean | null;
   metadata_json: {
+    // Kept only for backward-compatible typing of older records/UI code.
+    // New patient records no longer send or store a full name.
+    full_name?: string | null;
     age?: number | null;
     height_cm?: number | null;
     weight_kg?: number | null;
