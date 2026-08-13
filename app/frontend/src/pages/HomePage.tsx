@@ -12,6 +12,17 @@ export default function HomePage() {
           İşleme başlamak için soldaki ilgili bölüme tıklayın.
         </p>
       </header>
+
+      <section className="rounded-xl border border-amber-200 bg-amber-50 p-5">
+        <h2 className="text-base font-semibold text-amber-950">Önemli Uyarılar</h2>
+        <ul className="mt-3 list-disc space-y-2 pl-5 text-sm leading-7 text-amber-900">
+          <li>MediCore AI bir klinik karar destek sistemidir; kesin tanı veya tedavi kararı vermez.</li>
+          <li>Sistem çıktıları hatalı veya eksik olabilir ve hekim değerlendirmesinin yerine geçmez.</li>
+          <li>Doktorunuza danışmadan ilaç başlamayın, bırakmayın veya doz değiştirmeyin.</li>
+          <li>Yalnızca sistem çıktısına dayanarak tetkik veya tıbbi işlem kararı almayın.</li>
+          <li>Acil veya ciddi bir sağlık sorunu şüphesinde doğrudan uygun sağlık kuruluşuna başvurun.</li>
+        </ul>
+      </section>
     </div>
   );
 }
