@@ -16,6 +16,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.domain.enums import Sex
+from app.domain.patient_protocol import generate_protocol_no
 from app.infrastructure.database.base import (
     Base,
     TimestampMixin,
@@ -26,6 +27,16 @@ from app.infrastructure.database.base import (
 
 class Patient(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "patients"
+
+    # Human-readable, non-PII patient reference. This is intentionally
+    # non-sequential and must never be treated as an authentication secret.
+    protocol_no: Mapped[str] = mapped_column(
+        String(32),
+        unique=True,
+        index=True,
+        nullable=False,
+        default=generate_protocol_no,
+    )
 
     # Opaque reference to the patient in the source/calling system (no PII).
     external_ref: Mapped[str | None] = mapped_column(
@@ -47,4 +58,7 @@ class Patient(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
     def __repr__(self) -> str:  # pragma: no cover - debug aid
-        return f"<Patient id={self.id!s} sex={self.sex.value}>"
+        return (
+            f"<Patient id={self.id!s} protocol_no={self.protocol_no!r} "
+            f"sex={self.sex.value}>"
+        )
