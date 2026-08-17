@@ -4,6 +4,7 @@ import type { ClinicalIntakeInput } from '../services/labAnalysisClient';
 import {
   ACTIVE_CLINICAL_INTAKE_KEY,
   ACTIVE_PATIENT_ID_KEY,
+  ACTIVE_PATIENT_PROTOCOL_KEY,
   savePatientRecord,
 } from '../services/patientClient';
 
@@ -63,6 +64,7 @@ export default function PatientPersistenceBridge() {
 
     const clearHandler = () => {
       localStorage.removeItem(ACTIVE_PATIENT_ID_KEY);
+      localStorage.removeItem(ACTIVE_PATIENT_PROTOCOL_KEY);
       lastSaved.current = '';
     };
     window.addEventListener('medicore:new-patient', clearHandler);
