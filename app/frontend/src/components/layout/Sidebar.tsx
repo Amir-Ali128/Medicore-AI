@@ -10,6 +10,7 @@ type NavItem = {
 const topItems: NavItem[] = [
   { label: '🏠 Ana Sayfa', to: '/' },
   { label: '👤 Hasta Özeti', to: '/patients/demo' },
+  { label: '✉️ Gönder', to: '/send' },
 ];
 
 const coreItems: NavItem[] = [
@@ -18,7 +19,6 @@ const coreItems: NavItem[] = [
   { label: '🧠 Yapay Zekâ Klinik Değerlendirme', to: '/clinical-hypotheses', status: 'Aktif', tone: 'active' },
   { label: '📈 Trend Analizi', to: '/timeline', status: 'Test', tone: 'beta' },
   { label: '📄 Raporlar ve Arşiv', to: '/patient-history', status: 'Aktif', tone: 'active' },
-  { label: '✉️ Gönder', to: '/send', status: 'Aktif', tone: 'active' },
 ];
 
 const clinicalItems: NavItem[] = [
