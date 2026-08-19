@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 from sqlalchemy import Boolean, String, false, true
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -14,12 +16,17 @@ from app.infrastructure.database.base import (
 )
 
 
+def _internal_nickname() -> str:
+    """Fallback identity for internal/demo actors that are never used to log in."""
+    return f"system-{uuid.uuid4().hex[:12]}"
+
+
 class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "users"
 
     # Primary login identity. New individual accounts use only nickname + password.
     nickname: Mapped[str] = mapped_column(
-        String(64), unique=True, index=True, nullable=False
+        String(64), unique=True, index=True, nullable=False, default=_internal_nickname
     )
 
     # Legacy / optional fields retained for existing institutional accounts and
