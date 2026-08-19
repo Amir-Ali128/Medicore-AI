@@ -50,10 +50,11 @@ function reportSummary(report: RadiologyReport) {
   }
   if (report.impression?.trim()) return report.impression.trim();
 
-  const abnormal = (Array.isArray(report.findings) ? report.findings : [])
+  const abnormal = report.findings
     .filter((finding) => finding.is_critical || finding.classification === 'abnormal')
     .map((finding) => finding.text.trim())
     .filter(Boolean);
+
   if (abnormal.length > 0) return [...new Set(abnormal)].slice(0, 6).join(' ');
 
   const conclusion = report.original_text.match(
@@ -85,6 +86,7 @@ export default function RadiologyEvaluationPage() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [deletingReportId, setDeletingReportId] = useState<string | null>(null);
+  const [deletingAll, setDeletingAll] = useState(false);
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
 
@@ -95,6 +97,7 @@ export default function RadiologyEvaluationPage() {
 
   useEffect(() => {
     let cancelled = false;
+
     async function hydrate() {
       try {
         setLoading(true);
@@ -113,6 +116,7 @@ export default function RadiologyEvaluationPage() {
         if (!cancelled) setLoading(false);
       }
     }
+
     void hydrate();
     return () => {
       cancelled = true;
@@ -146,9 +150,7 @@ export default function RadiologyEvaluationPage() {
       await loadReports();
       setReportText('');
       setFile(null);
-      setStatus(
-        'Radyoloji raporu ayrı olarak değerlendirildi ve hasta kaydına kalıcı biçimde eklendi.',
-      );
+      setStatus('Radyoloji raporu değerlendirildi ve hasta kaydına eklendi.');
     } catch (submitError) {
       setError(
         submitError instanceof Error
@@ -184,6 +186,42 @@ export default function RadiologyEvaluationPage() {
     }
   }
 
+  async function removeAllReports() {
+    const approved = window.confirm(
+      'Bu hastaya ait TÜM kayıtlı radyoloji raporlarını kalıcı olarak silmek istediğine emin misin? Bu işlem geri alınamaz.',
+    );
+    if (!approved) return;
+
+    try {
+      setDeletingAll(true);
+      setError('');
+      setStatus('');
+
+      let deletedCount = 0;
+      while (true) {
+        const stored = await listPatientRadiologyReports();
+        if (stored.length === 0) break;
+
+        for (const report of stored) {
+          await deleteRadiologyReport(report.id);
+          deletedCount += 1;
+        }
+      }
+
+      setReports([]);
+      setStatus(`${deletedCount} radyoloji kaydı kalıcı olarak silindi.`);
+    } catch (deleteError) {
+      await loadReports().catch(() => undefined);
+      setError(
+        deleteError instanceof Error
+          ? deleteError.message
+          : 'Radyoloji kayıtlarının tamamı silinemedi.',
+      );
+    } finally {
+      setDeletingAll(false);
+    }
+  }
+
   const latestReport = reports[0] ?? null;
   const abnormalFindings = useMemo(
     () =>
@@ -203,9 +241,8 @@ export default function RadiologyEvaluationPage() {
           Radyoloji raporu değerlendirmesi
         </h1>
         <p className="mt-3 max-w-4xl text-sm leading-6 text-slate-600">
-          Radyoloji raporu bu ekranda kendi bulguları, ölçümleri ve sonuç bölümü üzerinden
-          değerlendirilir ve saklanır. Klinik ve kan verileriyle birleşik değerlendirme ayrı
-          ekranda yapılır.
+          Radyoloji raporu kendi bulguları, ölçümleri ve sonuç bölümü üzerinden değerlendirilir
+          ve saklanır. Klinik ve kan verileriyle birleşik değerlendirme ayrı ekranda yapılır.
         </p>
       </header>
 
@@ -268,7 +305,7 @@ export default function RadiologyEvaluationPage() {
 
           <button
             type="submit"
-            disabled={busy}
+            disabled={busy || deletingAll}
             className="mt-5 rounded-lg bg-violet-700 px-5 py-3 text-sm font-semibold text-white disabled:opacity-60"
           >
             {busy ? 'Rapor değerlendiriliyor ve kaydediliyor…' : 'Raporu değerlendir ve kaydet'}
@@ -285,14 +322,24 @@ export default function RadiologyEvaluationPage() {
           title="En güncel radyoloji değerlendirmesi"
           description={`${latestReport.modality} · ${latestReport.body_part}`}
           action={
-            <button
-              type="button"
-              onClick={() => void removeReport(latestReport)}
-              disabled={deletingReportId === latestReport.id}
-              className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {deletingReportId === latestReport.id ? 'Siliniyor…' : 'Raporu sil'}
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => void removeReport(latestReport)}
+                disabled={deletingReportId === latestReport.id || deletingAll}
+                className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:opacity-60"
+              >
+                {deletingReportId === latestReport.id ? 'Siliniyor…' : 'Raporu sil'}
+              </button>
+              <button
+                type="button"
+                onClick={() => void removeAllReports()}
+                disabled={deletingAll}
+                className="rounded-lg bg-red-700 px-3 py-2 text-xs font-semibold text-white hover:bg-red-800 disabled:opacity-60"
+              >
+                {deletingAll ? 'Tümü siliniyor…' : 'Toplu sil'}
+              </button>
+            </div>
           }
         >
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -358,6 +405,16 @@ export default function RadiologyEvaluationPage() {
         <SectionCard
           title="Radyoloji raporu geçmişi"
           description="Aynı hastaya ait benzersiz raporlar kalıcı kayıttan yüklenir."
+          action={
+            <button
+              type="button"
+              onClick={() => void removeAllReports()}
+              disabled={deletingAll}
+              className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:opacity-60"
+            >
+              {deletingAll ? 'Tümü siliniyor…' : 'Tüm radyoloji geçmişini sil'}
+            </button>
+          }
         >
           <div className="grid gap-4 lg:grid-cols-2">
             {reports.slice(1, 9).map((report) => (
@@ -374,8 +431,8 @@ export default function RadiologyEvaluationPage() {
                   <button
                     type="button"
                     onClick={() => void removeReport(report)}
-                    disabled={deletingReportId === report.id}
-                    className="shrink-0 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+                    disabled={deletingReportId === report.id || deletingAll}
+                    className="shrink-0 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:opacity-60"
                   >
                     {deletingReportId === report.id ? 'Siliniyor…' : 'Sil'}
                   </button>
