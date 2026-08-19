@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   login,
   register,
-  type UserRole,
+  type AccountType,
 } from '../services/authClient';
 
 type AuthMode = 'login' | 'register';
@@ -12,16 +12,25 @@ type AuthMode = 'login' | 'register';
 export default function LoginPage() {
   const navigate = useNavigate();
 
+  const [accountType, setAccountType] = useState<AccountType>('individual');
   const [mode, setMode] = useState<AuthMode>('login');
-  const [fullName, setFullName] = useState('Demo Doctor');
-  const [email, setEmail] = useState('doctor@medicore.ai');
-  const [password, setPassword] = useState('demo123');
+  const [nickname, setNickname] = useState('');
+  const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [role, setRole] = useState<UserRole>('doctor');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
 
-  const isRegister = mode === 'register';
+  const isIndividual = accountType === 'individual';
+  const isRegister = isIndividual && mode === 'register';
+
+  function changeAccountType(nextType: AccountType) {
+    setAccountType(nextType);
+    setMode('login');
+    setNickname('');
+    setPassword('');
+    setConfirmPassword('');
+    setError('');
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -35,17 +44,13 @@ export default function LoginPage() {
           throw new Error('Şifreler aynı değil.');
         }
 
-        await register({
-          full_name: fullName,
-          email,
-          password,
-          role,
-        });
-      } else {
-        await login(email, password);
+        const user = await register({ nickname, password });
+        navigate(user.role === 'patient' ? '/patients/demo' : '/analysis/mock');
+        return;
       }
 
-      navigate('/analysis/mock');
+      const user = await login(nickname, password, accountType);
+      navigate(user.role === 'patient' ? '/patients/demo' : '/analysis/mock');
     } catch (submitError) {
       setError(
         submitError instanceof Error
@@ -58,12 +63,11 @@ export default function LoginPage() {
   }
 
   function fillDemoDoctor() {
+    setAccountType('institutional');
     setMode('login');
-    setFullName('Demo Doctor');
-    setEmail('doctor@medicore.ai');
+    setNickname('doctor');
     setPassword('demo123');
     setConfirmPassword('');
-    setRole('doctor');
     setError('');
   }
 
@@ -81,106 +85,131 @@ export default function LoginPage() {
             </p>
 
             <h1 className="mt-3 text-3xl font-semibold leading-tight">
-              Physician-reviewed lab intelligence
+              Sağlık verisine daha sade ve mahremiyet odaklı erişim
             </h1>
 
             <p className="mt-4 text-sm leading-6 text-slate-300">
-              PDF laboratuvar sonuçlarını yapılandırır, anormal değerleri işaretler
-              ve doktor incelemesi için güvenli klinik özet üretir.
+              Bireysel hesaplarda ad-soyad ve e-posta istemeden yalnızca rumuz ve
+              şifre ile hesap oluşturulur. Kurumsal hesaplar kurum tarafından
+              tanımlanır.
             </p>
 
             <div className="mt-8 rounded-2xl border border-blue-400/30 bg-blue-500/10 p-4">
               <p className="text-sm leading-6 text-blue-100">
-                Klinik çıktılar doktor incelemesi için yapılandırılmıştır; tanı veya
-                tedavi önerisi değildir.
+                Doktor ve laboratuvar hesapları herkese açık kayıt ekranından
+                oluşturulmaz. Yetkiler kurum tarafından belirlenir.
               </p>
             </div>
           </section>
 
           <section className="p-8 sm:p-10">
-            <div className="flex rounded-2xl border border-slate-200 bg-slate-50 p-1">
+            <div className="grid grid-cols-2 rounded-2xl border border-slate-200 bg-slate-50 p-1">
               <button
                 type="button"
-                onClick={() => {
-                  setMode('login');
-                  setError('');
-                }}
-                className={`flex-1 rounded-xl px-4 py-2 text-sm font-semibold transition ${
-                  !isRegister
+                onClick={() => changeAccountType('individual')}
+                className={`rounded-xl px-4 py-3 text-sm font-semibold transition ${
+                  isIndividual
                     ? 'bg-white text-slate-950 shadow-sm'
                     : 'text-slate-500 hover:text-slate-800'
                 }`}
               >
-                Giriş yap
+                Bireysel
               </button>
 
               <button
                 type="button"
-                onClick={() => {
-                  setMode('register');
-                  setError('');
-
-                  if (email === 'doctor@medicore.ai') {
-                    setEmail('');
-                    setPassword('');
-                  }
-                }}
-                className={`flex-1 rounded-xl px-4 py-2 text-sm font-semibold transition ${
-                  isRegister
+                onClick={() => changeAccountType('institutional')}
+                className={`rounded-xl px-4 py-3 text-sm font-semibold transition ${
+                  !isIndividual
                     ? 'bg-white text-slate-950 shadow-sm'
                     : 'text-slate-500 hover:text-slate-800'
                 }`}
               >
-                Hesap oluştur
+                Kurumsal
               </button>
             </div>
 
+            {isIndividual ? (
+              <div className="mt-4 flex rounded-2xl border border-slate-200 bg-slate-50 p-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode('login');
+                    setError('');
+                  }}
+                  className={`flex-1 rounded-xl px-4 py-2 text-sm font-semibold transition ${
+                    mode === 'login'
+                      ? 'bg-white text-slate-950 shadow-sm'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  Giriş yap
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode('register');
+                    setPassword('');
+                    setConfirmPassword('');
+                    setError('');
+                  }}
+                  className={`flex-1 rounded-xl px-4 py-2 text-sm font-semibold transition ${
+                    mode === 'register'
+                      ? 'bg-white text-slate-950 shadow-sm'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  Hesap oluştur
+                </button>
+              </div>
+            ) : null}
+
             <div className="mt-8">
               <p className="text-sm font-semibold uppercase text-blue-700">
-                {isRegister ? 'Yeni kullanıcı' : 'Demo login'}
+                {isIndividual ? 'Bireysel kullanıcı' : 'Kurumsal kullanıcı'}
               </p>
 
               <h2 className="mt-2 text-2xl font-semibold text-slate-950">
-                {isRegister ? 'Hesap oluştur' : 'Hesabına giriş yap'}
+                {isRegister
+                  ? 'Bireysel hesap oluştur'
+                  : isIndividual
+                    ? 'Bireysel giriş'
+                    : 'Kurumsal giriş'}
               </h2>
 
               <p className="mt-2 text-sm leading-6 text-slate-500">
                 {isRegister
-                  ? 'Demo/pilot kullanıcıları için hızlı kayıt. Production’da doktor kaydı davet/onay sistemiyle sınırlandırılmalı.'
-                  : 'Demo doktor hesabı ile giriş yapabilir veya yeni hesap oluşturabilirsin.'}
+                  ? 'Sadece bir rumuz ve şifre belirle. Gerçek ad veya e-posta istenmez.'
+                  : isIndividual
+                    ? 'Rumuzun ve şifren ile hesabına giriş yap.'
+                    : 'Doktor ve laboratuvar hesapları kurum tarafından tanımlanır. Şimdilik kurumsal giriş de rumuz ve şifre ile yapılır.'}
               </p>
             </div>
 
             <form onSubmit={handleSubmit} className="mt-8 space-y-5">
-              {isRegister && (
-                <label className="block">
-                  <span className="text-sm font-medium text-slate-700">
-                    Ad soyad
-                  </span>
-                  <input
-                    type="text"
-                    value={fullName}
-                    onChange={(event) => setFullName(event.target.value)}
-                    required
-                    minLength={2}
-                    className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-                    placeholder="Dr. Ayşe Yılmaz"
-                  />
-                </label>
-              )}
-
               <label className="block">
                 <span className="text-sm font-medium text-slate-700">
-                  E-posta
+                  Rumuz (Nickname)
                 </span>
                 <input
-                  type="email"
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
+                  type="text"
+                  value={nickname}
+                  onChange={(event) => setNickname(event.target.value)}
                   required
+                  minLength={3}
+                  maxLength={32}
+                  autoCapitalize="none"
+                  autoComplete="username"
+                  spellCheck={false}
                   className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-                  placeholder="doctor@medicore.ai"
+                  placeholder={isIndividual ? 'Örn. nightfox27' : 'Örn. dr.ayse'}
                 />
+                {isRegister ? (
+                  <span className="mt-2 block text-xs leading-5 text-slate-500">
+                    3-32 karakter; harf, rakam, nokta, alt çizgi ve tire kullanılabilir.
+                  </span>
+                ) : null}
               </label>
 
               <label className="block">
@@ -192,55 +221,36 @@ export default function LoginPage() {
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
                   required
-                  minLength={6}
+                  minLength={isRegister ? 6 : 1}
+                  autoComplete={isRegister ? 'new-password' : 'current-password'}
                   className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-                  placeholder="En az 6 karakter"
+                  placeholder={isRegister ? 'En az 6 karakter' : 'Şifren'}
                 />
               </label>
 
-              {isRegister && (
-                <>
-                  <label className="block">
-                    <span className="text-sm font-medium text-slate-700">
-                      Şifre tekrar
-                    </span>
-                    <input
-                      type="password"
-                      value={confirmPassword}
-                      onChange={(event) =>
-                        setConfirmPassword(event.target.value)
-                      }
-                      required
-                      minLength={6}
-                      className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-                      placeholder="Şifreyi tekrar yaz"
-                    />
-                  </label>
+              {isRegister ? (
+                <label className="block">
+                  <span className="text-sm font-medium text-slate-700">
+                    Şifre tekrar
+                  </span>
+                  <input
+                    type="password"
+                    value={confirmPassword}
+                    onChange={(event) => setConfirmPassword(event.target.value)}
+                    required
+                    minLength={6}
+                    autoComplete="new-password"
+                    className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                    placeholder="Şifreyi tekrar yaz"
+                  />
+                </label>
+              ) : null}
 
-                  <label className="block">
-                    <span className="text-sm font-medium text-slate-700">
-                      Rol
-                    </span>
-                    <select
-                      value={role}
-                      onChange={(event) =>
-                        setRole(event.target.value as UserRole)
-                      }
-                      className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-                    >
-                      <option value="doctor">Doktor / klinisyen</option>
-                      <option value="lab_staff">Laboratuvar görevlisi</option>
-                      <option value="patient">Hasta</option>
-                    </select>
-                  </label>
-                </>
-              )}
-
-              {error && (
+              {error ? (
                 <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm leading-6 text-red-700">
                   {error}
                 </div>
-              )}
+              ) : null}
 
               <button
                 type="submit"
@@ -256,7 +266,7 @@ export default function LoginPage() {
                     : 'Giriş yap'}
               </button>
 
-              {!isRegister && (
+              {!isIndividual ? (
                 <button
                   type="button"
                   onClick={fillDemoDoctor}
@@ -264,7 +274,7 @@ export default function LoginPage() {
                 >
                   Demo doktor bilgilerini doldur
                 </button>
-              )}
+              ) : null}
             </form>
           </section>
         </div>
