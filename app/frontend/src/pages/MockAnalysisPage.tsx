@@ -10,6 +10,16 @@ import {
 
 type ResultTone = 'low' | 'high' | 'review';
 
+type LabUploadResult = {
+  fileName: string;
+  result?: LabAnalysisResponse;
+  error?: string;
+};
+
+function fileKey(file: File) {
+  return `${file.name}:${file.size}:${file.lastModified}`;
+}
+
 function statusLabel(status: string) {
   return status.replace(/_/g, ' ').toUpperCase();
 }
@@ -87,10 +97,12 @@ function ResultGroup({
 }
 
 export default function MockAnalysisPage() {
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [uploadResults, setUploadResults] = useState<LabUploadResult[]>([]);
   const [backendResult, setBackendResult] = useState<LabAnalysisResponse | null>(null);
   const [backendError, setBackendError] = useState('');
   const [isUploading, setIsUploading] = useState(false);
+  const [progress, setProgress] = useState('');
 
   const groupedResults = useMemo(() => {
     const results = backendResult?.results ?? [];
@@ -101,21 +113,68 @@ export default function MockAnalysisPage() {
     };
   }, [backendResult]);
 
+  function addFiles(event: ChangeEvent<HTMLInputElement>) {
+    const incoming = Array.from(event.target.files ?? []).filter((file) =>
+      file.name.toLowerCase().endsWith('.pdf'),
+    );
+
+    setSelectedFiles((current) => {
+      const existing = new Set(current.map(fileKey));
+      return [...current, ...incoming.filter((file) => !existing.has(fileKey(file)))];
+    });
+    setUploadResults([]);
+    setBackendError('');
+    event.target.value = '';
+  }
+
+  function removeFile(file: File) {
+    setSelectedFiles((current) =>
+      current.filter((item) => fileKey(item) !== fileKey(file)),
+    );
+    setUploadResults([]);
+    setBackendError('');
+  }
+
   async function handleUpload() {
-    if (!selectedFile) {
-      setBackendError('Önce bir PDF dosyası seçmelisin.');
+    if (selectedFiles.length === 0) {
+      setBackendError('Önce en az bir PDF dosyası seçmelisin.');
       return;
     }
 
-    try {
-      setIsUploading(true);
-      setBackendError('');
-      const result = await uploadLabReportPdf(selectedFile, createEmptyClinicalIntake());
-      setBackendResult(result);
-    } catch (error) {
-      setBackendError(error instanceof Error ? error.message : 'Laboratuvar analizi başarısız oldu.');
-    } finally {
-      setIsUploading(false);
+    setIsUploading(true);
+    setBackendError('');
+    setUploadResults([]);
+
+    const nextResults: LabUploadResult[] = [];
+    const failedFiles: File[] = [];
+    let latestSuccessful: LabAnalysisResponse | null = null;
+
+    for (let index = 0; index < selectedFiles.length; index += 1) {
+      const file = selectedFiles[index];
+      setProgress(`${index + 1}/${selectedFiles.length} · ${file.name} analiz ediliyor`);
+
+      try {
+        const result = await uploadLabReportPdf(file, createEmptyClinicalIntake());
+        latestSuccessful = result;
+        nextResults.push({ fileName: file.name, result });
+      } catch (error) {
+        failedFiles.push(file);
+        nextResults.push({
+          fileName: file.name,
+          error: error instanceof Error ? error.message : 'Laboratuvar analizi başarısız oldu.',
+        });
+      }
+
+      setUploadResults([...nextResults]);
+    }
+
+    setBackendResult(latestSuccessful);
+    setSelectedFiles(failedFiles);
+    setProgress('');
+    setIsUploading(false);
+
+    if (!latestSuccessful) {
+      setBackendError('Seçilen PDF dosyalarının hiçbiri analiz edilemedi.');
     }
   }
 
@@ -123,9 +182,9 @@ export default function MockAnalysisPage() {
     <div className="space-y-8">
       <header>
         <p className="text-sm font-semibold uppercase text-cyan-700">Laboratuvar</p>
-        <h2 className="mt-2 text-3xl font-semibold text-slate-950">Laboratuvar PDF&apos;si yükle ve analiz et</h2>
+        <h2 className="mt-2 text-3xl font-semibold text-slate-950">Laboratuvar PDF&apos;lerini yükle ve analiz et</h2>
         <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-500">
-          Laboratuvar raporunu PDF olarak yükleyin. Desteklenen değerler çıkarılır ve analiz edilir.
+          Bir veya birden fazla laboratuvar PDF&apos;si seçebilirsin. Dosyalar sırayla işlenir ve her başarılı rapor kaydedilir.
         </p>
       </header>
 
@@ -136,20 +195,89 @@ export default function MockAnalysisPage() {
             <input
               type="file"
               accept="application/pdf,.pdf"
-              onChange={(event: ChangeEvent<HTMLInputElement>) => setSelectedFile(event.target.files?.[0] ?? null)}
+              multiple
+              onChange={addFiles}
               className="block w-full text-sm text-slate-600"
             />
+
+            <p className="mt-3 text-xs leading-5 text-slate-500">
+              Aynı anda birden fazla PDF seçebilir veya tekrar dosya seçerek listeye yeni raporlar ekleyebilirsin.
+            </p>
+
+            {selectedFiles.length > 0 ? (
+              <div className="mt-4 space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-sm font-semibold text-slate-900">
+                    Seçilen PDF&apos;ler ({selectedFiles.length})
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedFiles([]);
+                      setUploadResults([]);
+                      setBackendError('');
+                    }}
+                    disabled={isUploading}
+                    className="text-xs font-semibold text-slate-500 hover:text-red-600 disabled:opacity-50"
+                  >
+                    Tümünü temizle
+                  </button>
+                </div>
+                {selectedFiles.map((file) => (
+                  <div
+                    key={fileKey(file)}
+                    className="flex items-center justify-between gap-3 rounded-lg border border-emerald-100 bg-white px-3 py-2"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-slate-900">{file.name}</p>
+                      <p className="text-xs text-slate-500">{(file.size / (1024 * 1024)).toFixed(2)} MB</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => removeFile(file)}
+                      disabled={isUploading}
+                      className="shrink-0 rounded-md px-2 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50"
+                    >
+                      Kaldır
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
             <button
               type="button"
               onClick={handleUpload}
-              disabled={isUploading}
+              disabled={isUploading || selectedFiles.length === 0}
               className="mt-4 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {isUploading ? 'Analiz ediliyor...' : 'PDF’yi Yükle ve Analiz Et'}
+              {isUploading
+                ? progress || 'PDF’ler analiz ediliyor...'
+                : `${selectedFiles.length || ''} PDF’yi Yükle ve Analiz Et`.trim()}
             </button>
           </div>
         </div>
       </section>
+
+      {uploadResults.length > 0 ? (
+        <div className="space-y-2">
+          {uploadResults.map((item) => (
+            <div
+              key={item.fileName}
+              className={`rounded-xl border p-4 text-sm ${
+                item.error
+                  ? 'border-red-200 bg-red-50 text-red-800'
+                  : 'border-emerald-200 bg-emerald-50 text-emerald-800'
+              }`}
+            >
+              <strong>{item.fileName}</strong>
+              <span className="ml-2">
+                {item.error ? `— ${item.error}` : `— başarıyla analiz edildi (${item.result?.counts.total ?? 0} sonuç)`}
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : null}
 
       {backendError ? (
         <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">{backendError}</div>
@@ -157,6 +285,9 @@ export default function MockAnalysisPage() {
 
       {backendResult ? (
         <section className="space-y-5">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+            Son başarıyla işlenen PDF&apos;nin analizi
+          </p>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <div className="rounded-xl border border-slate-200 bg-white p-4"><p className="text-sm text-slate-500">Toplam Sonuç</p><p className="mt-2 text-2xl font-semibold">{backendResult.counts.total}</p></div>
             <div className="rounded-xl border border-red-200 bg-white p-4"><p className="text-sm text-slate-500">Yüksek</p><p className="mt-2 text-2xl font-semibold">{groupedResults.high.length}</p></div>
