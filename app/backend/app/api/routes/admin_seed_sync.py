@@ -37,7 +37,7 @@ def seed_render_db(
         backend_root / "scripts" / "create_dev_tables.py",
         backend_root / "scripts" / "seed_reference_ranges.py",
         backend_root / "scripts" / "seed_demo_data.py",
-        backend_root / "scripts" / "set_demo_user_passwords.py",
+        backend_root / "scripts" / "set_demo_user_password.py",
     ]
 
     executed: list[str] = []
