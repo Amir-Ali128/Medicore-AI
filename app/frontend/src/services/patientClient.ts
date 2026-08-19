@@ -41,6 +41,11 @@ function normalizeProtocolNo(value: string) {
   return value.trim().toUpperCase();
 }
 
+function createInternalIndividualReference(): string {
+  const uuid = crypto.randomUUID().replace(/-/g, '').toUpperCase();
+  return `IND-${uuid.slice(0, 20)}`;
+}
+
 function payloadFromIntake(intake: ClinicalIntakeInput, protocolNo: string) {
   const patient = intake.patient_information;
   return {
@@ -85,13 +90,10 @@ export async function savePatientRecord(
   protocolNo?: string,
 ): Promise<PatientRecord> {
   const activeId = getActivePatientId();
+  const existingProtocolNo = getActivePatientProtocolNo();
   const resolvedProtocolNo = normalizeProtocolNo(
-    protocolNo ?? getActivePatientProtocolNo() ?? '',
+    protocolNo ?? existingProtocolNo ?? createInternalIndividualReference(),
   );
-
-  if (!resolvedProtocolNo) {
-    throw new Error('Protokol numarasını hasta girmelidir.');
-  }
 
   const response = await fetch(
     activeId ? `${API_BASE_URL}/patients/${activeId}` : `${API_BASE_URL}/patients`,
