@@ -42,6 +42,14 @@ export default function PatientPersistenceBridge() {
   useEffect(() => {
     const timer = window.setInterval(async () => {
       const intake = readIntake();
+      const activePatientId = localStorage.getItem(ACTIVE_PATIENT_ID_KEY);
+
+      // A new patient must first be explicitly saved with a protocol number
+      // entered by the patient. After that, background persistence may update it.
+      if (!activePatientId) {
+        lastSaved.current = '';
+        return;
+      }
 
       if (!hasPatientData(intake)) {
         lastSaved.current = '';

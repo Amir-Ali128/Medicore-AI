@@ -6,6 +6,7 @@ import uuid
 
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.api.dependencies import SessionDep
 from app.infrastructure.database.models.patient import Patient
@@ -24,12 +25,33 @@ def _metadata_from_payload(payload: PatientRecordUpsert) -> dict:
     }
 
 
+async def _ensure_protocol_available(
+    session: SessionDep,
+    protocol_no: str,
+    *,
+    exclude_patient_id: uuid.UUID | None = None,
+) -> None:
+    stmt = select(Patient.id).where(Patient.protocol_no == protocol_no)
+    if exclude_patient_id is not None:
+        stmt = stmt.where(Patient.id != exclude_patient_id)
+
+    existing_id = (await session.execute(stmt)).scalar_one_or_none()
+    if existing_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Bu protokol numarası başka bir hasta kaydında kullanılıyor.",
+        )
+
+
 @router.post("", response_model=PatientRecordResponse, status_code=status.HTTP_201_CREATED)
 async def create_patient_record(
     payload: PatientRecordUpsert,
     session: SessionDep,
 ) -> Patient:
+    await _ensure_protocol_available(session, payload.protocol_no)
+
     patient = Patient(
+        protocol_no=payload.protocol_no,
         external_ref=f"medicore-{uuid.uuid4()}",
         sex=payload.sex,
         date_of_birth=None,
@@ -37,7 +59,16 @@ async def create_patient_record(
         metadata_json=_metadata_from_payload(payload),
     )
     session.add(patient)
-    await session.commit()
+
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Bu protokol numarası başka bir hasta kaydında kullanılıyor.",
+        ) from exc
+
     await session.refresh(patient)
     return patient
 
@@ -67,12 +98,28 @@ async def update_patient_record(
     if patient is None:
         raise HTTPException(status_code=404, detail="Hasta kaydı bulunamadı.")
 
+    await _ensure_protocol_available(
+        session,
+        payload.protocol_no,
+        exclude_patient_id=patient_id,
+    )
+
+    patient.protocol_no = payload.protocol_no
     patient.sex = payload.sex
     patient.metadata_json = {
         **dict(patient.metadata_json or {}),
         **_metadata_from_payload(payload),
     }
     patient.metadata_json.pop("full_name", None)
-    await session.commit()
+
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Bu protokol numarası başka bir hasta kaydında kullanılıyor.",
+        ) from exc
+
     await session.refresh(patient)
     return patient

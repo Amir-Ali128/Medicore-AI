@@ -37,9 +37,14 @@ function headers(): HeadersInit {
   };
 }
 
-function payloadFromIntake(intake: ClinicalIntakeInput) {
+function normalizeProtocolNo(value: string) {
+  return value.trim().toUpperCase();
+}
+
+function payloadFromIntake(intake: ClinicalIntakeInput, protocolNo: string) {
   const patient = intake.patient_information;
   return {
+    protocol_no: protocolNo,
     age: patient.age,
     sex: patient.sex ?? 'unknown',
     height_cm: patient.height_cm,
@@ -77,14 +82,23 @@ function rememberPatientRecord(record: PatientRecord) {
 
 export async function savePatientRecord(
   intake: ClinicalIntakeInput,
+  protocolNo?: string,
 ): Promise<PatientRecord> {
   const activeId = getActivePatientId();
+  const resolvedProtocolNo = normalizeProtocolNo(
+    protocolNo ?? getActivePatientProtocolNo() ?? '',
+  );
+
+  if (!resolvedProtocolNo) {
+    throw new Error('Protokol numarasını hasta girmelidir.');
+  }
+
   const response = await fetch(
     activeId ? `${API_BASE_URL}/patients/${activeId}` : `${API_BASE_URL}/patients`,
     {
       method: activeId ? 'PUT' : 'POST',
       headers: headers(),
-      body: JSON.stringify(payloadFromIntake(intake)),
+      body: JSON.stringify(payloadFromIntake(intake, resolvedProtocolNo)),
     },
   );
 

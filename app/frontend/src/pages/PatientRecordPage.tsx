@@ -29,8 +29,8 @@ export default function PatientRecordPage() {
   const [clinicalIntake, setClinicalIntake] = useState<ClinicalIntakeInput>(
     readStoredClinicalIntake,
   );
-  const [protocolNo, setProtocolNo] = useState<string | null>(
-    getActivePatientProtocolNo,
+  const [protocolNo, setProtocolNo] = useState(
+    () => getActivePatientProtocolNo() ?? '',
   );
   const [savedMessage, setSavedMessage] = useState('');
   const [saveError, setSaveError] = useState('');
@@ -78,10 +78,20 @@ export default function PatientRecordPage() {
       JSON.stringify(clinicalIntake),
     );
     setSaveError('');
+
+    const normalizedProtocolNo = protocolNo.trim().toUpperCase();
+    if (!normalizedProtocolNo) {
+      setSaveError('Protokol numarasını hasta girmelidir.');
+      return;
+    }
+
     setIsSaving(true);
 
     try {
-      const record = await savePatientRecord(clinicalIntake);
+      const record = await savePatientRecord(
+        clinicalIntake,
+        normalizedProtocolNo,
+      );
       setProtocolNo(record.protocol_no);
       setSavedMessage(`Hasta kaydedildi. Protokol No: ${record.protocol_no}`);
       window.setTimeout(() => setSavedMessage(''), 3000);
@@ -139,22 +149,28 @@ export default function PatientRecordPage() {
 
       <SectionCard
         title="Protokol numarası"
-        description="MediCore içindeki kalıcı hasta referansıdır. Şifre değildir ve tek başına sonuç erişimi sağlamaz."
+        description="Protokol numarasını hasta kendisi girer. MediCore bu numarayı otomatik üretmez; yalnızca benzersiz olup olmadığını kontrol eder."
       >
-        {protocolNo ? (
-          <div className="rounded-xl border border-blue-200 bg-blue-50 px-5 py-4">
-            <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">
-              Hasta protokol no
-            </p>
-            <p className="mt-2 font-mono text-2xl font-bold tracking-wide text-slate-950">
-              {protocolNo}
-            </p>
-          </div>
-        ) : (
-          <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-5 py-4 text-sm text-slate-600">
-            Hasta ilk kez sunucuya kaydedildiğinde protokol numarası otomatik oluşturulur.
-          </div>
-        )}
+        <div className="space-y-3">
+          <label className="block text-sm font-semibold text-slate-800" htmlFor="patient-protocol-no">
+            Hasta protokol numarası
+          </label>
+          <input
+            id="patient-protocol-no"
+            type="text"
+            value={protocolNo}
+            onChange={(event) => setProtocolNo(event.target.value.toUpperCase())}
+            maxLength={32}
+            autoCapitalize="characters"
+            autoComplete="off"
+            spellCheck={false}
+            placeholder="Örn. 2026/001245"
+            className="w-full rounded-lg border border-slate-300 bg-white px-4 py-3 font-mono text-lg font-semibold tracking-wide text-slate-950 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+          />
+          <p className="text-sm leading-6 text-slate-500">
+            Harf, rakam, nokta, tire, alt çizgi ve / kullanılabilir. Aynı protokol numarası iki farklı hastaya verilemez.
+          </p>
+        </div>
       </SectionCard>
 
       <SectionCard
