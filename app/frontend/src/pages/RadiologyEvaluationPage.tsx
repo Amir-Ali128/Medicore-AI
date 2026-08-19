@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 
 import SectionCard from '../components/ui/SectionCard';
@@ -12,6 +12,15 @@ import {
 
 const INPUT_CLASS =
   'mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950';
+
+type PdfUploadResult = {
+  fileName: string;
+  error?: string;
+};
+
+function fileKey(file: File) {
+  return `${file.name}:${file.size}:${file.lastModified}`;
+}
 
 function fold(value: string | null | undefined) {
   return (value ?? '')
@@ -81,7 +90,9 @@ function urgencyClass(report: RadiologyReport) {
 export default function RadiologyEvaluationPage() {
   const [mode, setMode] = useState<'manual' | 'pdf'>('manual');
   const [reportText, setReportText] = useState('');
-  const [file, setFile] = useState<File | null>(null);
+  const [pdfFiles, setPdfFiles] = useState<File[]>([]);
+  const [pdfUploadResults, setPdfUploadResults] = useState<PdfUploadResult[]>([]);
+  const [uploadProgress, setUploadProgress] = useState('');
   const [reports, setReports] = useState<RadiologyReport[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -123,12 +134,36 @@ export default function RadiologyEvaluationPage() {
     };
   }, []);
 
+  function addPdfFiles(event: ChangeEvent<HTMLInputElement>) {
+    const incoming = Array.from(event.target.files ?? []).filter((file) =>
+      file.name.toLowerCase().endsWith('.pdf'),
+    );
+
+    setPdfFiles((current) => {
+      const existing = new Set(current.map(fileKey));
+      return [...current, ...incoming.filter((file) => !existing.has(fileKey(file)))];
+    });
+    setPdfUploadResults([]);
+    setError('');
+    setStatus('');
+    event.target.value = '';
+  }
+
+  function removePdfFile(file: File) {
+    setPdfFiles((current) =>
+      current.filter((item) => fileKey(item) !== fileKey(file)),
+    );
+    setPdfUploadResults([]);
+    setError('');
+  }
+
   async function submit(event: FormEvent) {
     event.preventDefault();
     try {
       setBusy(true);
       setError('');
       setStatus('');
+      setPdfUploadResults([]);
 
       if (mode === 'manual') {
         await createManualRadiologyReport({
@@ -137,20 +172,55 @@ export default function RadiologyEvaluationPage() {
           bodyPart: null,
           reportText,
         });
-      } else if (file) {
-        await uploadRadiologyReportPdf(file, {
-          reportDate: new Date().toISOString().slice(0, 10),
-          modality: null,
-          bodyPart: null,
-        });
+        setReportText('');
+        setStatus('Radyoloji raporu değerlendirildi ve hasta kaydına eklendi.');
       } else {
-        throw new Error('Önce bir radyoloji PDF dosyası seçmelisin.');
+        if (pdfFiles.length === 0) {
+          throw new Error('Önce en az bir radyoloji PDF dosyası seçmelisin.');
+        }
+
+        const results: PdfUploadResult[] = [];
+        const failedFiles: File[] = [];
+        let successCount = 0;
+
+        for (let index = 0; index < pdfFiles.length; index += 1) {
+          const file = pdfFiles[index];
+          setUploadProgress(`${index + 1}/${pdfFiles.length} · ${file.name} işleniyor`);
+
+          try {
+            await uploadRadiologyReportPdf(file, {
+              reportDate: new Date().toISOString().slice(0, 10),
+              modality: null,
+              bodyPart: null,
+            });
+            successCount += 1;
+            results.push({ fileName: file.name });
+          } catch (uploadError) {
+            failedFiles.push(file);
+            results.push({
+              fileName: file.name,
+              error:
+                uploadError instanceof Error
+                  ? uploadError.message
+                  : 'Radyoloji PDF’i işlenemedi.',
+            });
+          }
+
+          setPdfUploadResults([...results]);
+        }
+
+        setPdfFiles(failedFiles);
+        setUploadProgress('');
+
+        if (successCount > 0) {
+          setStatus(`${successCount} radyoloji PDF’i değerlendirildi ve hasta kaydına eklendi.`);
+        }
+        if (failedFiles.length > 0) {
+          setError(`${failedFiles.length} PDF işlenemedi. Başarısız dosyalar listede bırakıldı; tekrar deneyebilirsin.`);
+        }
       }
 
       await loadReports();
-      setReportText('');
-      setFile(null);
-      setStatus('Radyoloji raporu değerlendirildi ve hasta kaydına eklendi.');
     } catch (submitError) {
       setError(
         submitError instanceof Error
@@ -158,6 +228,7 @@ export default function RadiologyEvaluationPage() {
           : 'Radyoloji raporu değerlendirilemedi.',
       );
     } finally {
+      setUploadProgress('');
       setBusy(false);
     }
   }
@@ -249,7 +320,7 @@ export default function RadiologyEvaluationPage() {
       <form onSubmit={submit}>
         <SectionCard
           title="Radyoloji raporu ekle"
-          description="Rapor metnini yapıştır veya metin tabanlı PDF yükle."
+          description="Rapor metnini yapıştır veya birden fazla metin tabanlı PDF yükle."
         >
           <div className="flex flex-wrap gap-2">
             <button
@@ -283,14 +354,77 @@ export default function RadiologyEvaluationPage() {
               placeholder="Radyoloji rapor metnini buraya yapıştır..."
             />
           ) : (
-            <input
-              required
-              type="file"
-              accept="application/pdf,.pdf"
-              onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-              className={`${INPUT_CLASS} mt-5`}
-            />
+            <div className="mt-5 space-y-3">
+              <input
+                type="file"
+                accept="application/pdf,.pdf"
+                multiple
+                onChange={addPdfFiles}
+                className={INPUT_CLASS}
+              />
+              <p className="text-xs leading-5 text-slate-500">
+                Aynı anda birden fazla radyoloji PDF&apos;si seçebilir veya tekrar dosya seçerek listeye yeni raporlar ekleyebilirsin.
+              </p>
+
+              {pdfFiles.length > 0 ? (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-semibold text-slate-900">Seçilen PDF&apos;ler ({pdfFiles.length})</p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPdfFiles([]);
+                        setPdfUploadResults([]);
+                      }}
+                      disabled={busy}
+                      className="text-xs font-semibold text-slate-500 hover:text-red-600 disabled:opacity-50"
+                    >
+                      Tümünü temizle
+                    </button>
+                  </div>
+                  <div className="max-h-56 space-y-2 overflow-y-auto pr-1">
+                    {pdfFiles.map((file) => (
+                      <div
+                        key={fileKey(file)}
+                        className="flex items-center justify-between gap-3 rounded-lg border border-violet-100 bg-violet-50/40 px-3 py-2"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium text-slate-900">{file.name}</p>
+                          <p className="text-xs text-slate-500">{(file.size / (1024 * 1024)).toFixed(2)} MB</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => removePdfFile(file)}
+                          disabled={busy}
+                          className="shrink-0 rounded-md px-2 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50"
+                        >
+                          Kaldır
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </div>
           )}
+
+          {pdfUploadResults.length > 0 ? (
+            <div className="mt-4 space-y-2">
+              {pdfUploadResults.map((item) => (
+                <div
+                  key={item.fileName}
+                  className={`rounded-lg border p-3 text-sm ${
+                    item.error
+                      ? 'border-red-200 bg-red-50 text-red-800'
+                      : 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                  }`}
+                >
+                  <strong>{item.fileName}</strong>
+                  <span className="ml-2">{item.error ? `— ${item.error}` : '— başarıyla kaydedildi'}</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
 
           {status ? (
             <p className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
@@ -305,10 +439,14 @@ export default function RadiologyEvaluationPage() {
 
           <button
             type="submit"
-            disabled={busy || deletingAll}
+            disabled={busy || deletingAll || (mode === 'pdf' && pdfFiles.length === 0)}
             className="mt-5 rounded-lg bg-violet-700 px-5 py-3 text-sm font-semibold text-white disabled:opacity-60"
           >
-            {busy ? 'Rapor değerlendiriliyor ve kaydediliyor…' : 'Raporu değerlendir ve kaydet'}
+            {busy
+              ? uploadProgress || 'Rapor değerlendiriliyor ve kaydediliyor…'
+              : mode === 'pdf'
+                ? `${pdfFiles.length || ''} PDF’yi değerlendir ve kaydet`.trim()
+                : 'Raporu değerlendir ve kaydet'}
           </button>
         </SectionCard>
       </form>
