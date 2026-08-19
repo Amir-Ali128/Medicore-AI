@@ -8,9 +8,7 @@ import SectionCard from '../components/ui/SectionCard';
 import type { ClinicalIntakeInput } from '../services/labAnalysisClient';
 import {
   ACTIVE_CLINICAL_INTAKE_KEY,
-  getActivePatientProtocolNo,
   savePatientRecord,
-  type PatientRecord,
 } from '../services/patientClient';
 
 export { ACTIVE_CLINICAL_INTAKE_KEY };
@@ -28,9 +26,6 @@ function readStoredClinicalIntake(): ClinicalIntakeInput {
 export default function PatientRecordPage() {
   const [clinicalIntake, setClinicalIntake] = useState<ClinicalIntakeInput>(
     readStoredClinicalIntake,
-  );
-  const [protocolNo, setProtocolNo] = useState(
-    () => getActivePatientProtocolNo() ?? '',
   );
   const [savedMessage, setSavedMessage] = useState('');
   const [saveError, setSaveError] = useState('');
@@ -58,42 +53,17 @@ export default function PatientRecordPage() {
     }
   }, [clinicalIntake]);
 
-  useEffect(() => {
-    const handlePatientSaved = (event: Event) => {
-      const record = (event as CustomEvent<PatientRecord>).detail;
-      if (record?.protocol_no) {
-        setProtocolNo(record.protocol_no);
-      }
-    };
-
-    window.addEventListener('medicore:patient-saved', handlePatientSaved);
-    return () => {
-      window.removeEventListener('medicore:patient-saved', handlePatientSaved);
-    };
-  }, []);
-
   async function handleSave() {
     localStorage.setItem(
       ACTIVE_CLINICAL_INTAKE_KEY,
       JSON.stringify(clinicalIntake),
     );
     setSaveError('');
-
-    const normalizedProtocolNo = protocolNo.trim().toUpperCase();
-    if (!normalizedProtocolNo) {
-      setSaveError('Protokol numarasını hasta girmelidir.');
-      return;
-    }
-
     setIsSaving(true);
 
     try {
-      const record = await savePatientRecord(
-        clinicalIntake,
-        normalizedProtocolNo,
-      );
-      setProtocolNo(record.protocol_no);
-      setSavedMessage(`Hasta kaydedildi. Protokol No: ${record.protocol_no}`);
+      await savePatientRecord(clinicalIntake);
+      setSavedMessage('Hasta bilgileri kaydedildi.');
       window.setTimeout(() => setSavedMessage(''), 3000);
     } catch (error) {
       setSaveError(
@@ -146,32 +116,6 @@ export default function PatientRecordPage() {
           {saveError}
         </div>
       ) : null}
-
-      <SectionCard
-        title="Protokol numarası"
-        description="Protokol numarasını hasta kendisi girer. MediCore bu numarayı otomatik üretmez; yalnızca benzersiz olup olmadığını kontrol eder."
-      >
-        <div className="space-y-3">
-          <label className="block text-sm font-semibold text-slate-800" htmlFor="patient-protocol-no">
-            Hasta protokol numarası
-          </label>
-          <input
-            id="patient-protocol-no"
-            type="text"
-            value={protocolNo}
-            onChange={(event) => setProtocolNo(event.target.value.toUpperCase())}
-            maxLength={32}
-            autoCapitalize="characters"
-            autoComplete="off"
-            spellCheck={false}
-            placeholder="Örn. 2026/001245"
-            className="w-full rounded-lg border border-slate-300 bg-white px-4 py-3 font-mono text-lg font-semibold tracking-wide text-slate-950 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-          />
-          <p className="text-sm leading-6 text-slate-500">
-            Harf, rakam, nokta, tire, alt çizgi ve / kullanılabilir. Aynı protokol numarası iki farklı hastaya verilemez.
-          </p>
-        </div>
-      </SectionCard>
 
       <SectionCard
         title="Hasta bilgileri"
