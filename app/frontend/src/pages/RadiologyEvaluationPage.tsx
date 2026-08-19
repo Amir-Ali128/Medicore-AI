@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import SectionCard from '../components/ui/SectionCard';
 import {
   createManualRadiologyReport,
+  deleteRadiologyReport,
   listPatientRadiologyReports,
   uploadRadiologyReportPdf,
   type RadiologyReport,
@@ -83,6 +84,7 @@ export default function RadiologyEvaluationPage() {
   const [reports, setReports] = useState<RadiologyReport[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [deletingReportId, setDeletingReportId] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
 
@@ -155,6 +157,30 @@ export default function RadiologyEvaluationPage() {
       );
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function removeReport(report: RadiologyReport) {
+    const approved = window.confirm(
+      'Bu radyoloji raporunu kalıcı olarak silmek istediğine emin misin? Bu işlem geri alınamaz.',
+    );
+    if (!approved) return;
+
+    try {
+      setDeletingReportId(report.id);
+      setError('');
+      setStatus('');
+      await deleteRadiologyReport(report.id);
+      setReports((current) => current.filter((item) => item.id !== report.id));
+      setStatus('Radyoloji raporu kalıcı kayıttan silindi.');
+    } catch (deleteError) {
+      setError(
+        deleteError instanceof Error
+          ? deleteError.message
+          : 'Radyoloji raporu silinemedi.',
+      );
+    } finally {
+      setDeletingReportId(null);
     }
   }
 
@@ -258,6 +284,16 @@ export default function RadiologyEvaluationPage() {
         <SectionCard
           title="En güncel radyoloji değerlendirmesi"
           description={`${latestReport.modality} · ${latestReport.body_part}`}
+          action={
+            <button
+              type="button"
+              onClick={() => void removeReport(latestReport)}
+              disabled={deletingReportId === latestReport.id}
+              className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {deletingReportId === latestReport.id ? 'Siliniyor…' : 'Raporu sil'}
+            </button>
+          }
         >
           <div className="flex flex-wrap items-center justify-between gap-3">
             <span className={`rounded-full px-3 py-1.5 text-xs font-semibold ${urgencyClass(latestReport)}`}>
@@ -326,13 +362,23 @@ export default function RadiologyEvaluationPage() {
           <div className="grid gap-4 lg:grid-cols-2">
             {reports.slice(1, 9).map((report) => (
               <article key={report.id} className="rounded-xl border border-slate-200 bg-white p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="font-semibold text-slate-950">
-                    {report.modality} · {report.body_part}
-                  </p>
-                  <span className="text-xs text-slate-500">
-                    {report.report_date || report.created_at.slice(0, 10)}
-                  </span>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-semibold text-slate-950">
+                      {report.modality} · {report.body_part}
+                    </p>
+                    <span className="text-xs text-slate-500">
+                      {report.report_date || report.created_at.slice(0, 10)}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void removeReport(report)}
+                    disabled={deletingReportId === report.id}
+                    className="shrink-0 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {deletingReportId === report.id ? 'Siliniyor…' : 'Sil'}
+                  </button>
                 </div>
                 <p className="mt-3 line-clamp-5 text-sm leading-6 text-slate-600">
                   {reportSummary(report)}
