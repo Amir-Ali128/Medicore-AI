@@ -12,7 +12,7 @@ from app.core.security import hash_password
 from app.infrastructure.database import session
 
 
-DEMO_EMAIL = "doctor@medicore.ai"
+DEMO_NICKNAME = "doctor"
 DEMO_PASSWORD = "demo123"
 
 
@@ -32,11 +32,11 @@ async def main():
                 SET hashed_password = :hashed_password,
                     is_active = true,
                     updated_at = NOW()
-                WHERE email = :email
+                WHERE nickname = :nickname
                 """
             ),
             {
-                "email": DEMO_EMAIL,
+                "nickname": DEMO_NICKNAME,
                 "hashed_password": hashed_password,
             },
         )
@@ -44,7 +44,7 @@ async def main():
     await engine.dispose()
 
     print("Demo user password updated.")
-    print(f"Email: {DEMO_EMAIL}")
+    print(f"Nickname: {DEMO_NICKNAME}")
     print(f"Password: {DEMO_PASSWORD}")
 
 
