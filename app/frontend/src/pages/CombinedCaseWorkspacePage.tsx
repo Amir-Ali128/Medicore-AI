@@ -97,7 +97,10 @@ export default function CombinedCaseWorkspacePage() {
     (item): item is UploadResult & { result: CombinedCaseImportResponse } =>
       Boolean(item.result),
   );
-  const latestResult = successfulResults.at(-1)?.result ?? null;
+  const latestResult =
+    successfulResults.length > 0
+      ? successfulResults[successfulResults.length - 1].result
+      : null;
   const patient = latestResult?.clinical_context.patient_information;
 
   return (
@@ -274,7 +277,7 @@ export default function CombinedCaseWorkspacePage() {
               <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
                 <p className="text-sm font-semibold text-amber-950">Son PDF için kontrol notları</p>
                 <ul className="mt-2 space-y-1 text-sm text-amber-900">
-                  {latestResult.warnings.map((warning) => (
+                  {latestResult.warnings.map((warning: string) => (
                     <li key={warning}>• {warning}</li>
                   ))}
                 </ul>
