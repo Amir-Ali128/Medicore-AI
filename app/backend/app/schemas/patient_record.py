@@ -23,6 +23,7 @@ class PatientRecordResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
+    protocol_no: str
     external_ref: str | None
     sex: Sex
     date_of_birth: Any | None

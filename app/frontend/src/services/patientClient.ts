@@ -5,10 +5,12 @@ const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000';
 
 export const ACTIVE_PATIENT_ID_KEY = 'medicore:activePatientId';
+export const ACTIVE_PATIENT_PROTOCOL_KEY = 'medicore:activePatientProtocol';
 export const ACTIVE_CLINICAL_INTAKE_KEY = 'medicore:activeClinicalIntake';
 
 export type PatientRecord = {
   id: string;
+  protocol_no: string;
   external_ref: string | null;
   sex: string;
   date_of_birth: string | null;
@@ -59,6 +61,20 @@ export function getActivePatientId(): string | null {
   return localStorage.getItem(ACTIVE_PATIENT_ID_KEY);
 }
 
+export function getActivePatientProtocolNo(): string | null {
+  return localStorage.getItem(ACTIVE_PATIENT_PROTOCOL_KEY);
+}
+
+function rememberPatientRecord(record: PatientRecord) {
+  localStorage.setItem(ACTIVE_PATIENT_ID_KEY, record.id);
+  localStorage.setItem(ACTIVE_PATIENT_PROTOCOL_KEY, record.protocol_no);
+  window.dispatchEvent(
+    new CustomEvent<PatientRecord>('medicore:patient-saved', {
+      detail: record,
+    }),
+  );
+}
+
 export async function savePatientRecord(
   intake: ClinicalIntakeInput,
 ): Promise<PatientRecord> {
@@ -77,7 +93,7 @@ export async function savePatientRecord(
   }
 
   const record = (await response.json()) as PatientRecord;
-  localStorage.setItem(ACTIVE_PATIENT_ID_KEY, record.id);
+  rememberPatientRecord(record);
   return record;
 }
 
@@ -88,7 +104,9 @@ export async function getPatientRecord(patientId: string): Promise<PatientRecord
   if (!response.ok) {
     throw new Error(`Hasta kaydı alınamadı: ${response.status} ${await readError(response)}`);
   }
-  return response.json();
+  const record = (await response.json()) as PatientRecord;
+  rememberPatientRecord(record);
+  return record;
 }
 
 export async function listPatientRecords(): Promise<PatientRecord[]> {

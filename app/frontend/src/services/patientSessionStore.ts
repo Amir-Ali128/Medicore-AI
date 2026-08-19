@@ -3,6 +3,7 @@ export const ACTIVE_CLINICAL_INTAKE_KEY = 'medicore:activeClinicalIntake';
 
 const ACTIVE_PATIENT_KEYS = [
   'medicore:activePatientId',
+  'medicore:activePatientProtocol',
   'medicore:lastAnalysisRunId',
   'medicore:lastLabReportId',
   'medicore:lastRadiologyReportId',
@@ -18,6 +19,7 @@ export type PatientHistoryRecord = {
   // Kept as a generic label for backward-compatible UI typing.
   // It no longer contains the patient's real name.
   displayName: string;
+  protocolNo?: string | null;
   age: string | null;
   sex: string | null;
   birthDate: string | null;
@@ -74,6 +76,7 @@ export function archiveActivePatientSession(): PatientHistoryRecord | null {
     id: crypto.randomUUID(),
     archivedAt: new Date().toISOString(),
     displayName: 'Hasta kaydı',
+    protocolNo: localStorage.getItem('medicore:activePatientProtocol'),
     age: getFirstStoredValue([
       'medicore:lastPatientAge',
       'medicore:last_patient_age',
