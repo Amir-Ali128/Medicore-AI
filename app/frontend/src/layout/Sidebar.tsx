@@ -8,6 +8,7 @@ type NavItem = {
 const items: NavItem[] = [
   { label: '🏠 Ana Sayfa', to: '/' },
   { label: '👤 Hasta Bilgileri', to: '/patients/demo' },
+  { label: '✉️ Gönder', to: '/send' },
   { label: '🩸 Laboratuvar Sonuçları', to: '/analysis/mock' },
   { label: '🩻 Radyoloji ve Tetkik Raporları', to: '/radiology' },
   { label: '🧩 Bulguları Değerlendir', to: '/combined-evaluation' },
