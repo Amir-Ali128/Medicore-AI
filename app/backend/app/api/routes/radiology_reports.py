@@ -5,13 +5,14 @@ from __future__ import annotations
 import io
 import uuid
 from datetime import date
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
 from pypdf import PdfReader
 from sqlalchemy import text as sql_text
 
 from app.api.dependencies import SessionDep
+from app.api.routes.auth import get_current_active_user
 from app.domain.enums import Sex, UserRole
 from app.domain.radiology_report_parser import analyze_radiology_report
 from app.infrastructure.database.models.patient import Patient
@@ -266,3 +267,21 @@ async def get_radiology_report(
     if report is None:
         raise HTTPException(status_code=404, detail="Radiology report not found.")
     return report
+
+
+@router.delete("/{report_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_radiology_report(
+    report_id: uuid.UUID,
+    session: SessionDep,
+    _current_user: Annotated[User, Depends(get_current_active_user)],
+) -> Response:
+    """Delete one saved radiology report from the active authenticated session."""
+    await _ensure_phase2_table(session)
+    repository = RadiologyReportRepository(session)
+    report = await repository.get_by_id(report_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="Radiology report not found.")
+
+    await session.delete(report)
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
