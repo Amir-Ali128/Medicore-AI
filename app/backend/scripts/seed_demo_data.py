@@ -1,8 +1,8 @@
 """Seed minimal demo users and one patient profile for local/dev use.
 
 Creates (or reuses) one doctor user, one patient user, and one patient profile.
-Idempotent by deterministic email / external_ref. Uses safe fake data only, no
-lab results, no medical content. Commits on success, rolls back on error.
+Idempotent by deterministic nickname / external_ref. Uses safe fake data only,
+no lab results and no real medical content.
 
 Run:  python -m app.scripts.seed_demo_data
 """
@@ -19,23 +19,32 @@ from app.infrastructure.database.models.patient import Patient
 from app.infrastructure.database.models.user import User
 from app.infrastructure.database.session import AsyncSessionFactory, engine
 
+DOCTOR_NICKNAME = "doctor"
+PATIENT_NICKNAME = "demo-patient"
 DOCTOR_EMAIL = "doctor@medicore.local"
 PATIENT_EMAIL = "patient@medicore.local"
 DEMO_PATIENT_EXTERNAL_REF = "demo-patient"
 
-# Placeholder, intentionally non-usable for login (no auth in Phase 1).
+# Placeholder, intentionally non-usable for login until the password seed runs.
 _SEED_PASSWORD_HASH = "seed$disabled$not-for-login"
 
 
 async def _get_or_create_user(
-    session, *, email: str, full_name: str, role: UserRole
+    session,
+    *,
+    nickname: str,
+    email: str | None,
+    full_name: str | None,
+    role: UserRole,
 ) -> tuple[User, bool]:
     existing = (
-        await session.execute(select(User).where(User.email == email))
+        await session.execute(select(User).where(User.nickname == nickname))
     ).scalar_one_or_none()
     if existing is not None:
         return existing, False
+
     user = User(
+        nickname=nickname,
         email=email,
         full_name=full_name,
         role=role,
@@ -61,7 +70,7 @@ async def _get_or_create_patient(
         sex=Sex.MALE,
         date_of_birth=date(1990, 5, 15),
         is_pregnant=False,
-        metadata_json={"seed": True, "patient_user_email": patient_user.email},
+        metadata_json={"seed": True, "patient_user_nickname": patient_user.nickname},
     )
     session.add(patient)
     return patient, True
@@ -71,10 +80,18 @@ async def _seed() -> None:
     async with AsyncSessionFactory() as session:
         try:
             doctor, doctor_created = await _get_or_create_user(
-                session, email=DOCTOR_EMAIL, full_name="Demo Doctor", role=UserRole.DOCTOR
+                session,
+                nickname=DOCTOR_NICKNAME,
+                email=DOCTOR_EMAIL,
+                full_name="Demo Doctor",
+                role=UserRole.DOCTOR,
             )
             patient_user, patient_user_created = await _get_or_create_user(
-                session, email=PATIENT_EMAIL, full_name="Demo Patient", role=UserRole.PATIENT
+                session,
+                nickname=PATIENT_NICKNAME,
+                email=PATIENT_EMAIL,
+                full_name=None,
+                role=UserRole.PATIENT,
             )
             await session.flush()
 
