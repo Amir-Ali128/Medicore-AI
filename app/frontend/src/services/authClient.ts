@@ -3,6 +3,7 @@ const API_BASE_URL =
 
 const ACCESS_TOKEN_KEY = 'medicore:accessToken';
 const CURRENT_USER_KEY = 'medicore:currentUser';
+const MEDICORE_STORAGE_PREFIX = 'medicore:';
 
 export type UserRole = 'admin' | 'doctor' | 'patient' | 'lab_staff' | 'system';
 export type AccountType = 'individual' | 'institutional';
@@ -45,7 +46,47 @@ async function readErrorMessage(response: Response): Promise<string> {
   return response.text();
 }
 
+function readStoredUserUnsafe(): AuthUser | null {
+  const raw = localStorage.getItem(CURRENT_USER_KEY);
+  if (!raw) return null;
+
+  try {
+    return JSON.parse(raw) as AuthUser;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Remove every client-side MediCore value from this browser profile.
+ *
+ * Patient forms, active patient ids, report ids, local archive snapshots and auth
+ * data all use the `medicore:` prefix. Clearing the complete prefix is deliberate:
+ * a different account must never inherit health information left in localStorage
+ * by the previous account on the same browser.
+ */
+function clearMediCoreLocalState(): void {
+  const keysToRemove: string[] = [];
+
+  for (let index = 0; index < localStorage.length; index += 1) {
+    const key = localStorage.key(index);
+    if (key?.startsWith(MEDICORE_STORAGE_PREFIX)) {
+      keysToRemove.push(key);
+    }
+  }
+
+  keysToRemove.forEach((key) => localStorage.removeItem(key));
+}
+
 function storeAuth(response: AuthResponse): AuthUser {
+  const previousUser = readStoredUserUnsafe();
+
+  // A fresh login with no valid stored user may still have stale patient data
+  // from an older build/session. A different account must always start clean.
+  if (!previousUser || previousUser.id !== response.user.id) {
+    clearMediCoreLocalState();
+  }
+
   localStorage.setItem(ACCESS_TOKEN_KEY, response.access_token);
   localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(response.user));
 
@@ -82,10 +123,9 @@ export function isAuthenticated(): boolean {
 }
 
 export function logout(): void {
-  localStorage.removeItem(ACCESS_TOKEN_KEY);
-  localStorage.removeItem(CURRENT_USER_KEY);
-  localStorage.removeItem('medicore:lastAnalysisRunId');
-  localStorage.removeItem('medicore:lastLabReportId');
+  // Health/clinical data must not survive into the next account on a shared
+  // browser. This also clears the token and current-user values.
+  clearMediCoreLocalState();
 }
 
 export async function login(
