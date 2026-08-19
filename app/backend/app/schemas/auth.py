@@ -1,17 +1,19 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, EmailStr
+from typing import Literal
+
+from pydantic import BaseModel, Field
 
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    nickname: str = Field(min_length=3, max_length=32)
     password: str
+    account_type: Literal["individual", "institutional"] = "individual"
 
 
 class AuthUserResponse(BaseModel):
     id: str
-    email: str
-    full_name: str | None = None
+    nickname: str
     role: str
 
 

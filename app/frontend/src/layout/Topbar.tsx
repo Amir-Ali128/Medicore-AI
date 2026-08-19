@@ -6,6 +6,21 @@ import {
   startNewPatientSession,
 } from '../services/patientSessionStore';
 
+function roleLabel(role: string | undefined) {
+  switch (role) {
+    case 'doctor':
+      return 'Doktor';
+    case 'lab_staff':
+      return 'Laboratuvar';
+    case 'patient':
+      return 'Bireysel kullanıcı';
+    case 'admin':
+      return 'Yönetici';
+    default:
+      return 'MediCore kullanıcı';
+  }
+}
+
 export default function Topbar() {
   const navigate = useNavigate();
   const user = getStoredUser();
@@ -48,10 +63,10 @@ export default function Topbar() {
           <div className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3 sm:justify-start">
             <div className="text-right">
               <p className="text-sm font-semibold text-slate-900">
-                {user?.full_name ?? 'Demo Hekim'}
+                @{user?.nickname ?? 'kullanici'}
               </p>
               <p className="text-xs text-slate-500">
-                {user?.email ?? 'doctor@medicore.ai'}
+                {roleLabel(user?.role)}
               </p>
             </div>
 

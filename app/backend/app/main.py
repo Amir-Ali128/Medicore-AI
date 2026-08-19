@@ -1,7 +1,7 @@
 """Minimal FastAPI application for MediCore AI (Phase 1).
 
-Wires the API router, CORS, health check, and the small idempotent startup
-migration required by deployments without shell access.
+Wires the API router, CORS, health check, and small idempotent startup
+migrations required by deployments without shell access.
 """
 
 from __future__ import annotations
@@ -19,16 +19,24 @@ from app.api.routes import lab_globulin_fix as _lab_globulin_fix  # noqa: F401
 from app.infrastructure.database.session import engine
 from app.infrastructure.database.startup_migrations import (
     ensure_patient_protocol_numbers,
+    ensure_user_nicknames,
 )
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    backfilled = await ensure_patient_protocol_numbers(engine)
-    if backfilled:
+    user_backfilled = await ensure_user_nicknames(engine)
+    if user_backfilled:
+        print(
+            "User nickname startup migration completed: "
+            f"backfilled {user_backfilled} user(s)."
+        )
+
+    patient_backfilled = await ensure_patient_protocol_numbers(engine)
+    if patient_backfilled:
         print(
             "Patient protocol startup migration completed: "
-            f"backfilled {backfilled} patient(s)."
+            f"backfilled {patient_backfilled} patient(s)."
         )
     yield
 

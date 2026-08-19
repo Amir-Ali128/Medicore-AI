@@ -5,11 +5,11 @@ const ACCESS_TOKEN_KEY = 'medicore:accessToken';
 const CURRENT_USER_KEY = 'medicore:currentUser';
 
 export type UserRole = 'admin' | 'doctor' | 'patient' | 'lab_staff' | 'system';
+export type AccountType = 'individual' | 'institutional';
 
 export type AuthUser = {
   id: string;
-  email: string;
-  full_name: string | null;
+  nickname: string;
   role: UserRole;
   is_active: boolean;
 };
@@ -21,10 +21,8 @@ export type AuthResponse = {
 };
 
 export type RegisterPayload = {
-  full_name: string;
-  email: string;
+  nickname: string;
   password: string;
-  role: UserRole;
 };
 
 async function readErrorMessage(response: Response): Promise<string> {
@@ -91,8 +89,9 @@ export function logout(): void {
 }
 
 export async function login(
-  email: string,
+  nickname: string,
   password: string,
+  accountType: AccountType,
 ): Promise<AuthUser> {
   const response = await fetch(`${API_BASE_URL}/auth/login`, {
     method: 'POST',
@@ -100,14 +99,15 @@ export async function login(
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      email,
+      nickname,
       password,
+      account_type: accountType,
     }),
   });
 
   if (!response.ok) {
     const message = await readErrorMessage(response);
-    throw new Error(message || 'Login failed.');
+    throw new Error(message || 'Giriş yapılamadı.');
   }
 
   return storeAuth((await response.json()) as AuthResponse);
@@ -126,7 +126,7 @@ export async function register(
 
   if (!response.ok) {
     const message = await readErrorMessage(response);
-    throw new Error(message || 'Account creation failed.');
+    throw new Error(message || 'Hesap oluşturulamadı.');
   }
 
   return storeAuth((await response.json()) as AuthResponse);

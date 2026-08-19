@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 from sqlalchemy import Boolean, String, false, true
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -14,14 +16,27 @@ from app.infrastructure.database.base import (
 )
 
 
+def _internal_nickname() -> str:
+    """Fallback identity for internal/demo actors that are never used to log in."""
+    return f"system-{uuid.uuid4().hex[:12]}"
+
+
 class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "users"
 
-    email: Mapped[str] = mapped_column(
-        String(320), unique=True, index=True, nullable=False
+    # Primary login identity. New individual accounts use only nickname + password.
+    nickname: Mapped[str] = mapped_column(
+        String(64), unique=True, index=True, nullable=False, default=_internal_nickname
     )
-    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    # Legacy / optional fields retained for existing institutional accounts and
+    # backwards-compatible imports. New individual registration does not request them.
+    email: Mapped[str | None] = mapped_column(
+        String(320), unique=True, index=True, nullable=True
+    )
     full_name: Mapped[str | None] = mapped_column(String(255))
+
+    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
 
     role: Mapped[UserRole] = mapped_column(
         user_role_enum,
@@ -37,4 +52,7 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
     def __repr__(self) -> str:  # pragma: no cover - debug aid
-        return f"<User id={self.id!s} email={self.email!r} role={self.role.value}>"
+        return (
+            f"<User id={self.id!s} nickname={self.nickname!r} "
+            f"role={self.role.value}>"
+        )
