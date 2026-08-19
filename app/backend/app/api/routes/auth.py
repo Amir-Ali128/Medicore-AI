@@ -1,15 +1,7 @@
 """Authentication routes for MediCore AI.
 
-Adds demo-safe account creation plus JWT login.
-
-Endpoints:
-- POST /auth/register
-- POST /auth/login
-- POST /auth/token  (OAuth2 form-compatible)
-
-Notes:
-- For MVP/demo, self-registration is enabled.
-- For production, doctor/admin registration should require invitation or admin approval.
+Public individual registration uses only nickname + password. Institutional
+accounts are provisioned separately and authenticate with nickname + password.
 """
 
 from __future__ import annotations
@@ -18,14 +10,15 @@ import os
 import re
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.domain.enums import UserRole
 from app.infrastructure.database.models.user import User
@@ -40,25 +33,48 @@ SECRET_KEY = os.getenv("SECRET_KEY", "dev-only-change-this-secret")
 ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))
 
-_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_NICKNAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{2,31}$")
+InstitutionType = Literal["individual", "institutional"]
+
+
+def _normalize_nickname(value: str) -> str:
+    return value.strip().lower()
+
+
+def _validate_nickname(value: str) -> str:
+    nickname = _normalize_nickname(value)
+    if not _NICKNAME_RE.fullmatch(nickname):
+        raise ValueError(
+            "Rumuz 3-32 karakter olmalı; küçük/büyük harf, rakam, nokta, "
+            "alt çizgi veya tire kullanılabilir."
+        )
+    return nickname
 
 
 class RegisterRequest(BaseModel):
-    email: str = Field(min_length=5, max_length=320)
+    nickname: str = Field(min_length=3, max_length=32)
     password: str = Field(min_length=6, max_length=128)
-    full_name: str = Field(min_length=2, max_length=255)
-    role: UserRole = UserRole.DOCTOR
+
+    @field_validator("nickname")
+    @classmethod
+    def normalize_nickname(cls, value: str) -> str:
+        return _validate_nickname(value)
 
 
 class LoginRequest(BaseModel):
-    email: str = Field(min_length=5, max_length=320)
+    nickname: str = Field(min_length=3, max_length=32)
     password: str = Field(min_length=1, max_length=128)
+    account_type: InstitutionType = "individual"
+
+    @field_validator("nickname")
+    @classmethod
+    def normalize_nickname(cls, value: str) -> str:
+        return _validate_nickname(value)
 
 
 class UserOut(BaseModel):
     id: uuid.UUID
-    email: str
-    full_name: str | None
+    nickname: str
     role: UserRole
     is_active: bool
 
@@ -67,18 +83,6 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: UserOut
-
-
-def _normalize_email(email: str) -> str:
-    return email.strip().lower()
-
-
-def _validate_email(email: str) -> None:
-    if not _EMAIL_RE.match(email):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Geçerli bir e-posta adresi gir.",
-        )
 
 
 def _validate_password(password: str) -> None:
@@ -120,8 +124,7 @@ def create_access_token(
 def _user_out(user: User) -> UserOut:
     return UserOut(
         id=user.id,
-        email=user.email,
-        full_name=user.full_name,
+        nickname=user.nickname,
         role=user.role,
         is_active=user.is_active,
     )
@@ -132,20 +135,20 @@ def _token_response(user: User) -> TokenResponse:
     return TokenResponse(access_token=token, user=_user_out(user))
 
 
-async def _get_user_by_email(email: str) -> User | None:
+async def _get_user_by_nickname(nickname: str) -> User | None:
     async with AsyncSessionFactory() as session:
-        result = await session.execute(select(User).where(User.email == email))
+        result = await session.execute(select(User).where(User.nickname == nickname))
         return result.scalar_one_or_none()
 
 
-async def _authenticate_user(email: str, password: str) -> User:
-    normalized_email = _normalize_email(email)
-    user = await _get_user_by_email(normalized_email)
+async def _authenticate_user(nickname: str, password: str) -> User:
+    normalized_nickname = _normalize_nickname(nickname)
+    user = await _get_user_by_nickname(normalized_nickname)
 
     if user is None or not verify_password(password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="E-posta veya şifre hatalı.",
+            detail="Rumuz veya şifre hatalı.",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -158,34 +161,53 @@ async def _authenticate_user(email: str, password: str) -> User:
     return user
 
 
+def _validate_account_type(user: User, account_type: InstitutionType) -> None:
+    institutional_roles = {
+        UserRole.DOCTOR,
+        UserRole.LAB_STAFF,
+        UserRole.ADMIN,
+    }
+
+    if account_type == "individual" and user.role != UserRole.PATIENT:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Bu hesap kurumsal kullanıcı hesabıdır. Kurumsal giriş sekmesini kullanın.",
+        )
+
+    if account_type == "institutional" and user.role not in institutional_roles:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Bu hesap bireysel kullanıcı hesabıdır. Bireysel giriş sekmesini kullanın.",
+        )
+
+
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
 async def register(payload: RegisterRequest) -> TokenResponse:
-    email = _normalize_email(payload.email)
-    _validate_email(email)
-    _validate_password(payload.password)
+    """Create a privacy-minimal individual account.
 
-    safe_roles = {
-        UserRole.DOCTOR,
-        UserRole.PATIENT,
-        UserRole.LAB_STAFF,
-    }
-    role = payload.role if payload.role in safe_roles else UserRole.DOCTOR
+    Public registration always creates a PATIENT/individual account. Doctor,
+    laboratory and admin accounts are provisioned through institutional/admin
+    workflows rather than self-selected from the public registration screen.
+    """
+
+    _validate_password(payload.password)
 
     async with AsyncSessionFactory() as session:
         existing = (
-            await session.execute(select(User).where(User.email == email))
+            await session.execute(select(User).where(User.nickname == payload.nickname))
         ).scalar_one_or_none()
 
         if existing is not None:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="Bu e-posta ile kayıtlı kullanıcı zaten var.",
+                detail="Bu rumuz zaten kullanılıyor.",
             )
 
         user = User(
-            email=email,
-            full_name=payload.full_name.strip(),
-            role=role,
+            nickname=payload.nickname,
+            email=None,
+            full_name=None,
+            role=UserRole.PATIENT,
             hashed_password=get_password_hash(payload.password),
             is_active=True,
             is_superuser=False,
@@ -196,16 +218,20 @@ async def register(payload: RegisterRequest) -> TokenResponse:
             await session.flush()
             await session.commit()
             await session.refresh(user)
-        except Exception:
+        except IntegrityError as exc:
             await session.rollback()
-            raise
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Bu rumuz zaten kullanılıyor.",
+            ) from exc
 
     return _token_response(user)
 
 
 @router.post("/login", response_model=TokenResponse)
 async def login(payload: LoginRequest) -> TokenResponse:
-    user = await _authenticate_user(payload.email, payload.password)
+    user = await _authenticate_user(payload.nickname, payload.password)
+    _validate_account_type(user, payload.account_type)
     return _token_response(user)
 
 
@@ -213,6 +239,7 @@ async def login(payload: LoginRequest) -> TokenResponse:
 async def token(
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
 ) -> TokenResponse:
+    # OAuth2 calls the identifier field "username"; MediCore interprets it as nickname.
     user = await _authenticate_user(form_data.username, form_data.password)
     return _token_response(user)
 
