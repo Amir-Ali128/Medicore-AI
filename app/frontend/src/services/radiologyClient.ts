@@ -171,3 +171,19 @@ export async function listPatientRadiologyReports(
   const reports = (await response.json()) as RadiologyReport[];
   return Array.isArray(reports) ? reports.map(normalizeReport) : [];
 }
+
+export async function deleteRadiologyReport(reportId: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/radiology-reports/${reportId}`, {
+    method: 'DELETE',
+    headers: authHeaders(),
+  });
+
+  if (!response.ok) {
+    const message = await readErrorMessage(response);
+    throw new Error(`Radyoloji raporu silinemedi: ${response.status} ${message}`);
+  }
+
+  if (localStorage.getItem(LAST_RADIOLOGY_REPORT_ID_KEY) === reportId) {
+    localStorage.removeItem(LAST_RADIOLOGY_REPORT_ID_KEY);
+  }
+}

@@ -16,6 +16,7 @@ import ModulePreviewPage from './pages/ModulePreviewPage';
 import PatientHistoryPage from './pages/PatientHistoryPage';
 import PatientRecordPage from './pages/PatientRecordPage';
 import RadiologyEvaluationPage from './pages/RadiologyEvaluationPage';
+import SendPage from './pages/SendPage';
 import TimelinePage from './pages/TimelinePage';
 
 export const router = createHashRouter([
@@ -35,6 +36,7 @@ export const router = createHashRouter([
           { path: '/analysis/mock', element: <CombinedCaseWorkspacePage /> },
           { path: '/case-import', element: <CombinedCaseWorkspacePage /> },
           { path: '/radiology', element: <RadiologyEvaluationPage /> },
+          { path: '/send', element: <SendPage /> },
           { path: '/combined-evaluation', element: <CaseEvaluationPage /> },
           { path: '/roadmap/radiology', element: <ModulePreviewPage module="radiology" /> },
           { path: '/roadmap/imaging', element: <ModulePreviewPage module="imaging" /> },
