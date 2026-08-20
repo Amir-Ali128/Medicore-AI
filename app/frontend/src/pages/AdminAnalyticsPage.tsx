@@ -52,6 +52,29 @@ function isOnline(lastSeen: string): boolean {
   return Number.isFinite(timestamp) && Date.now() - timestamp <= 90_000;
 }
 
+function deviceTypeLabel(type: string | null): string | null {
+  switch (type) {
+    case 'mobile':
+      return 'Mobil';
+    case 'tablet':
+      return 'Tablet';
+    case 'desktop':
+      return 'Masaüstü';
+    default:
+      return type;
+  }
+}
+
+function joinVersion(name: string | null, version: string | null): string | null {
+  const value = [name, version].filter(Boolean).join(' ');
+  return value || null;
+}
+
+function deviceTitle(session: AnalyticsSession): string {
+  const model = [session.device_brand, session.device_model].filter(Boolean).join(' ');
+  return model || session.platform || 'Model bilinmiyor';
+}
+
 export default function AdminAnalyticsPage() {
   const user = getStoredUser();
   const [minutes, setMinutes] = useState(5);
@@ -91,7 +114,7 @@ export default function AdminAnalyticsPage() {
       <section className="mx-auto max-w-3xl rounded-xl border border-amber-200 bg-amber-50 p-6">
         <h2 className="text-lg font-semibold text-amber-950">Yalnızca yönetici erişimi</h2>
         <p className="mt-2 text-sm text-amber-800">
-          IP ve ziyaretçi trafiği kişisel veri içerdiği için bu ekran yalnızca yönetici hesabına açıktır.
+          IP, yaklaşık konum ve cihaz bilgileri kişisel veri içerebildiği için bu ekran yalnızca yönetici hesabına açıktır.
         </p>
       </section>
     );
@@ -104,7 +127,7 @@ export default function AdminAnalyticsPage() {
           <p className="text-xs font-semibold uppercase tracking-wide text-cyan-700">Yönetici</p>
           <h2 className="mt-1 text-2xl font-semibold text-slate-950">Canlı trafik</h2>
           <p className="mt-1 text-sm text-slate-500">
-            Aktif ziyaretçiler, oturumlar, IP ve IP tabanlı yaklaşık konum bilgisi.
+            Aktif ziyaretçiler, oturumlar, IP, yaklaşık konum ve tarayıcının bildirdiği cihaz bilgileri.
           </p>
         </div>
 
@@ -193,13 +216,17 @@ export default function AdminAnalyticsPage() {
                 <th className="px-4 py-3">IP</th>
                 <th className="px-4 py-3">Yaklaşık konum</th>
                 <th className="px-4 py-3">Sayfa</th>
-                <th className="px-4 py-3">Cihaz</th>
+                <th className="px-4 py-3">Cihaz / tarayıcı</th>
                 <th className="px-4 py-3">Son görülme</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {data?.sessions.map((session) => {
                 const coords = coordinatesLabel(session);
+                const os = joinVersion(session.os_name, session.os_version);
+                const browser = joinVersion(session.browser_name, session.browser_version);
+                const deviceType = deviceTypeLabel(session.device_type);
+
                 return (
                   <tr key={session.visitor_id} className="align-top">
                     <td className="px-4 py-3">
@@ -232,8 +259,15 @@ export default function AdminAnalyticsPage() {
                       <p className="mt-1 text-xs text-slate-500">{session.request_count} heartbeat</p>
                     </td>
                     <td className="px-4 py-3">
-                      <p className="text-slate-800">{session.platform ?? '—'}</p>
-                      <p className="mt-1 text-xs text-slate-500">{session.language ?? '—'}</p>
+                      <p className="font-medium text-slate-900">{deviceTitle(session)}</p>
+                      <p className="mt-1 text-xs text-slate-600">
+                        {[deviceType, os].filter(Boolean).join(' · ') || session.platform || '—'}
+                      </p>
+                      {browser ? <p className="mt-1 text-xs text-slate-600">{browser}</p> : null}
+                      {session.architecture ? (
+                        <p className="mt-1 text-xs text-slate-500">Mimari: {session.architecture}</p>
+                      ) : null}
+                      <p className="mt-1 text-xs text-slate-500">Dil: {session.language ?? '—'}</p>
                       <p
                         className="mt-1 max-w-xs truncate text-xs text-slate-400"
                         title={session.user_agent ?? undefined}
@@ -261,8 +295,7 @@ export default function AdminAnalyticsPage() {
       </div>
 
       <p className="text-xs leading-5 text-slate-500">
-        Konum IP tabanlı yaklaşık bilgidir; GPS değildir ve şehir düzeyinde dahi hatalı olabilir. Ham IP ve
-        konum verileri yalnızca yönetici endpoint'inden okunur.
+        Cihaz modeli ve sürüm bilgileri tarayıcının izin verdiği kadar raporlanır; bazı tarayıcılar yalnızca genel cihaz ailesini gösterir. Konum IP tabanlı yaklaşık bilgidir; GPS değildir. Bu telemetri yalnızca yönetici endpoint'inden okunur.
       </p>
     </section>
   );
