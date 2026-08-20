@@ -3,6 +3,7 @@ import { createHashRouter } from 'react-router-dom';
 import ProtectedRoute from './components/ProtectedRoute';
 import AppLayout from './layout/AppLayout';
 import AdminAnalyticsPage from './pages/AdminAnalyticsPage';
+import AdminLoginPage from './pages/AdminLoginPage';
 import AnalysisResultsPage from './pages/AnalysisResultsPage';
 import CaseEvaluationPage from './pages/CaseEvaluationPage';
 import ClinicalHypothesesPage from './pages/ClinicalHypothesesPage';
@@ -24,6 +25,14 @@ export const router = createHashRouter([
   {
     path: '/login',
     element: <LoginPage />,
+  },
+  {
+    path: '/admin',
+    element: <AdminLoginPage />,
+  },
+  {
+    path: '/admin/login',
+    element: <AdminLoginPage />,
   },
   {
     element: <ProtectedRoute />,
