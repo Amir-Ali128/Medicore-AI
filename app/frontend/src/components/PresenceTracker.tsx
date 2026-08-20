@@ -77,6 +77,7 @@ function fallbackDeviceDetails(): DeviceDetails {
   const android = ua.match(/Android\s+([\d.]+)/i);
   const androidModel = ua.match(/Android[^;]*;\s*([^;)]+?)(?:\s+Build\/|;|\))/i)?.[1]?.trim();
   const ios = ua.match(/(?:iPhone|CPU(?: iPhone)? OS)\s*([\d_]+)/i);
+  const mac = ua.match(/Mac OS X\s*([\d_]+)/i);
   const chrome = ua.match(/(?:Chrome|CriOS)\/([\d.]+)/i);
   const edge = ua.match(/Edg(?:A|iOS)?\/([\d.]+)/i);
   const firefox = ua.match(/(?:Firefox|FxiOS)\/([\d.]+)/i);
@@ -101,15 +102,31 @@ function fallbackDeviceDetails(): DeviceDetails {
   const isIPhone = /iPhone/i.test(ua);
   const isIPad = /iPad/i.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   const isMobile = /Mobi|Android|iPhone/i.test(ua);
-
   const model = androidModel || (isIPhone ? 'iPhone' : isIPad ? 'iPad' : undefined);
+
+  let osName: string | undefined;
+  let osVersion: string | undefined;
+  if (android) {
+    osName = 'Android';
+    osVersion = android[1];
+  } else if (isIPhone || isIPad) {
+    osName = 'iOS/iPadOS';
+    osVersion = ios?.[1]?.replaceAll('_', '.');
+  } else if (/Windows/i.test(ua)) {
+    osName = 'Windows';
+  } else if (/Mac OS X/i.test(ua)) {
+    osName = 'macOS';
+    osVersion = mac?.[1]?.replaceAll('_', '.');
+  } else if (/Linux/i.test(ua)) {
+    osName = 'Linux';
+  }
 
   return {
     device_brand: inferBrand(model),
     device_model: model,
     device_type: isIPad ? 'tablet' : isMobile ? 'mobile' : 'desktop',
-    os_name: android ? 'Android' : isIPhone || isIPad ? 'iOS/iPadOS' : /Windows/i.test(ua) ? 'Windows' : /Mac OS X/i.test(ua) ? 'macOS' : /Linux/i.test(ua) ? 'Linux' : undefined,
-    os_version: android?.[1] || ios?.[1]?.replaceAll('_', '.'),
+    os_name: osName,
+    os_version: osVersion,
     browser_name: browserName,
     browser_version: browserVersion,
   };
@@ -143,11 +160,17 @@ async function readDeviceDetails(): Promise<DeviceDetails> {
     const browser = preferredBrowser(high.fullVersionList ?? uaData.brands);
     const model = high.model?.trim() || fallback.device_model;
     const architecture = [high.architecture, high.bitness].filter(Boolean).join('-') || undefined;
+    const reportedMobile = high.mobile ?? uaData.mobile;
 
     return {
       device_brand: inferBrand(model) ?? fallback.device_brand,
       device_model: model,
-      device_type: high.mobile ?? uaData.mobile ? 'mobile' : fallback.device_type,
+      device_type:
+        reportedMobile == null
+          ? fallback.device_type
+          : reportedMobile
+            ? 'mobile'
+            : fallback.device_type,
       os_name: high.platform || uaData.platform || fallback.os_name,
       os_version: high.platformVersion || fallback.os_version,
       browser_name: browser?.brand || fallback.browser_name,
