@@ -44,6 +44,8 @@ class HeartbeatRequest(BaseModel):
     platform: str | None = Field(default=None, max_length=128)
     device_brand: str | None = Field(default=None, max_length=128)
     device_model: str | None = Field(default=None, max_length=192)
+    device_model_source: str | None = Field(default=None, max_length=64)
+    device_model_confidence: str | None = Field(default=None, max_length=32)
     device_type: str | None = Field(default=None, max_length=32)
     os_name: str | None = Field(default=None, max_length=128)
     os_version: str | None = Field(default=None, max_length=128)
@@ -192,6 +194,8 @@ async def heartbeat(payload: HeartbeatRequest, request: Request) -> dict[str, bo
         "platform": payload.platform,
         "device_brand": payload.device_brand,
         "device_model": payload.device_model,
+        "device_model_source": payload.device_model_source,
+        "device_model_confidence": payload.device_model_confidence,
         "device_type": payload.device_type,
         "os_name": payload.os_name,
         "os_version": payload.os_version,
@@ -209,16 +213,16 @@ async def heartbeat(payload: HeartbeatRequest, request: Request) -> dict[str, bo
                     last_path, ip_address, ip_hash,
                     country_code, country, region, city, latitude, longitude,
                     user_agent, timezone, language, platform,
-                    device_brand, device_model, device_type,
-                    os_name, os_version, browser_name, browser_version, architecture,
+                    device_brand, device_model, device_model_source, device_model_confidence,
+                    device_type, os_name, os_version, browser_name, browser_version, architecture,
                     request_count
                 ) VALUES (
                     :id, :visitor_id, :user_id, NOW(), NOW(),
                     :last_path, :ip_address, :ip_hash,
                     :country_code, :country, :region, :city, :latitude, :longitude,
                     :user_agent, :timezone, :language, :platform,
-                    :device_brand, :device_model, :device_type,
-                    :os_name, :os_version, :browser_name, :browser_version, :architecture,
+                    :device_brand, :device_model, :device_model_source, :device_model_confidence,
+                    :device_type, :os_name, :os_version, :browser_name, :browser_version, :architecture,
                     1
                 )
                 ON CONFLICT (visitor_id) DO UPDATE SET
@@ -239,6 +243,8 @@ async def heartbeat(payload: HeartbeatRequest, request: Request) -> dict[str, bo
                     platform = EXCLUDED.platform,
                     device_brand = COALESCE(EXCLUDED.device_brand, analytics_presence.device_brand),
                     device_model = COALESCE(EXCLUDED.device_model, analytics_presence.device_model),
+                    device_model_source = COALESCE(EXCLUDED.device_model_source, analytics_presence.device_model_source),
+                    device_model_confidence = COALESCE(EXCLUDED.device_model_confidence, analytics_presence.device_model_confidence),
                     device_type = COALESCE(EXCLUDED.device_type, analytics_presence.device_type),
                     os_name = COALESCE(EXCLUDED.os_name, analytics_presence.os_name),
                     os_version = COALESCE(EXCLUDED.os_version, analytics_presence.os_version),
@@ -291,6 +297,8 @@ async def live_visitors(
                         p.platform,
                         p.device_brand,
                         p.device_model,
+                        p.device_model_source,
+                        p.device_model_confidence,
                         p.device_type,
                         p.os_name,
                         p.os_version,
