@@ -1,10 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 
 import { getStoredUser, logout } from '../services/authClient';
-import {
-  hasActivePatientSession,
-  startNewPatientSession,
-} from '../services/patientSessionStore';
 
 function roleLabel(role: string | undefined) {
   switch (role) {
@@ -31,19 +27,6 @@ export default function Topbar() {
     navigate(isAdmin ? '/admin/login' : '/login', { replace: true });
   }
 
-  function handleResetPatient() {
-    const hasActiveSession = hasActivePatientSession();
-    const confirmed = window.confirm(
-      hasActiveSession
-        ? 'Bu hastanın mevcut kayıtları arşive alınacak ve tüm aktif hasta alanları temizlenecek. Devam edilsin mi?'
-        : 'Tüm aktif hasta alanları temizlenip boş bir hasta kaydı açılsın mı?',
-    );
-    if (!confirmed) return;
-
-    startNewPatientSession();
-    navigate('/analysis/mock', { replace: true });
-  }
-
   return (
     <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/95 px-3 py-3 backdrop-blur sm:px-6 sm:py-4 lg:px-8">
       <div className="flex items-center justify-between gap-3 lg:items-center">
@@ -60,16 +43,6 @@ export default function Topbar() {
         </div>
 
         <div className="flex shrink-0 items-center gap-2 sm:gap-3">
-          {!isAdmin ? (
-            <button
-              type="button"
-              onClick={handleResetPatient}
-              className="hidden rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-700 transition hover:bg-blue-100 sm:block"
-            >
-              Hastayı kaydet ve temizle
-            </button>
-          ) : null}
-
           <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-2.5 py-2 sm:px-4 sm:py-3">
             <div className="max-w-[120px] text-right sm:max-w-none">
               <p className="truncate text-xs font-semibold text-slate-900 sm:text-sm">
@@ -90,16 +63,6 @@ export default function Topbar() {
           </div>
         </div>
       </div>
-
-      {!isAdmin ? (
-        <button
-          type="button"
-          onClick={handleResetPatient}
-          className="mt-3 w-full rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 text-xs font-semibold text-blue-700 sm:hidden"
-        >
-          Hastayı kaydet ve temizle
-        </button>
-      ) : null}
     </header>
   );
 }
