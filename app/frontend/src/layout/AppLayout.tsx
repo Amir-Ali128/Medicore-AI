@@ -4,6 +4,7 @@ import FrontendTurkishLocalizer from '../components/FrontendTurkishLocalizer';
 import PatientPersistenceBridge from '../components/PatientPersistenceBridge';
 import RadiologyTerminologyLocalizer from '../components/RadiologyTerminologyLocalizer';
 import WorkflowViewSimplifier from '../components/WorkflowViewSimplifier';
+import MobileNavigation from './MobileNavigation';
 import Sidebar from './Sidebar';
 import Topbar from './Topbar';
 
@@ -18,10 +19,11 @@ export default function AppLayout() {
       <Sidebar />
       <div className="min-h-screen lg:pl-72">
         <Topbar />
-        <main className="px-4 py-6 sm:px-6 lg:px-10 lg:py-8">
+        <main className="px-3 py-4 pb-28 sm:px-6 sm:py-6 lg:px-10 lg:py-8 lg:pb-8">
           <Outlet />
         </main>
       </div>
+      <MobileNavigation />
     </div>
   );
 }
