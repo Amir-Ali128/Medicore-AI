@@ -6,7 +6,9 @@ They are intentionally small and are not a replacement for Alembic.
 
 from __future__ import annotations
 
+import os
 import re
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -17,6 +19,7 @@ from app.domain.patient_protocol import generate_protocol_no
 # attempting the same startup migration at the same time.
 _PATIENT_PROTOCOL_MIGRATION_LOCK = 4382026
 _USER_NICKNAME_MIGRATION_LOCK = 4382027
+_ANALYTICS_PRESENCE_MIGRATION_LOCK = 4382028
 
 
 def _legacy_nickname_candidate(email: str | None, full_name: str | None, user_id: object) -> str:
@@ -192,3 +195,83 @@ async def ensure_patient_protocol_numbers(engine: AsyncEngine) -> int:
         )
 
     return len(patient_ids)
+
+
+async def ensure_analytics_presence(engine: AsyncEngine) -> None:
+    """Create the small presence table used by the admin live-traffic view."""
+
+    async with engine.begin() as connection:
+        await connection.execute(
+            text("SELECT pg_advisory_xact_lock(:lock_id)"),
+            {"lock_id": _ANALYTICS_PRESENCE_MIGRATION_LOCK},
+        )
+
+        await connection.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS analytics_presence (
+                    id UUID PRIMARY KEY,
+                    visitor_id VARCHAR(64) NOT NULL UNIQUE,
+                    user_id UUID NULL,
+                    first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    last_path VARCHAR(512) NULL,
+                    ip_address VARCHAR(64) NULL,
+                    ip_hash VARCHAR(64) NULL,
+                    country_code VARCHAR(8) NULL,
+                    country VARCHAR(128) NULL,
+                    region VARCHAR(128) NULL,
+                    city VARCHAR(128) NULL,
+                    latitude DOUBLE PRECISION NULL,
+                    longitude DOUBLE PRECISION NULL,
+                    user_agent VARCHAR(512) NULL,
+                    timezone VARCHAR(128) NULL,
+                    language VARCHAR(64) NULL,
+                    platform VARCHAR(128) NULL,
+                    request_count INTEGER NOT NULL DEFAULT 1
+                )
+                """
+            )
+        )
+        await connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_analytics_presence_last_seen "
+                "ON analytics_presence (last_seen_at DESC)"
+            )
+        )
+        await connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_analytics_presence_user_id "
+                "ON analytics_presence (user_id)"
+            )
+        )
+        await connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_analytics_presence_ip_hash "
+                "ON analytics_presence (ip_hash)"
+            )
+        )
+
+
+async def purge_old_analytics(engine: AsyncEngine) -> int:
+    """Purge presence rows older than the configured retention window at startup."""
+
+    try:
+        retention_days = max(1, int(os.getenv("ANALYTICS_RETENTION_DAYS", "30")))
+    except ValueError:
+        retention_days = 30
+
+    cutoff = datetime.now(UTC) - timedelta(days=retention_days)
+
+    async with engine.begin() as connection:
+        table = (
+            await connection.execute(text("SELECT to_regclass('public.analytics_presence')"))
+        ).scalar_one_or_none()
+        if table is None:
+            return 0
+
+        result = await connection.execute(
+            text("DELETE FROM analytics_presence WHERE last_seen_at < :cutoff"),
+            {"cutoff": cutoff},
+        )
+        return int(result.rowcount or 0)
