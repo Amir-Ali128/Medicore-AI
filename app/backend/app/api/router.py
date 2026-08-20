@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from app.api.routes import (
     analysis_runs,
+    analytics,
     auth,
     clinical_copilot,
     clinical_hypotheses,
@@ -25,6 +26,7 @@ radiology_reports.analyze_radiology_report = analyze_radiology_report_safely
 api_router = APIRouter()
 
 api_router.include_router(auth.router)
+api_router.include_router(analytics.router)
 api_router.include_router(patients.router)
 api_router.include_router(lab_analysis.router)
 api_router.include_router(combined_case_import.router)
