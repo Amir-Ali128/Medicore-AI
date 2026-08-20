@@ -25,7 +25,7 @@ const items: NavItem[] = [
 
 function mobilePrimaryItems(role: string | undefined, visibleItems: NavItem[]) {
   const preferred = role === 'admin'
-    ? ['/', '/admin/analytics', '/patient-history']
+    ? ['/', '/admin/analytics', '/analysis/mock', '/patient-history']
     : ['/', '/patients/demo', '/send', '/analysis/mock'];
 
   const selected = preferred
