@@ -198,7 +198,7 @@ async def ensure_patient_protocol_numbers(engine: AsyncEngine) -> int:
 
 
 async def ensure_analytics_presence(engine: AsyncEngine) -> None:
-    """Create the small presence table used by the admin live-traffic view."""
+    """Create or extend the small presence table used by the admin live-traffic view."""
 
     async with engine.begin() as connection:
         await connection.execute(
@@ -228,11 +228,34 @@ async def ensure_analytics_presence(engine: AsyncEngine) -> None:
                     timezone VARCHAR(128) NULL,
                     language VARCHAR(64) NULL,
                     platform VARCHAR(128) NULL,
+                    device_brand VARCHAR(128) NULL,
+                    device_model VARCHAR(192) NULL,
+                    device_type VARCHAR(32) NULL,
+                    os_name VARCHAR(128) NULL,
+                    os_version VARCHAR(128) NULL,
+                    browser_name VARCHAR(128) NULL,
+                    browser_version VARCHAR(128) NULL,
+                    architecture VARCHAR(64) NULL,
                     request_count INTEGER NOT NULL DEFAULT 1
                 )
                 """
             )
         )
+
+        # Existing deployments already have the table, so add new columns
+        # idempotently instead of relying on CREATE TABLE IF NOT EXISTS.
+        for statement in (
+            "ALTER TABLE analytics_presence ADD COLUMN IF NOT EXISTS device_brand VARCHAR(128)",
+            "ALTER TABLE analytics_presence ADD COLUMN IF NOT EXISTS device_model VARCHAR(192)",
+            "ALTER TABLE analytics_presence ADD COLUMN IF NOT EXISTS device_type VARCHAR(32)",
+            "ALTER TABLE analytics_presence ADD COLUMN IF NOT EXISTS os_name VARCHAR(128)",
+            "ALTER TABLE analytics_presence ADD COLUMN IF NOT EXISTS os_version VARCHAR(128)",
+            "ALTER TABLE analytics_presence ADD COLUMN IF NOT EXISTS browser_name VARCHAR(128)",
+            "ALTER TABLE analytics_presence ADD COLUMN IF NOT EXISTS browser_version VARCHAR(128)",
+            "ALTER TABLE analytics_presence ADD COLUMN IF NOT EXISTS architecture VARCHAR(64)",
+        ):
+            await connection.execute(text(statement))
+
         await connection.execute(
             text(
                 "CREATE INDEX IF NOT EXISTS ix_analytics_presence_last_seen "
