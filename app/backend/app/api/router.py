@@ -10,6 +10,7 @@ from app.api.routes import (
     doctor_reviews,
     extraction,
     extraction_review,
+    feedback,
     lab_analysis,
     lab_reports,
     lab_results,
@@ -27,6 +28,7 @@ api_router = APIRouter()
 
 api_router.include_router(auth.router)
 api_router.include_router(analytics.router)
+api_router.include_router(feedback.router)
 api_router.include_router(patients.router)
 api_router.include_router(lab_analysis.router)
 api_router.include_router(combined_case_import.router)
