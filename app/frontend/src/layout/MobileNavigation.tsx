@@ -18,7 +18,7 @@ const items: NavItem[] = [
   { label: 'Geri Bildirimler', shortLabel: 'Mesajlar', icon: '💬', to: '/admin/feedback', adminOnly: true },
   { label: 'Hasta Bilgileri', shortLabel: 'Hasta', icon: '👤', to: '/patients/demo' },
   { label: 'Laboratuvar Sonuçları', shortLabel: 'Sonuç', icon: '🩸', to: '/analysis/mock' },
-  { label: 'Radyoloji ve Tetkik Raporları', shortLabel: 'Radyoloji', icon: '🩻', to: '/radiology' },
+  { label: 'Radyoloji ve Diğer Tetkik Raporları', shortLabel: 'Tetkikler', icon: '🩻', to: '/radiology' },
   { label: 'Bulguları Değerlendir', shortLabel: 'Değerlendir', icon: '🧩', to: '/combined-evaluation' },
   { label: 'Trend Analizi', shortLabel: 'Trend', icon: '📈', to: '/timeline' },
   { label: 'Arşiv', shortLabel: 'Arşiv', icon: '📄', to: '/patient-history' },
