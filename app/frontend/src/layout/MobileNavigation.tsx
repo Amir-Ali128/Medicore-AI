@@ -16,21 +16,21 @@ const items: NavItem[] = [
   { label: 'Ana Sayfa', shortLabel: 'Ana', icon: '🏠', to: '/' },
   { label: 'Canlı Trafik', shortLabel: 'Trafik', icon: '📡', to: '/admin/analytics', adminOnly: true },
   { label: 'Geri Bildirimler', shortLabel: 'Mesajlar', icon: '💬', to: '/admin/feedback', adminOnly: true },
-  { label: 'Öneri / Geri Bildirim', shortLabel: 'Öneri', icon: '💡', to: '/feedback', patientOnly: true },
   { label: 'Hasta Bilgileri', shortLabel: 'Hasta', icon: '👤', to: '/patients/demo' },
-  { label: 'Gönder', shortLabel: 'Gönder', icon: '✉️', to: '/send' },
   { label: 'Laboratuvar Sonuçları', shortLabel: 'Sonuç', icon: '🩸', to: '/analysis/mock' },
   { label: 'Radyoloji ve Tetkik Raporları', shortLabel: 'Radyoloji', icon: '🩻', to: '/radiology' },
   { label: 'Bulguları Değerlendir', shortLabel: 'Değerlendir', icon: '🧩', to: '/combined-evaluation' },
   { label: 'Trend Analizi', shortLabel: 'Trend', icon: '📈', to: '/timeline' },
   { label: 'Arşiv', shortLabel: 'Arşiv', icon: '📄', to: '/patient-history' },
+  { label: 'Gönder', shortLabel: 'Gönder', icon: '✉️', to: '/send' },
+  { label: 'Önerileriniz', shortLabel: 'Öneriler', icon: '💡', to: '/feedback', patientOnly: true },
 ];
 
 function mobilePrimaryItems(role: string | undefined, visibleItems: NavItem[]) {
   const preferred = role === 'admin'
     ? ['/', '/admin/analytics', '/admin/feedback', '/patient-history']
     : role === 'patient'
-      ? ['/', '/patients/demo', '/send', '/feedback']
+      ? ['/', '/patients/demo', '/analysis/mock', '/patient-history']
       : ['/', '/patients/demo', '/send', '/analysis/mock'];
 
   const selected = preferred
