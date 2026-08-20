@@ -42,6 +42,14 @@ class HeartbeatRequest(BaseModel):
     timezone: str | None = Field(default=None, max_length=128)
     language: str | None = Field(default=None, max_length=64)
     platform: str | None = Field(default=None, max_length=128)
+    device_brand: str | None = Field(default=None, max_length=128)
+    device_model: str | None = Field(default=None, max_length=192)
+    device_type: str | None = Field(default=None, max_length=32)
+    os_name: str | None = Field(default=None, max_length=128)
+    os_version: str | None = Field(default=None, max_length=128)
+    browser_name: str | None = Field(default=None, max_length=128)
+    browser_version: str | None = Field(default=None, max_length=128)
+    architecture: str | None = Field(default=None, max_length=64)
 
 
 def _extract_client_ip(request: Request) -> str | None:
@@ -182,6 +190,14 @@ async def heartbeat(payload: HeartbeatRequest, request: Request) -> dict[str, bo
         "timezone": payload.timezone,
         "language": payload.language,
         "platform": payload.platform,
+        "device_brand": payload.device_brand,
+        "device_model": payload.device_model,
+        "device_type": payload.device_type,
+        "os_name": payload.os_name,
+        "os_version": payload.os_version,
+        "browser_name": payload.browser_name,
+        "browser_version": payload.browser_version,
+        "architecture": payload.architecture,
     }
 
     async with AsyncSessionFactory() as session:
@@ -192,12 +208,18 @@ async def heartbeat(payload: HeartbeatRequest, request: Request) -> dict[str, bo
                     id, visitor_id, user_id, first_seen_at, last_seen_at,
                     last_path, ip_address, ip_hash,
                     country_code, country, region, city, latitude, longitude,
-                    user_agent, timezone, language, platform, request_count
+                    user_agent, timezone, language, platform,
+                    device_brand, device_model, device_type,
+                    os_name, os_version, browser_name, browser_version, architecture,
+                    request_count
                 ) VALUES (
                     :id, :visitor_id, :user_id, NOW(), NOW(),
                     :last_path, :ip_address, :ip_hash,
                     :country_code, :country, :region, :city, :latitude, :longitude,
-                    :user_agent, :timezone, :language, :platform, 1
+                    :user_agent, :timezone, :language, :platform,
+                    :device_brand, :device_model, :device_type,
+                    :os_name, :os_version, :browser_name, :browser_version, :architecture,
+                    1
                 )
                 ON CONFLICT (visitor_id) DO UPDATE SET
                     user_id = COALESCE(EXCLUDED.user_id, analytics_presence.user_id),
@@ -215,6 +237,14 @@ async def heartbeat(payload: HeartbeatRequest, request: Request) -> dict[str, bo
                     timezone = EXCLUDED.timezone,
                     language = EXCLUDED.language,
                     platform = EXCLUDED.platform,
+                    device_brand = COALESCE(EXCLUDED.device_brand, analytics_presence.device_brand),
+                    device_model = COALESCE(EXCLUDED.device_model, analytics_presence.device_model),
+                    device_type = COALESCE(EXCLUDED.device_type, analytics_presence.device_type),
+                    os_name = COALESCE(EXCLUDED.os_name, analytics_presence.os_name),
+                    os_version = COALESCE(EXCLUDED.os_version, analytics_presence.os_version),
+                    browser_name = COALESCE(EXCLUDED.browser_name, analytics_presence.browser_name),
+                    browser_version = COALESCE(EXCLUDED.browser_version, analytics_presence.browser_version),
+                    architecture = COALESCE(EXCLUDED.architecture, analytics_presence.architecture),
                     request_count = analytics_presence.request_count + 1
                 """
             ),
@@ -259,6 +289,14 @@ async def live_visitors(
                         p.timezone,
                         p.language,
                         p.platform,
+                        p.device_brand,
+                        p.device_model,
+                        p.device_type,
+                        p.os_name,
+                        p.os_version,
+                        p.browser_name,
+                        p.browser_version,
+                        p.architecture,
                         p.request_count
                     FROM analytics_presence p
                     LEFT JOIN users u ON u.id = p.user_id
