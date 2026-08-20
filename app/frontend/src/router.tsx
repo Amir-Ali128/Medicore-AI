@@ -3,6 +3,7 @@ import { createHashRouter } from 'react-router-dom';
 import ProtectedRoute from './components/ProtectedRoute';
 import AppLayout from './layout/AppLayout';
 import AdminAnalyticsPage from './pages/AdminAnalyticsPage';
+import AdminFeedbackPage from './pages/AdminFeedbackPage';
 import AdminLoginPage from './pages/AdminLoginPage';
 import AnalysisResultsPage from './pages/AnalysisResultsPage';
 import CaseEvaluationPage from './pages/CaseEvaluationPage';
@@ -20,6 +21,7 @@ import PatientRecordPage from './pages/PatientRecordPage';
 import RadiologyEvaluationPage from './pages/RadiologyEvaluationPage';
 import SendPage from './pages/SendPage';
 import TimelinePage from './pages/TimelinePage';
+import UserFeedbackPage from './pages/UserFeedbackPage';
 
 export const router = createHashRouter([
   {
@@ -42,6 +44,8 @@ export const router = createHashRouter([
         children: [
           { path: '/', element: <HomePage /> },
           { path: '/admin/analytics', element: <AdminAnalyticsPage /> },
+          { path: '/admin/feedback', element: <AdminFeedbackPage /> },
+          { path: '/feedback', element: <UserFeedbackPage /> },
           { path: '/patients/demo', element: <PatientRecordPage /> },
           { path: '/patient-detail', element: <PatientRecordPage /> },
           { path: '/analysis/mock', element: <CombinedCaseWorkspacePage /> },

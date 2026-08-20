@@ -6,11 +6,14 @@ type NavItem = {
   label: string;
   to: string;
   adminOnly?: boolean;
+  patientOnly?: boolean;
 };
 
 const items: NavItem[] = [
   { label: '🏠 Ana Sayfa', to: '/' },
   { label: '📡 Canlı Trafik', to: '/admin/analytics', adminOnly: true },
+  { label: '💬 Geri Bildirimler', to: '/admin/feedback', adminOnly: true },
+  { label: '💡 Öneri / Geri Bildirim', to: '/feedback', patientOnly: true },
   { label: '👤 Hasta Bilgileri', to: '/patients/demo' },
   { label: '✉️ Gönder', to: '/send' },
   { label: '🩸 Laboratuvar Sonuçları', to: '/analysis/mock' },
@@ -30,7 +33,11 @@ const getLinkClassName = ({ isActive }: { isActive: boolean }) =>
 
 export default function Sidebar() {
   const user = getStoredUser();
-  const visibleItems = items.filter((item) => !item.adminOnly || user?.role === 'admin');
+  const visibleItems = items.filter((item) => {
+    if (item.adminOnly && user?.role !== 'admin') return false;
+    if (item.patientOnly && user?.role !== 'patient') return false;
+    return true;
+  });
 
   return (
     <aside className="fixed inset-y-0 left-0 z-30 hidden w-72 flex-col border-r border-slate-200 bg-white px-5 py-6 lg:flex">
