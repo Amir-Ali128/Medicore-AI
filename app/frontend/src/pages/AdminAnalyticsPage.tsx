@@ -75,6 +75,36 @@ function deviceTitle(session: AnalyticsSession): string {
   return model || session.platform || 'Model bilinmiyor';
 }
 
+function modelSourceLabel(source: string | null): string | null {
+  switch (source) {
+    case 'client-hints-reported':
+      return 'Tarayıcı bildirdi';
+    case 'user-agent-reported':
+      return 'User-Agent bildirdi';
+    case 'screen-profile-inferred':
+      return 'Ekran profilinden tahmin';
+    case 'screen-profile-unmatched':
+      return 'Ekran profili eşleşmedi';
+    case 'generic':
+      return 'Genel cihaz ailesi';
+    default:
+      return source;
+  }
+}
+
+function confidenceLabel(confidence: AnalyticsSession['device_model_confidence']): string | null {
+  switch (confidence) {
+    case 'high':
+      return 'Yüksek güven';
+    case 'medium':
+      return 'Orta güven';
+    case 'low':
+      return 'Düşük güven';
+    default:
+      return null;
+  }
+}
+
 export default function AdminAnalyticsPage() {
   const user = getStoredUser();
   const [minutes, setMinutes] = useState(5);
@@ -127,7 +157,7 @@ export default function AdminAnalyticsPage() {
           <p className="text-xs font-semibold uppercase tracking-wide text-cyan-700">Yönetici</p>
           <h2 className="mt-1 text-2xl font-semibold text-slate-950">Canlı trafik</h2>
           <p className="mt-1 text-sm text-slate-500">
-            Aktif ziyaretçiler, oturumlar, IP, yaklaşık konum ve tarayıcının bildirdiği cihaz bilgileri.
+            Aktif ziyaretçiler, oturumlar, IP, yaklaşık konum ve tarayıcıdan elde edilebilen cihaz bilgileri.
           </p>
         </div>
 
@@ -226,6 +256,8 @@ export default function AdminAnalyticsPage() {
                 const os = joinVersion(session.os_name, session.os_version);
                 const browser = joinVersion(session.browser_name, session.browser_version);
                 const deviceType = deviceTypeLabel(session.device_type);
+                const source = modelSourceLabel(session.device_model_source);
+                const confidence = confidenceLabel(session.device_model_confidence);
 
                 return (
                   <tr key={session.visitor_id} className="align-top">
@@ -260,6 +292,11 @@ export default function AdminAnalyticsPage() {
                     </td>
                     <td className="px-4 py-3">
                       <p className="font-medium text-slate-900">{deviceTitle(session)}</p>
+                      {(source || confidence) ? (
+                        <p className="mt-1 text-xs font-medium text-cyan-700">
+                          {[source, confidence].filter(Boolean).join(' · ')}
+                        </p>
+                      ) : null}
                       <p className="mt-1 text-xs text-slate-600">
                         {[deviceType, os].filter(Boolean).join(' · ') || session.platform || '—'}
                       </p>
@@ -295,7 +332,7 @@ export default function AdminAnalyticsPage() {
       </div>
 
       <p className="text-xs leading-5 text-slate-500">
-        Cihaz modeli ve sürüm bilgileri tarayıcının izin verdiği kadar raporlanır; bazı tarayıcılar yalnızca genel cihaz ailesini gösterir. Konum IP tabanlı yaklaşık bilgidir; GPS değildir. Bu telemetri yalnızca yönetici endpoint'inden okunur.
+        iPhone model adı Safari tarafından doğrudan verilmediğinde ekranın CSS boyutu ve piksel oranı yalnızca aday model grubu üretmek için kullanılır. Bu nedenle iPhone tahminleri kesin kimlik olarak gösterilmez. Konum IP tabanlı yaklaşık bilgidir; GPS değildir. Bu telemetri yalnızca yönetici endpoint'inden okunur.
       </p>
     </section>
   );
