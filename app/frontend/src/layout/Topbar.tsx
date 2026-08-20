@@ -34,7 +34,7 @@ export default function Topbar() {
     const hasActiveSession = hasActivePatientSession();
     const confirmed = window.confirm(
       hasActiveSession
-        ? 'Bu hastanın mevcut kayıtları geçmişe alınacak ve tüm aktif hasta alanları temizlenecek. Devam edilsin mi?'
+        ? 'Bu hastanın mevcut kayıtları arşive alınacak ve tüm aktif hasta alanları temizlenecek. Devam edilsin mi?'
         : 'Tüm aktif hasta alanları temizlenip boş bir hasta kaydı açılsın mı?',
     );
     if (!confirmed) return;
