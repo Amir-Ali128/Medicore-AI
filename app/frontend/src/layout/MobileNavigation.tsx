@@ -9,11 +9,14 @@ type NavItem = {
   icon: string;
   to: string;
   adminOnly?: boolean;
+  patientOnly?: boolean;
 };
 
 const items: NavItem[] = [
   { label: 'Ana Sayfa', shortLabel: 'Ana', icon: '🏠', to: '/' },
   { label: 'Canlı Trafik', shortLabel: 'Trafik', icon: '📡', to: '/admin/analytics', adminOnly: true },
+  { label: 'Geri Bildirimler', shortLabel: 'Mesajlar', icon: '💬', to: '/admin/feedback', adminOnly: true },
+  { label: 'Öneri / Geri Bildirim', shortLabel: 'Öneri', icon: '💡', to: '/feedback', patientOnly: true },
   { label: 'Hasta Bilgileri', shortLabel: 'Hasta', icon: '👤', to: '/patients/demo' },
   { label: 'Gönder', shortLabel: 'Gönder', icon: '✉️', to: '/send' },
   { label: 'Laboratuvar Sonuçları', shortLabel: 'Sonuç', icon: '🩸', to: '/analysis/mock' },
@@ -25,8 +28,10 @@ const items: NavItem[] = [
 
 function mobilePrimaryItems(role: string | undefined, visibleItems: NavItem[]) {
   const preferred = role === 'admin'
-    ? ['/', '/admin/analytics', '/analysis/mock', '/patient-history']
-    : ['/', '/patients/demo', '/send', '/analysis/mock'];
+    ? ['/', '/admin/analytics', '/admin/feedback', '/patient-history']
+    : role === 'patient'
+      ? ['/', '/patients/demo', '/send', '/feedback']
+      : ['/', '/patients/demo', '/send', '/analysis/mock'];
 
   const selected = preferred
     .map((path) => visibleItems.find((item) => item.to === path))
@@ -41,7 +46,11 @@ export default function MobileNavigation() {
   const [menuOpen, setMenuOpen] = useState(false);
 
   const visibleItems = useMemo(
-    () => items.filter((item) => !item.adminOnly || user?.role === 'admin'),
+    () => items.filter((item) => {
+      if (item.adminOnly && user?.role !== 'admin') return false;
+      if (item.patientOnly && user?.role !== 'patient') return false;
+      return true;
+    }),
     [user?.role],
   );
   const primaryItems = useMemo(
