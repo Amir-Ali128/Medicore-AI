@@ -31,12 +31,7 @@ def _legacy_nickname_candidate(email: str | None, full_name: str | None, user_id
 
 
 async def ensure_user_nicknames(engine: AsyncEngine) -> int:
-    """Add/backfill the nickname login identity for existing user rows.
-
-    Existing email-based accounts receive a deterministic nickname based on the
-    email local-part (for example doctor@medicore.ai -> doctor). New accounts can
-    then omit email/full_name entirely. The operation is idempotent.
-    """
+    """Add/backfill the nickname login identity for existing user rows."""
 
     async with engine.begin() as connection:
         await connection.execute(
@@ -103,7 +98,6 @@ async def ensure_user_nicknames(engine: AsyncEngine) -> int:
         await connection.execute(
             text("ALTER TABLE users ALTER COLUMN nickname SET NOT NULL")
         )
-        # Email is retained only as optional legacy/institutional metadata.
         await connection.execute(
             text("ALTER TABLE users ALTER COLUMN email DROP NOT NULL")
         )
@@ -112,12 +106,7 @@ async def ensure_user_nicknames(engine: AsyncEngine) -> int:
 
 
 async def ensure_patient_protocol_numbers(engine: AsyncEngine) -> int:
-    """Ensure every existing patient has a unique, non-null protocol number.
-
-    Returns the number of patient rows backfilled. The operation is idempotent:
-    after the first successful run, later startups only verify the schema and
-    return zero.
-    """
+    """Ensure every existing patient has a unique, non-null protocol number."""
 
     async with engine.begin() as connection:
         await connection.execute(
@@ -129,7 +118,6 @@ async def ensure_patient_protocol_numbers(engine: AsyncEngine) -> int:
             await connection.execute(text("SELECT to_regclass('public.patients')"))
         ).scalar_one_or_none()
         if patients_table is None:
-            # Fresh/dev databases are still created explicitly by init_db.py.
             return 0
 
         await connection.execute(
@@ -198,7 +186,7 @@ async def ensure_patient_protocol_numbers(engine: AsyncEngine) -> int:
 
 
 async def ensure_analytics_presence(engine: AsyncEngine) -> None:
-    """Create or extend the small presence table used by the admin live-traffic view."""
+    """Create or extend the presence table used by the admin live-traffic view."""
 
     async with engine.begin() as connection:
         await connection.execute(
@@ -230,6 +218,8 @@ async def ensure_analytics_presence(engine: AsyncEngine) -> None:
                     platform VARCHAR(128) NULL,
                     device_brand VARCHAR(128) NULL,
                     device_model VARCHAR(192) NULL,
+                    device_model_source VARCHAR(64) NULL,
+                    device_model_confidence VARCHAR(32) NULL,
                     device_type VARCHAR(32) NULL,
                     os_name VARCHAR(128) NULL,
                     os_version VARCHAR(128) NULL,
@@ -242,11 +232,11 @@ async def ensure_analytics_presence(engine: AsyncEngine) -> None:
             )
         )
 
-        # Existing deployments already have the table, so add new columns
-        # idempotently instead of relying on CREATE TABLE IF NOT EXISTS.
         for statement in (
             "ALTER TABLE analytics_presence ADD COLUMN IF NOT EXISTS device_brand VARCHAR(128)",
             "ALTER TABLE analytics_presence ADD COLUMN IF NOT EXISTS device_model VARCHAR(192)",
+            "ALTER TABLE analytics_presence ADD COLUMN IF NOT EXISTS device_model_source VARCHAR(64)",
+            "ALTER TABLE analytics_presence ADD COLUMN IF NOT EXISTS device_model_confidence VARCHAR(32)",
             "ALTER TABLE analytics_presence ADD COLUMN IF NOT EXISTS device_type VARCHAR(32)",
             "ALTER TABLE analytics_presence ADD COLUMN IF NOT EXISTS os_name VARCHAR(128)",
             "ALTER TABLE analytics_presence ADD COLUMN IF NOT EXISTS os_version VARCHAR(128)",

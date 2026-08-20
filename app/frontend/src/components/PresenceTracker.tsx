@@ -30,9 +30,13 @@ type UserAgentDataLike = {
   }>;
 };
 
+type ModelConfidence = 'high' | 'medium' | 'low';
+
 type DeviceDetails = {
   device_brand?: string;
   device_model?: string;
+  device_model_source?: string;
+  device_model_confidence?: ModelConfidence;
   device_type?: 'mobile' | 'tablet' | 'desktop';
   os_name?: string;
   os_version?: string;
@@ -40,6 +44,32 @@ type DeviceDetails = {
   browser_version?: string;
   architecture?: string;
 };
+
+type IPhoneProfile = {
+  width: number;
+  height: number;
+  dpr: number;
+  candidates: string;
+  confidence: ModelConfidence;
+};
+
+// Safari usually exposes only the iPhone family, not the exact hardware model.
+// These entries therefore produce candidate groups from CSS screen size + DPR,
+// never an "exact" claim. Newer generations can share the same profile.
+const IPHONE_SCREEN_PROFILES: IPhoneProfile[] = [
+  { width: 320, height: 568, dpr: 2, candidates: 'iPhone 5 / 5s / SE (1. nesil)', confidence: 'low' },
+  { width: 375, height: 667, dpr: 2, candidates: 'iPhone 6 / 6s / 7 / 8 / SE (2.-3. nesil)', confidence: 'low' },
+  { width: 414, height: 736, dpr: 3, candidates: 'iPhone 6 Plus / 6s Plus / 7 Plus / 8 Plus', confidence: 'medium' },
+  { width: 375, height: 812, dpr: 3, candidates: 'iPhone X / XS / 11 Pro', confidence: 'medium' },
+  { width: 414, height: 896, dpr: 2, candidates: 'iPhone XR / 11', confidence: 'medium' },
+  { width: 414, height: 896, dpr: 3, candidates: 'iPhone XS Max / 11 Pro Max', confidence: 'medium' },
+  { width: 390, height: 844, dpr: 3, candidates: 'iPhone 12 / 12 Pro / 13 / 13 Pro / 14', confidence: 'low' },
+  { width: 428, height: 926, dpr: 3, candidates: 'iPhone 12 Pro Max / 13 Pro Max / 14 Plus', confidence: 'low' },
+  { width: 393, height: 852, dpr: 3, candidates: 'iPhone 14 Pro / 15 / 15 Pro / 16 sınıfı', confidence: 'low' },
+  { width: 430, height: 932, dpr: 3, candidates: 'iPhone 14 Pro Max / 15 Plus / 15 Pro Max / 16 Plus sınıfı', confidence: 'low' },
+  { width: 402, height: 874, dpr: 3, candidates: 'iPhone 16 Pro sınıfı', confidence: 'medium' },
+  { width: 440, height: 956, dpr: 3, candidates: 'iPhone 16 Pro Max sınıfı', confidence: 'medium' },
+];
 
 function getVisitorId(): string {
   const stored = sessionStorage.getItem(VISITOR_ID_KEY);
@@ -68,8 +98,34 @@ function inferBrand(model?: string): string | undefined {
   if (!model) return undefined;
   if (/^SM-/i.test(model)) return 'Samsung';
   if (/^Pixel\b/i.test(model)) return 'Google';
-  if (/^iPhone$/i.test(model) || /^iPad$/i.test(model)) return 'Apple';
+  if (/^iPhone/i.test(model) || /^iPad/i.test(model)) return 'Apple';
   return undefined;
+}
+
+function inferIPhoneFromScreen(): Pick<DeviceDetails, 'device_model' | 'device_model_source' | 'device_model_confidence'> | null {
+  if (!/iPhone/i.test(navigator.userAgent)) return null;
+
+  const width = Math.min(window.screen.width, window.screen.height);
+  const height = Math.max(window.screen.width, window.screen.height);
+  const dpr = Math.round(window.devicePixelRatio * 100) / 100;
+
+  const profile = IPHONE_SCREEN_PROFILES.find(
+    (item) => item.width === width && item.height === height && Math.abs(item.dpr - dpr) < 0.05,
+  );
+
+  if (!profile) {
+    return {
+      device_model: `iPhone (profil ${width}×${height}@${dpr})`,
+      device_model_source: 'screen-profile-unmatched',
+      device_model_confidence: 'low',
+    };
+  }
+
+  return {
+    device_model: profile.candidates,
+    device_model_source: 'screen-profile-inferred',
+    device_model_confidence: profile.confidence,
+  };
 }
 
 function fallbackDeviceDetails(): DeviceDetails {
@@ -102,7 +158,8 @@ function fallbackDeviceDetails(): DeviceDetails {
   const isIPhone = /iPhone/i.test(ua);
   const isIPad = /iPad/i.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   const isMobile = /Mobi|Android|iPhone/i.test(ua);
-  const model = androidModel || (isIPhone ? 'iPhone' : isIPad ? 'iPad' : undefined);
+  const iphoneInference = isIPhone ? inferIPhoneFromScreen() : null;
+  const model = androidModel || iphoneInference?.device_model || (isIPhone ? 'iPhone' : isIPad ? 'iPad' : undefined);
 
   let osName: string | undefined;
   let osVersion: string | undefined;
@@ -124,6 +181,8 @@ function fallbackDeviceDetails(): DeviceDetails {
   return {
     device_brand: inferBrand(model),
     device_model: model,
+    device_model_source: androidModel ? 'user-agent-reported' : iphoneInference?.device_model_source ?? (model ? 'generic' : undefined),
+    device_model_confidence: androidModel ? 'medium' : iphoneInference?.device_model_confidence ?? (model ? 'low' : undefined),
     device_type: isIPad ? 'tablet' : isMobile ? 'mobile' : 'desktop',
     os_name: osName,
     os_version: osVersion,
@@ -158,13 +217,16 @@ async function readDeviceDetails(): Promise<DeviceDetails> {
     ]);
 
     const browser = preferredBrowser(high.fullVersionList ?? uaData.brands);
-    const model = high.model?.trim() || fallback.device_model;
+    const reportedModel = high.model?.trim();
+    const model = reportedModel || fallback.device_model;
     const architecture = [high.architecture, high.bitness].filter(Boolean).join('-') || undefined;
     const reportedMobile = high.mobile ?? uaData.mobile;
 
     return {
       device_brand: inferBrand(model) ?? fallback.device_brand,
       device_model: model,
+      device_model_source: reportedModel ? 'client-hints-reported' : fallback.device_model_source,
+      device_model_confidence: reportedModel ? 'high' : fallback.device_model_confidence,
       device_type:
         reportedMobile == null
           ? fallback.device_type

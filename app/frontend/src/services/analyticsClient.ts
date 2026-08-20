@@ -26,6 +26,8 @@ export type AnalyticsSession = {
   platform: string | null;
   device_brand: string | null;
   device_model: string | null;
+  device_model_source: string | null;
+  device_model_confidence: 'high' | 'medium' | 'low' | null;
   device_type: string | null;
   os_name: string | null;
   os_version: string | null;
