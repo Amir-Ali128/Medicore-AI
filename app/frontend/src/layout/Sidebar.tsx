@@ -33,49 +33,26 @@ export default function Sidebar() {
   const visibleItems = items.filter((item) => !item.adminOnly || user?.role === 'admin');
 
   return (
-    <>
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-72 flex-col border-r border-slate-200 bg-white px-5 py-6 lg:flex">
-        <div className="mb-5">
-          <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-blue-600 text-lg font-bold text-white shadow-sm">
-            M
-          </div>
-          <p className="mt-4 text-xs font-semibold uppercase text-cyan-700">
-            Klinik Karar Desteği
-          </p>
-          <p className="mt-1 text-xs leading-5 text-slate-500">
-            İşleme başlamak için ilgili bölümü seçin.
-          </p>
+    <aside className="fixed inset-y-0 left-0 z-30 hidden w-72 flex-col border-r border-slate-200 bg-white px-5 py-6 lg:flex">
+      <div className="mb-5">
+        <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-blue-600 text-lg font-bold text-white shadow-sm">
+          M
         </div>
-
-        <nav className="space-y-1 overflow-y-auto pr-1">
-          {visibleItems.map((item) => (
-            <NavLink key={item.to} to={item.to} className={getLinkClassName}>
-              {item.label}
-            </NavLink>
-          ))}
-        </nav>
-      </aside>
-
-      <div className="border-b border-slate-200 bg-white px-4 py-3 lg:hidden">
-        <nav className="flex gap-2 overflow-x-auto">
-          {visibleItems.map((item) => (
-            <NavLink
-              key={`${item.to}-${item.label}`}
-              to={item.to}
-              className={({ isActive }) =>
-                [
-                  'shrink-0 rounded-lg px-3 py-2 text-sm font-medium leading-5',
-                  isActive
-                    ? 'bg-blue-50 text-blue-700'
-                    : 'text-slate-600 hover:bg-slate-100',
-                ].join(' ')
-              }
-            >
-              {item.label}
-            </NavLink>
-          ))}
-        </nav>
+        <p className="mt-4 text-xs font-semibold uppercase text-cyan-700">
+          Klinik Karar Desteği
+        </p>
+        <p className="mt-1 text-xs leading-5 text-slate-500">
+          İşleme başlamak için ilgili bölümü seçin.
+        </p>
       </div>
-    </>
+
+      <nav className="space-y-1 overflow-y-auto pr-1">
+        {visibleItems.map((item) => (
+          <NavLink key={item.to} to={item.to} className={getLinkClassName}>
+            {item.label}
+          </NavLink>
+        ))}
+      </nav>
+    </aside>
   );
 }
