@@ -10,6 +10,37 @@ const API_BASE_URL =
 const VISITOR_ID_KEY = 'medicore-analytics:visitorId';
 const HEARTBEAT_INTERVAL_MS = 30_000;
 
+type BrowserBrandVersion = {
+  brand: string;
+  version: string;
+};
+
+type UserAgentDataLike = {
+  brands?: BrowserBrandVersion[];
+  mobile?: boolean;
+  platform?: string;
+  getHighEntropyValues?: (hints: string[]) => Promise<{
+    architecture?: string;
+    bitness?: string;
+    fullVersionList?: BrowserBrandVersion[];
+    mobile?: boolean;
+    model?: string;
+    platform?: string;
+    platformVersion?: string;
+  }>;
+};
+
+type DeviceDetails = {
+  device_brand?: string;
+  device_model?: string;
+  device_type?: 'mobile' | 'tablet' | 'desktop';
+  os_name?: string;
+  os_version?: string;
+  browser_name?: string;
+  browser_version?: string;
+  architecture?: string;
+};
+
 function getVisitorId(): string {
   const stored = sessionStorage.getItem(VISITOR_ID_KEY);
   if (stored) return stored;
@@ -29,11 +60,103 @@ function currentRoute(): string {
 }
 
 function browserPlatform(): string | undefined {
-  const nav = navigator as Navigator & {
-    userAgentData?: { platform?: string };
-  };
-
+  const nav = navigator as Navigator & { userAgentData?: UserAgentDataLike };
   return nav.userAgentData?.platform || navigator.platform || undefined;
+}
+
+function inferBrand(model?: string): string | undefined {
+  if (!model) return undefined;
+  if (/^SM-/i.test(model)) return 'Samsung';
+  if (/^Pixel\b/i.test(model)) return 'Google';
+  if (/^iPhone$/i.test(model) || /^iPad$/i.test(model)) return 'Apple';
+  return undefined;
+}
+
+function fallbackDeviceDetails(): DeviceDetails {
+  const ua = navigator.userAgent;
+  const android = ua.match(/Android\s+([\d.]+)/i);
+  const androidModel = ua.match(/Android[^;]*;\s*([^;)]+?)(?:\s+Build\/|;|\))/i)?.[1]?.trim();
+  const ios = ua.match(/(?:iPhone|CPU(?: iPhone)? OS)\s*([\d_]+)/i);
+  const chrome = ua.match(/(?:Chrome|CriOS)\/([\d.]+)/i);
+  const edge = ua.match(/Edg(?:A|iOS)?\/([\d.]+)/i);
+  const firefox = ua.match(/(?:Firefox|FxiOS)\/([\d.]+)/i);
+  const safari = !chrome && !edge ? ua.match(/Version\/([\d.]+).*Safari/i) : null;
+
+  let browserName: string | undefined;
+  let browserVersion: string | undefined;
+  if (edge) {
+    browserName = 'Edge';
+    browserVersion = edge[1];
+  } else if (chrome) {
+    browserName = 'Chrome';
+    browserVersion = chrome[1];
+  } else if (firefox) {
+    browserName = 'Firefox';
+    browserVersion = firefox[1];
+  } else if (safari) {
+    browserName = 'Safari';
+    browserVersion = safari[1];
+  }
+
+  const isIPhone = /iPhone/i.test(ua);
+  const isIPad = /iPad/i.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const isMobile = /Mobi|Android|iPhone/i.test(ua);
+
+  const model = androidModel || (isIPhone ? 'iPhone' : isIPad ? 'iPad' : undefined);
+
+  return {
+    device_brand: inferBrand(model),
+    device_model: model,
+    device_type: isIPad ? 'tablet' : isMobile ? 'mobile' : 'desktop',
+    os_name: android ? 'Android' : isIPhone || isIPad ? 'iOS/iPadOS' : /Windows/i.test(ua) ? 'Windows' : /Mac OS X/i.test(ua) ? 'macOS' : /Linux/i.test(ua) ? 'Linux' : undefined,
+    os_version: android?.[1] || ios?.[1]?.replaceAll('_', '.'),
+    browser_name: browserName,
+    browser_version: browserVersion,
+  };
+}
+
+function preferredBrowser(brands?: BrowserBrandVersion[]): BrowserBrandVersion | undefined {
+  if (!brands?.length) return undefined;
+  return brands.find((item) => !/not.?a.?brand|chromium/i.test(item.brand)) ?? brands[0];
+}
+
+async function readDeviceDetails(): Promise<DeviceDetails> {
+  const fallback = fallbackDeviceDetails();
+  const nav = navigator as Navigator & { userAgentData?: UserAgentDataLike };
+  const uaData = nav.userAgentData;
+
+  if (!uaData?.getHighEntropyValues) {
+    return fallback;
+  }
+
+  try {
+    const high = await uaData.getHighEntropyValues([
+      'architecture',
+      'bitness',
+      'fullVersionList',
+      'mobile',
+      'model',
+      'platform',
+      'platformVersion',
+    ]);
+
+    const browser = preferredBrowser(high.fullVersionList ?? uaData.brands);
+    const model = high.model?.trim() || fallback.device_model;
+    const architecture = [high.architecture, high.bitness].filter(Boolean).join('-') || undefined;
+
+    return {
+      device_brand: inferBrand(model) ?? fallback.device_brand,
+      device_model: model,
+      device_type: high.mobile ?? uaData.mobile ? 'mobile' : fallback.device_type,
+      os_name: high.platform || uaData.platform || fallback.os_name,
+      os_version: high.platformVersion || fallback.os_version,
+      browser_name: browser?.brand || fallback.browser_name,
+      browser_version: browser?.version || fallback.browser_version,
+      architecture,
+    };
+  } catch {
+    return fallback;
+  }
 }
 
 async function sendHeartbeat(visitorId: string): Promise<void> {
@@ -47,6 +170,7 @@ async function sendHeartbeat(visitorId: string): Promise<void> {
   }
 
   try {
+    const device = await readDeviceDetails();
     await fetch(`${API_BASE_URL.replace(/\/$/, '')}/analytics/heartbeat`, {
       method: 'POST',
       headers,
@@ -57,6 +181,7 @@ async function sendHeartbeat(visitorId: string): Promise<void> {
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         language: navigator.language,
         platform: browserPlatform(),
+        ...device,
       }),
     });
   } catch {
