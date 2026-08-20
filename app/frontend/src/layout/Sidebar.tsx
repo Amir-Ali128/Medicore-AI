@@ -13,14 +13,14 @@ const items: NavItem[] = [
   { label: '🏠 Ana Sayfa', to: '/' },
   { label: '📡 Canlı Trafik', to: '/admin/analytics', adminOnly: true },
   { label: '💬 Geri Bildirimler', to: '/admin/feedback', adminOnly: true },
-  { label: '💡 Öneri / Geri Bildirim', to: '/feedback', patientOnly: true },
   { label: '👤 Hasta Bilgileri', to: '/patients/demo' },
-  { label: '✉️ Gönder', to: '/send' },
   { label: '🩸 Laboratuvar Sonuçları', to: '/analysis/mock' },
   { label: '🩻 Radyoloji ve Tetkik Raporları', to: '/radiology' },
   { label: '🧩 Bulguları Değerlendir', to: '/combined-evaluation' },
   { label: '📈 Trend Analizi', to: '/timeline' },
   { label: '📄 Arşiv', to: '/patient-history' },
+  { label: '✉️ Gönder', to: '/send' },
+  { label: '💡 Önerileriniz', to: '/feedback', patientOnly: true },
 ];
 
 const getLinkClassName = ({ isActive }: { isActive: boolean }) =>
