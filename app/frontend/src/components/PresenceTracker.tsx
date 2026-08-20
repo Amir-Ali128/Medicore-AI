@@ -102,7 +102,37 @@ function inferBrand(model?: string): string | undefined {
   return undefined;
 }
 
-function inferIPhoneFromScreen(): Pick<DeviceDetails, 'device_model' | 'device_model_source' | 'device_model_confidence'> | null {
+function narrowIPhoneCandidatesByIOS(
+  candidates: string,
+  iosMajor?: number,
+): { candidates: string; confidence?: ModelConfidence } {
+  if (!iosMajor) return { candidates };
+
+  // Conservative compatibility pruning only. We deliberately use broad groups
+  // and do not fingerprint with canvas/WebGL/audio or claim an exact device.
+  if (candidates === 'iPhone X / XS / 11 Pro') {
+    if (iosMajor >= 26) return { candidates: 'iPhone 11 Pro', confidence: 'medium' };
+    if (iosMajor >= 17) return { candidates: 'iPhone XS / 11 Pro', confidence: 'medium' };
+  }
+
+  if (candidates === 'iPhone XR / 11' && iosMajor >= 26) {
+    return { candidates: 'iPhone 11', confidence: 'medium' };
+  }
+
+  if (candidates === 'iPhone XS Max / 11 Pro Max' && iosMajor >= 26) {
+    return { candidates: 'iPhone 11 Pro Max', confidence: 'medium' };
+  }
+
+  if (candidates === 'iPhone 6 / 6s / 7 / 8 / SE (2.-3. nesil)' && iosMajor >= 17) {
+    return { candidates: 'iPhone SE (2. / 3. nesil)', confidence: 'medium' };
+  }
+
+  return { candidates };
+}
+
+function inferIPhoneFromScreen(
+  iosMajor?: number,
+): Pick<DeviceDetails, 'device_model' | 'device_model_source' | 'device_model_confidence'> | null {
   if (!/iPhone/i.test(navigator.userAgent)) return null;
 
   const width = Math.min(window.screen.width, window.screen.height);
@@ -121,10 +151,12 @@ function inferIPhoneFromScreen(): Pick<DeviceDetails, 'device_model' | 'device_m
     };
   }
 
+  const narrowed = narrowIPhoneCandidatesByIOS(profile.candidates, iosMajor);
+
   return {
-    device_model: profile.candidates,
+    device_model: narrowed.candidates,
     device_model_source: 'screen-profile-inferred',
-    device_model_confidence: profile.confidence,
+    device_model_confidence: narrowed.confidence ?? profile.confidence,
   };
 }
 
@@ -158,7 +190,8 @@ function fallbackDeviceDetails(): DeviceDetails {
   const isIPhone = /iPhone/i.test(ua);
   const isIPad = /iPad/i.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   const isMobile = /Mobi|Android|iPhone/i.test(ua);
-  const iphoneInference = isIPhone ? inferIPhoneFromScreen() : null;
+  const iosMajor = ios?.[1] ? Number.parseInt(ios[1].split('_')[0], 10) : undefined;
+  const iphoneInference = isIPhone ? inferIPhoneFromScreen(iosMajor) : null;
   const model = androidModel || iphoneInference?.device_model || (isIPhone ? 'iPhone' : isIPad ? 'iPad' : undefined);
 
   let osName: string | undefined;
