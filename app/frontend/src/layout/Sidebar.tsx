@@ -1,12 +1,16 @@
 import { NavLink } from 'react-router-dom';
 
+import { getStoredUser } from '../services/authClient';
+
 type NavItem = {
   label: string;
   to: string;
+  adminOnly?: boolean;
 };
 
 const items: NavItem[] = [
   { label: '🏠 Ana Sayfa', to: '/' },
+  { label: '📡 Canlı Trafik', to: '/admin/analytics', adminOnly: true },
   { label: '👤 Hasta Bilgileri', to: '/patients/demo' },
   { label: '✉️ Gönder', to: '/send' },
   { label: '🩸 Laboratuvar Sonuçları', to: '/analysis/mock' },
@@ -25,6 +29,9 @@ const getLinkClassName = ({ isActive }: { isActive: boolean }) =>
   ].join(' ');
 
 export default function Sidebar() {
+  const user = getStoredUser();
+  const visibleItems = items.filter((item) => !item.adminOnly || user?.role === 'admin');
+
   return (
     <>
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-72 flex-col border-r border-slate-200 bg-white px-5 py-6 lg:flex">
@@ -41,7 +48,7 @@ export default function Sidebar() {
         </div>
 
         <nav className="space-y-1 overflow-y-auto pr-1">
-          {items.map((item) => (
+          {visibleItems.map((item) => (
             <NavLink key={item.to} to={item.to} className={getLinkClassName}>
               {item.label}
             </NavLink>
@@ -51,7 +58,7 @@ export default function Sidebar() {
 
       <div className="border-b border-slate-200 bg-white px-4 py-3 lg:hidden">
         <nav className="flex gap-2 overflow-x-auto">
-          {items.map((item) => (
+          {visibleItems.map((item) => (
             <NavLink
               key={`${item.to}-${item.label}`}
               to={item.to}
