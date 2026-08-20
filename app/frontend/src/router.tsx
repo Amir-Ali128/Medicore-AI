@@ -2,6 +2,7 @@ import { createHashRouter } from 'react-router-dom';
 
 import ProtectedRoute from './components/ProtectedRoute';
 import AppLayout from './layout/AppLayout';
+import AdminAnalyticsPage from './pages/AdminAnalyticsPage';
 import AnalysisResultsPage from './pages/AnalysisResultsPage';
 import CaseEvaluationPage from './pages/CaseEvaluationPage';
 import ClinicalHypothesesPage from './pages/ClinicalHypothesesPage';
@@ -31,6 +32,7 @@ export const router = createHashRouter([
         element: <AppLayout />,
         children: [
           { path: '/', element: <HomePage /> },
+          { path: '/admin/analytics', element: <AdminAnalyticsPage /> },
           { path: '/patients/demo', element: <PatientRecordPage /> },
           { path: '/patient-detail', element: <PatientRecordPage /> },
           { path: '/analysis/mock', element: <CombinedCaseWorkspacePage /> },

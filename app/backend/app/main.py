@@ -18,8 +18,10 @@ from app.api.routes import lab_parser_safety as _lab_parser_safety  # noqa: F401
 from app.api.routes import lab_globulin_fix as _lab_globulin_fix  # noqa: F401
 from app.infrastructure.database.session import engine
 from app.infrastructure.database.startup_migrations import (
+    ensure_analytics_presence,
     ensure_patient_protocol_numbers,
     ensure_user_nicknames,
+    purge_old_analytics,
 )
 
 
@@ -38,6 +40,15 @@ async def lifespan(_: FastAPI):
             "Patient protocol startup migration completed: "
             f"backfilled {patient_backfilled} patient(s)."
         )
+
+    await ensure_analytics_presence(engine)
+    purged_analytics_rows = await purge_old_analytics(engine)
+    if purged_analytics_rows:
+        print(
+            "Analytics retention cleanup completed: "
+            f"removed {purged_analytics_rows} stale presence row(s)."
+        )
+
     yield
 
 

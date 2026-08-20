@@ -1,6 +1,13 @@
 import { RouterProvider } from 'react-router-dom';
+
+import PresenceTracker from './components/PresenceTracker';
 import { router } from './router';
 
 export default function App() {
-  return <RouterProvider router={router} />;
+  return (
+    <>
+      <PresenceTracker />
+      <RouterProvider router={router} />
+    </>
+  );
 }
