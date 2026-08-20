@@ -25,12 +25,86 @@ function roleLabel(role: string | null) {
 }
 
 function locationLabel(session: AnalyticsSession): string {
-  return [session.city, session.region, session.country].filter(Boolean).join(', ') || '—';
+  const parts = [session.city, session.region, session.country]
+    .filter((value): value is string => Boolean(value?.trim()))
+    .map((value) => value.trim());
+  return [...new Set(parts)].join(', ') || '—';
 }
 
 function coordinatesLabel(session: AnalyticsSession): string | null {
   if (session.latitude == null || session.longitude == null) return null;
   return `${session.latitude.toFixed(4)}, ${session.longitude.toFixed(4)}`;
+}
+
+type LocationAssessment = {
+  label: 'Orta güven' | 'Orta-düşük güven' | 'Düşük güven' | 'Sinyal yok';
+  detail: string;
+};
+
+function locationAssessment(session: AnalyticsSession): LocationAssessment {
+  const hasGeo = Boolean(
+    session.city
+    || session.region
+    || session.country
+    || (session.latitude != null && session.longitude != null),
+  );
+
+  if (!hasGeo) {
+    return { label: 'Sinyal yok', detail: 'IP tabanlı konum bilgisi alınamadı.' };
+  }
+
+  const countryCode = session.country_code?.trim().toUpperCase() || null;
+  const languageRegion = session.language?.split(/[-_]/)[1]?.trim().toUpperCase() || null;
+  const languageMatchesCountry = countryCode && languageRegion
+    ? countryCode === languageRegion
+    : null;
+
+  const timezoneMatchesCountry = countryCode === 'TR' && session.timezone
+    ? session.timezone === 'Europe/Istanbul'
+    : null;
+
+  let supportingSignals = 0;
+  let conflictingSignals = 0;
+
+  if (languageMatchesCountry === true) supportingSignals += 1;
+  if (languageMatchesCountry === false) conflictingSignals += 1;
+  if (timezoneMatchesCountry === true) supportingSignals += 1;
+  if (timezoneMatchesCountry === false) conflictingSignals += 1;
+
+  if (conflictingSignals > 0) {
+    return {
+      label: 'Düşük güven',
+      detail: 'IP konumu, tarayıcının dil/bölge veya saat dilimi sinyalleriyle tam uyuşmuyor.',
+    };
+  }
+
+  if (supportingSignals >= 2) {
+    return {
+      label: 'Orta güven',
+      detail: 'IP konumu; tarayıcının dil/bölge ve saat dilimi sinyalleriyle uyumlu.',
+    };
+  }
+
+  if (supportingSignals === 1) {
+    return {
+      label: 'Orta-düşük güven',
+      detail: 'IP konumu bir tarayıcı bölge sinyaliyle uyumlu.',
+    };
+  }
+
+  return {
+    label: 'Düşük güven',
+    detail: 'Yalnızca IP GeoIP tahmini mevcut; destekleyici bölge sinyali yok.',
+  };
+}
+
+function locationConfidenceClass(label: LocationAssessment['label']): string {
+  switch (label) {
+    case 'Orta güven': return 'text-emerald-700';
+    case 'Orta-düşük güven': return 'text-amber-700';
+    case 'Düşük güven': return 'text-orange-700';
+    default: return 'text-slate-500';
+  }
 }
 
 function formatDate(value: string): string {
@@ -99,6 +173,7 @@ function SessionMobileCard({ session }: { session: AnalyticsSession }) {
   const source = modelSourceLabel(session.device_model_source);
   const confidence = confidenceLabel(session.device_model_confidence);
   const coords = coordinatesLabel(session);
+  const location = locationAssessment(session);
 
   return (
     <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -134,11 +209,13 @@ function SessionMobileCard({ session }: { session: AnalyticsSession }) {
           <p className="mt-1 break-all font-mono text-slate-700">{session.ip_address ?? 'Gizli'}</p>
         </div>
         <div className="rounded-xl border border-slate-200 p-3">
-          <p className="text-slate-400">Konum</p>
+          <p className="text-slate-400">Olası bölge</p>
           <p className="mt-1 text-slate-700">{locationLabel(session)}</p>
-          {coords ? <p className="mt-1 font-mono text-[10px] text-slate-400">{coords}</p> : null}
+          <p className={`mt-1 font-semibold ${locationConfidenceClass(location.label)}`}>{location.label}</p>
+          {coords ? <p className="mt-1 font-mono text-[10px] text-slate-400">IP merkezi: {coords}</p> : null}
         </div>
       </div>
+      <p className="mt-2 text-[11px] leading-4 text-slate-500">{location.detail}</p>
 
       <div className="mt-3 rounded-xl border border-slate-200 p-3 text-xs">
         <p className="text-slate-400">Son sayfa</p>
@@ -255,11 +332,12 @@ export default function AdminAnalyticsPage() {
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-slate-200 text-sm">
             <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
-              <tr><th className="px-4 py-3">Durum / kullanıcı</th><th className="px-4 py-3">IP</th><th className="px-4 py-3">Yaklaşık konum</th><th className="px-4 py-3">Sayfa</th><th className="px-4 py-3">Cihaz / tarayıcı</th><th className="px-4 py-3">Son görülme</th></tr>
+              <tr><th className="px-4 py-3">Durum / kullanıcı</th><th className="px-4 py-3">IP</th><th className="px-4 py-3">Olası bölge</th><th className="px-4 py-3">Sayfa</th><th className="px-4 py-3">Cihaz / tarayıcı</th><th className="px-4 py-3">Son görülme</th></tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {data?.sessions.map((session) => {
                 const coords = coordinatesLabel(session);
+                const location = locationAssessment(session);
                 const os = joinVersion(session.os_name, session.os_version);
                 const browser = joinVersion(session.browser_name, session.browser_version);
                 const source = modelSourceLabel(session.device_model_source);
@@ -268,7 +346,7 @@ export default function AdminAnalyticsPage() {
                   <tr key={session.visitor_id} className="align-top">
                     <td className="px-4 py-3"><div className="flex items-center gap-2"><span className={`h-2.5 w-2.5 rounded-full ${isOnline(session.last_seen_at) ? 'bg-emerald-500' : 'bg-slate-300'}`} /><span className="font-medium text-slate-900">{session.nickname ? `@${session.nickname}` : 'Anonim ziyaretçi'}</span></div><p className="mt-1 text-xs text-slate-500">{roleLabel(session.role)}</p></td>
                     <td className="px-4 py-3 font-mono text-xs text-slate-700">{session.ip_address ?? 'Gizli'}</td>
-                    <td className="px-4 py-3"><p className="text-slate-800">{locationLabel(session)}</p>{coords ? <p className="mt-1 font-mono text-xs text-slate-500">{coords}</p> : null}</td>
+                    <td className="px-4 py-3"><p className="text-slate-800">{locationLabel(session)}</p><p className={`mt-1 text-xs font-semibold ${locationConfidenceClass(location.label)}`}>{location.label}</p><p className="mt-1 max-w-xs text-xs leading-4 text-slate-500">{location.detail}</p>{coords ? <p className="mt-1 font-mono text-xs text-slate-500">IP merkezi: {coords}</p> : null}</td>
                     <td className="px-4 py-3"><p className="max-w-xs break-all font-mono text-xs text-slate-700">{session.last_path ?? '—'}</p><p className="mt-1 text-xs text-slate-500">{session.request_count} heartbeat</p></td>
                     <td className="px-4 py-3"><p className="font-medium text-slate-900">{deviceTitle(session)}</p>{(source || confidence) ? <p className="mt-1 text-xs font-medium text-cyan-700">{[source, confidence].filter(Boolean).join(' · ')}</p> : null}<p className="mt-1 text-xs text-slate-600">{[deviceTypeLabel(session.device_type), os].filter(Boolean).join(' · ') || session.platform || '—'}</p>{browser ? <p className="mt-1 text-xs text-slate-600">{browser}</p> : null}</td>
                     <td className="whitespace-nowrap px-4 py-3 text-xs text-slate-600">{formatDate(session.last_seen_at)}</td>
@@ -281,7 +359,7 @@ export default function AdminAnalyticsPage() {
         </div>
       </div>
 
-      <p className="text-xs leading-5 text-slate-500">iPhone model adı Safari tarafından doğrudan verilmediğinde ekran profili yalnızca aday model grubu üretmek için kullanılır. Konum IP tabanlı yaklaşık bilgidir; GPS değildir.</p>
+      <p className="text-xs leading-5 text-slate-500">iPhone model adı Safari tarafından doğrudan verilmediğinde ekran profili yalnızca aday model grubu üretmek için kullanılır. Olası bölge, IP GeoIP sonucunun tarayıcı dil/bölge ve saat dilimi gibi kaba sinyallerle uyumuna göre derecelendirilir; GPS veya sokak hassasiyeti değildir.</p>
     </section>
   );
 }
