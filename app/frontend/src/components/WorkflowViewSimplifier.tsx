@@ -24,6 +24,22 @@ function removeRadiologyHistory() {
   card?.remove();
 }
 
+function removePatientAutosaveBanner() {
+  const elements = Array.from(document.querySelectorAll('p, h1, h2, h3'));
+  const title = elements.find(
+    (element) => normalizedText(element) === 'Klinik bilgiler otomatik kaydedilir',
+  );
+  title?.parentElement?.parentElement?.remove();
+}
+
+function removePdfHeadingGuide() {
+  const elements = Array.from(document.querySelectorAll('p, h1, h2, h3'));
+  const title = elements.find(
+    (element) => normalizedText(element).toLocaleLowerCase('tr-TR') === 'pdf başlık düzeni',
+  );
+  title?.closest('div')?.remove();
+}
+
 function activateRequestedEntry(pathname: string, search: string) {
   const entry = new URLSearchParams(search).get('entry');
   if (!entry) return;
@@ -59,7 +75,21 @@ export default function WorkflowViewSimplifier() {
   useEffect(() => {
     const apply = () => {
       removeAssociatedSymptomsField();
-      if (location.pathname === '/radiology') removeRadiologyHistory();
+
+      if (location.pathname === '/radiology') {
+        removeRadiologyHistory();
+      }
+
+      if (
+        location.pathname === '/patients/demo' ||
+        location.pathname === '/patient-detail'
+      ) {
+        removePatientAutosaveBanner();
+      }
+
+      if (location.pathname === '/analysis/mock' || location.pathname === '/case-import') {
+        removePdfHeadingGuide();
+      }
     };
 
     apply();
