@@ -15,6 +15,7 @@ import DoctorWorklistPage from './pages/DoctorWorklistPage';
 import ExtractionReviewPage from './pages/ExtractionReviewPage';
 import HomePage from './pages/HomePage';
 import LoginPage from './pages/LoginPage';
+import MockAnalysisPage from './pages/MockAnalysisPage';
 import ModulePreviewPage from './pages/ModulePreviewPage';
 import PatientHistoryPage from './pages/PatientHistoryPage';
 import PatientRecordPage from './pages/PatientRecordPage';
@@ -48,7 +49,7 @@ export const router = createHashRouter([
           { path: '/feedback', element: <UserFeedbackPage /> },
           { path: '/patients/demo', element: <PatientRecordPage /> },
           { path: '/patient-detail', element: <PatientRecordPage /> },
-          { path: '/analysis/mock', element: <CombinedCaseWorkspacePage /> },
+          { path: '/analysis/mock', element: <MockAnalysisPage /> },
           { path: '/case-import', element: <CombinedCaseWorkspacePage /> },
           { path: '/radiology', element: <RadiologyEvaluationPage /> },
           { path: '/send', element: <SendPage /> },
