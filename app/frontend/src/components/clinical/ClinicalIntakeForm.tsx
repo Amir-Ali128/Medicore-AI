@@ -305,7 +305,6 @@ export default function ClinicalIntakeForm({
               <option value="male">Erkek</option>
               <option value="female">Kadın</option>
               <option value="other">Diğer</option>
-              <option value="unknown">Bilinmiyor</option>
             </select>
           </label>
 
