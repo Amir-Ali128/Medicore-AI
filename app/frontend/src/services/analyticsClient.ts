@@ -24,6 +24,14 @@ export type AnalyticsSession = {
   timezone: string | null;
   language: string | null;
   platform: string | null;
+  device_brand: string | null;
+  device_model: string | null;
+  device_type: string | null;
+  os_name: string | null;
+  os_version: string | null;
+  browser_name: string | null;
+  browser_version: string | null;
+  architecture: string | null;
   request_count: number;
 };
 
