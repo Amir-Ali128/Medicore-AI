@@ -1,8 +1,14 @@
 import { useEffect } from 'react';
 
 const REPLACEMENTS: Array<[string, string]> = [
-  ['Radyoloji Rapor Analizi', 'Radyoloji ve Tetkik Raporları'],
-  ['Radyoloji Raporları', 'Radyoloji ve Tetkik Raporları'],
+  ['Radyoloji Rapor Analizi', 'Radyoloji ve Diğer Tetkik Raporları'],
+  ['Radyoloji Raporları', 'Radyoloji ve Diğer Tetkik Raporları'],
+  ['Radyoloji ve Tetkik Raporları', 'Radyoloji ve Diğer Tetkik Raporları'],
+  ['Radyoloji Raporu', 'Radyoloji ve Diğer Tetkik Raporları'],
+  [
+    'Rapor metnini yapıştırın veya PDF yükleyin. Rapor değerlendirilip hasta kaydına eklenir.',
+    'Rapor metnini yapıştırın veya bir ya da birden fazla PDF yükleyin. Raporlar değerlendirilip hasta kaydına eklenir.',
+  ],
 ];
 
 const EXTRA_REPORT_TYPES = [
