@@ -5,6 +5,9 @@ export default function HomePage() {
         <p className="text-sm font-semibold uppercase tracking-wide text-cyan-700">
           MediCore AI
         </p>
+        <p className="mt-4 max-w-3xl text-lg font-medium leading-8 text-slate-800">
+          Burada şikayetleriniz, muayene bulgularınız, öz ve aile geçmişiniz, kullandığınız ilaçlar ile laboratuvar, radyolojik ve diğer tetkiklerinizin eş zamanlı olarak değerlendirilmesi amaçlanmıştır.
+        </p>
         <p className="mt-4 max-w-3xl text-base leading-7 text-slate-600">
           İşleme başlamak için aşağıdaki ilgili bölüme tıklayın.
         </p>
