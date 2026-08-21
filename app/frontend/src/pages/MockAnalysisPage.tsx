@@ -1,12 +1,17 @@
 import { useMemo, useState, type ChangeEvent } from 'react';
 
-import { createEmptyClinicalIntake } from '../components/clinical/ClinicalIntakeForm';
+import {
+  createEmptyClinicalIntake,
+  readStoredClinicalIntake,
+} from '../components/clinical/ClinicalIntakeForm';
 import {
   uploadLabReportPdf,
   type LabAnalysisResponse,
   type LabAnalysisResult,
   type LabResultStatus,
 } from '../services/labAnalysisClient';
+import { saveLabReportToPatient } from '../services/labArchiveClient';
+import { getActivePatientId } from '../services/patientClient';
 
 type ResultTone = 'low' | 'high' | 'review';
 
@@ -14,6 +19,7 @@ type LabUploadResult = {
   fileName: string;
   result?: LabAnalysisResponse;
   error?: string;
+  saved?: boolean;
 };
 
 function fileKey(file: File) {
@@ -49,12 +55,10 @@ function formatReference(result: LabAnalysisResult) {
 
 function ResultGroup({
   title,
-  description,
   results,
   tone,
 }: {
   title: string;
-  description: string;
   results: LabAnalysisResult[];
   tone: ResultTone;
 }) {
@@ -75,32 +79,25 @@ function ResultGroup({
 
   return (
     <section className={`overflow-hidden rounded-xl border ${border}`}>
-      <div
-        className={`flex flex-col gap-1 px-4 py-3 sm:flex-row sm:items-center sm:justify-between ${header}`}
-      >
-        <div>
-          <h3 className="font-semibold">{title}</h3>
-          <p className="mt-1 text-sm opacity-80">{description}</p>
-        </div>
+      <div className={`flex items-center justify-between px-4 py-3 ${header}`}>
+        <h3 className="font-semibold">{title}</h3>
         <span className="text-sm font-semibold">{results.length} sonuç</span>
       </div>
       <div className="overflow-x-auto bg-white">
         <table className="min-w-full divide-y divide-slate-200">
           <thead className="bg-slate-50">
             <tr>
-              {['Test', 'Sonuç', 'Referans Aralığı', 'Durum', 'Açıklama'].map(
-                (heading) => (
-                  <th
-                    key={heading}
-                    className="px-4 py-3 text-left text-xs font-semibold uppercase text-slate-500"
-                  >
-                    {heading}
-                  </th>
-                ),
-              )}
+              {['Test', 'Sonuç', 'Referans', 'Durum', 'Açıklama'].map((heading) => (
+                <th
+                  key={heading}
+                  className="px-4 py-3 text-left text-xs font-semibold uppercase text-slate-500"
+                >
+                  {heading}
+                </th>
+              ))}
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-200 bg-white">
+          <tbody className="divide-y divide-slate-200">
             {results.map((result) => (
               <tr key={result.lab_result_id}>
                 <td className="px-4 py-4 font-medium text-slate-950">
@@ -131,8 +128,10 @@ export default function MockAnalysisPage() {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [uploadResults, setUploadResults] = useState<LabUploadResult[]>([]);
   const [backendResult, setBackendResult] = useState<LabAnalysisResponse | null>(null);
-  const [backendError, setBackendError] = useState('');
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
   const [isUploading, setIsUploading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [progress, setProgress] = useState('');
 
   const groupedResults = useMemo(() => {
@@ -147,6 +146,8 @@ export default function MockAnalysisPage() {
     };
   }, [backendResult]);
 
+  const unsavedResults = uploadResults.filter((item) => item.result && !item.saved);
+
   function addFiles(event: ChangeEvent<HTMLInputElement>) {
     const incoming = Array.from(event.target.files ?? []).filter((file) =>
       file.name.toLowerCase().endsWith('.pdf'),
@@ -157,26 +158,24 @@ export default function MockAnalysisPage() {
       return [...current, ...incoming.filter((file) => !existing.has(fileKey(file)))];
     });
     setUploadResults([]);
-    setBackendError('');
+    setMessage('');
+    setError('');
     event.target.value = '';
   }
 
-  function removeFile(file: File) {
-    setSelectedFiles((current) =>
-      current.filter((item) => fileKey(item) !== fileKey(file)),
-    );
-    setUploadResults([]);
-    setBackendError('');
-  }
-
   async function handleUpload() {
+    if (!getActivePatientId()) {
+      setError('Önce Hasta Bilgileri bölümünde Kaydet’e basarak aktif hasta kaydını oluşturmalısın.');
+      return;
+    }
     if (selectedFiles.length === 0) {
-      setBackendError('Önce en az bir PDF dosyası seçmelisin.');
+      setError('Önce en az bir PDF dosyası seçmelisin.');
       return;
     }
 
     setIsUploading(true);
-    setBackendError('');
+    setError('');
+    setMessage('');
     setUploadResults([]);
 
     const nextResults: LabUploadResult[] = [];
@@ -190,18 +189,17 @@ export default function MockAnalysisPage() {
       try {
         const result = await uploadLabReportPdf(file, createEmptyClinicalIntake());
         latestSuccessful = result;
-        nextResults.push({ fileName: file.name, result });
-      } catch (error) {
+        nextResults.push({ fileName: file.name, result, saved: false });
+      } catch (uploadError) {
         failedFiles.push(file);
         nextResults.push({
           fileName: file.name,
           error:
-            error instanceof Error
-              ? error.message
+            uploadError instanceof Error
+              ? uploadError.message
               : 'Laboratuvar analizi başarısız oldu.',
         });
       }
-
       setUploadResults([...nextResults]);
     }
 
@@ -210,8 +208,55 @@ export default function MockAnalysisPage() {
     setProgress('');
     setIsUploading(false);
 
-    if (!latestSuccessful) {
-      setBackendError('Seçilen PDF dosyalarının hiçbiri analiz edilemedi.');
+    if (latestSuccessful) {
+      setMessage('Analiz tamamlandı. Sonuçları hastanın arşivine eklemek için Kaydet’e bas.');
+    } else {
+      setError('Seçilen PDF dosyalarının hiçbiri analiz edilemedi.');
+    }
+  }
+
+  async function handleSave() {
+    const patientId = getActivePatientId();
+    if (!patientId) {
+      setError('Aktif hasta bulunamadı. Önce Hasta Bilgileri bölümünde Kaydet’e bas.');
+      return;
+    }
+    if (unsavedResults.length === 0) return;
+
+    const clinicalContext = readStoredClinicalIntake() ?? createEmptyClinicalIntake();
+    setIsSaving(true);
+    setError('');
+    setMessage('');
+
+    const savedIds = new Set<string>();
+    try {
+      for (const item of unsavedResults) {
+        if (!item.result) continue;
+        await saveLabReportToPatient(
+          item.result.lab_report_id,
+          patientId,
+          clinicalContext,
+          item.result.patient,
+        );
+        savedIds.add(item.result.lab_report_id);
+      }
+
+      setUploadResults((current) =>
+        current.map((item) =>
+          item.result && savedIds.has(item.result.lab_report_id)
+            ? { ...item, saved: true }
+            : item,
+        ),
+      );
+      setMessage('Laboratuvar sonuçları aynı hastanın arşivine kaydedildi.');
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : 'Laboratuvar sonuçları arşive kaydedilemedi.',
+      );
+    } finally {
+      setIsSaving(false);
     }
   }
 
@@ -220,7 +265,7 @@ export default function MockAnalysisPage() {
       <header>
         <h1 className="text-2xl font-semibold text-slate-950">Laboratuvar Raporları</h1>
         <p className="mt-2 text-sm leading-6 text-slate-500">
-          Bir veya daha fazla laboratuvar PDF&apos;si yükleyin. Raporlar analiz edilip kaydedilir.
+          PDF&apos;leri analiz edin; ardından Kaydet ile aktif hastanın arşivine ekleyin.
         </p>
       </header>
 
@@ -232,67 +277,48 @@ export default function MockAnalysisPage() {
           onChange={addFiles}
           className="block w-full text-sm text-slate-600 file:mr-4 file:rounded-lg file:border-0 file:bg-blue-700 file:px-4 file:py-2.5 file:text-sm file:font-semibold file:text-white hover:file:bg-blue-800"
         />
+        <p className="mt-3 text-xs leading-5 text-amber-700">
+          Dosyalarda isim, soyisim, T.C. kimlik numarası veya benzeri doğrudan kişisel tanımlayıcılar bulunmamalıdır.
+        </p>
 
         {selectedFiles.length > 0 ? (
           <div className="mt-4 space-y-2">
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-sm font-semibold text-slate-900">
-                Seçilen dosyalar ({selectedFiles.length})
-              </p>
-              <button
-                type="button"
-                onClick={() => {
-                  setSelectedFiles([]);
-                  setUploadResults([]);
-                  setBackendError('');
-                }}
-                disabled={isUploading}
-                className="text-xs font-semibold text-slate-500 hover:text-red-600 disabled:opacity-50"
-              >
-                Temizle
-              </button>
-            </div>
-
-            <div className="max-h-48 space-y-2 overflow-y-auto">
-              {selectedFiles.map((file) => (
-                <div
-                  key={fileKey(file)}
-                  className="flex items-center justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2"
+            {selectedFiles.map((file) => (
+              <div key={fileKey(file)} className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2">
+                <span className="truncate text-sm font-medium text-slate-900">{file.name}</span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedFiles((current) => current.filter((item) => fileKey(item) !== fileKey(file)))}
+                  disabled={isUploading}
+                  className="ml-3 text-xs font-semibold text-red-600 disabled:opacity-50"
                 >
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-slate-900">
-                      {file.name}
-                    </p>
-                    <p className="text-xs text-slate-500">
-                      {(file.size / (1024 * 1024)).toFixed(2)} MB
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => removeFile(file)}
-                    disabled={isUploading}
-                    className="shrink-0 text-xs font-semibold text-red-600 disabled:opacity-50"
-                  >
-                    Kaldır
-                  </button>
-                </div>
-              ))}
-            </div>
+                  Kaldır
+                </button>
+              </div>
+            ))}
           </div>
         ) : null}
 
-        <button
-          type="button"
-          onClick={handleUpload}
-          disabled={isUploading || selectedFiles.length === 0}
-          className="mt-4 w-full rounded-lg bg-blue-700 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
-        >
-          {isUploading
-            ? progress || 'Analiz ediliyor…'
-            : selectedFiles.length > 1
-              ? `${selectedFiles.length} PDF’yi analiz et`
-              : 'PDF’yi analiz et'}
-        </button>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={handleUpload}
+            disabled={isUploading || selectedFiles.length === 0}
+            className="rounded-lg bg-blue-700 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isUploading ? progress || 'Analiz ediliyor…' : 'PDF’yi analiz et'}
+          </button>
+          {unsavedResults.length > 0 ? (
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={isSaving}
+              className="rounded-lg bg-emerald-700 px-5 py-3 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {isSaving ? 'Kaydediliyor…' : 'Kaydet'}
+            </button>
+          ) : null}
+        </div>
       </section>
 
       {uploadResults.length > 0 ? (
@@ -303,23 +329,32 @@ export default function MockAnalysisPage() {
               className={`rounded-lg border px-4 py-3 text-sm ${
                 item.error
                   ? 'border-red-200 bg-red-50 text-red-800'
-                  : 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                  : item.saved
+                    ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                    : 'border-blue-200 bg-blue-50 text-blue-800'
               }`}
             >
               <strong>{item.fileName}</strong>
               <span className="ml-2">
                 {item.error
                   ? `— ${item.error}`
-                  : `— analiz edildi (${item.result?.counts.total ?? 0} sonuç)`}
+                  : item.saved
+                    ? '— arşive kaydedildi'
+                    : `— analiz edildi (${item.result?.counts.total ?? 0} sonuç)`}
               </span>
             </div>
           ))}
         </div>
       ) : null}
 
-      {backendError ? (
+      {message ? (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
+          {message}
+        </div>
+      ) : null}
+      {error ? (
         <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">
-          {backendError}
+          {error}
         </div>
       ) : null}
 
@@ -344,24 +379,9 @@ export default function MockAnalysisPage() {
             </div>
           </div>
 
-          <ResultGroup
-            title="Yüksek Sonuçlar"
-            description="Referans aralığının üzerindeki sonuçlar."
-            results={groupedResults.high}
-            tone="high"
-          />
-          <ResultGroup
-            title="Düşük Sonuçlar"
-            description="Referans aralığının altındaki sonuçlar."
-            results={groupedResults.low}
-            tone="low"
-          />
-          <ResultGroup
-            title="Hekim Kontrolü Gerekenler"
-            description="Belirsiz veya referans bilgisi yetersiz sonuçlar."
-            results={groupedResults.review}
-            tone="review"
-          />
+          <ResultGroup title="Yüksek Sonuçlar" results={groupedResults.high} tone="high" />
+          <ResultGroup title="Düşük Sonuçlar" results={groupedResults.low} tone="low" />
+          <ResultGroup title="Hekim Kontrolü Gerekenler" results={groupedResults.review} tone="review" />
         </section>
       ) : null}
     </div>
