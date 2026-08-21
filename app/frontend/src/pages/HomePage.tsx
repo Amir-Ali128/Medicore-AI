@@ -1,4 +1,27 @@
+import { useState } from 'react';
+
+const LEGAL_ACK_KEY = 'medicore:legalWarningsAcknowledged:v1';
+
+function readAcknowledged() {
+  try {
+    return localStorage.getItem(LEGAL_ACK_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
 export default function HomePage() {
+  const [acknowledged, setAcknowledged] = useState(readAcknowledged);
+
+  function acknowledgeWarnings() {
+    try {
+      localStorage.setItem(LEGAL_ACK_KEY, 'true');
+    } catch {
+      // The acknowledgement still updates for this page if storage is unavailable.
+    }
+    setAcknowledged(true);
+  }
+
   return (
     <div className="space-y-6">
       <header>
@@ -19,12 +42,32 @@ export default function HomePage() {
       <section className="rounded-xl border border-amber-200 bg-amber-50 p-5">
         <h2 className="text-base font-semibold text-amber-950">Önemli Uyarılar</h2>
         <ul className="mt-3 list-disc space-y-2 pl-5 text-sm leading-7 text-amber-900">
-          <li>MediCore AI bir klinik karar destek sistemidir; kesin tanı veya tedavi kararı vermez.</li>
-          <li>Sistem çıktıları hatalı veya eksik olabilir ve hekim değerlendirmesinin yerine geçmez.</li>
+          <li>
+            MediCore AI bir değerlendirme ve Klinik Karar Destek Sistemidir (KKDS); kesin tanı veya tedavi kararı vermez.
+          </li>
+          <li>
+            Sistem çıktıları hatalı veya eksik olabilir ve hekim değerlendirmesinin yerine geçmez.
+          </li>
+          <li>
+            Verileri yüklerken isim, soyisim, T.C. kimlik numarası ve benzeri doğrudan kişisel tanımlayıcıları içermeyecek şekilde yükleyiniz.
+          </li>
           <li>Doktorunuza danışmadan ilaç başlamayın, bırakmayın veya doz değiştirmeyin.</li>
           <li>Yalnızca sistem çıktısına dayanarak tetkik veya tıbbi işlem kararı almayın.</li>
           <li>Acil veya ciddi bir sağlık sorunu şüphesinde doğrudan uygun sağlık kuruluşuna başvurun.</li>
         </ul>
+
+        <button
+          type="button"
+          onClick={acknowledgeWarnings}
+          disabled={acknowledged}
+          className={`mt-5 rounded-lg px-5 py-2.5 text-sm font-semibold transition ${
+            acknowledged
+              ? 'cursor-default bg-emerald-100 text-emerald-800'
+              : 'bg-amber-900 text-white hover:bg-amber-950'
+          }`}
+        >
+          {acknowledged ? '✓ Okudum ve anladım' : 'Okudum ve anladım'}
+        </button>
       </section>
     </div>
   );
