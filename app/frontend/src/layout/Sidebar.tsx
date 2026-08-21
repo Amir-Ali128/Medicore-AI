@@ -1,4 +1,4 @@
-import { NavLink } from 'react-router-dom';
+import { Link, NavLink } from 'react-router-dom';
 
 import { getStoredUser } from '../services/authClient';
 
@@ -42,9 +42,15 @@ export default function Sidebar() {
   return (
     <aside className="fixed inset-y-0 left-0 z-30 hidden w-72 flex-col border-r border-slate-200 bg-white px-5 py-6 lg:flex">
       <div className="mb-5">
-        <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-blue-600 text-lg font-bold text-white shadow-sm">
-          M
-        </div>
+        <Link
+          to="/"
+          aria-label="MediCore AI ana sayfa"
+          className="inline-flex rounded-lg outline-none transition hover:opacity-80 focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+        >
+          <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-blue-600 text-lg font-bold text-white shadow-sm">
+            M
+          </div>
+        </Link>
         <p className="mt-4 text-xs font-semibold uppercase text-cyan-700">
           Klinik Karar Desteği
         </p>
