@@ -176,13 +176,14 @@ export async function uploadRadiologyReportFile(
 export const uploadRadiologyReportPdf = uploadRadiologyReportFile;
 
 export async function listPatientRadiologyReports(
-  patientId: string | null = getActiveRadiologyPatientId(),
+  patientId?: string | null,
   options: ListRadiologyOptions = {},
 ): Promise<RadiologyReport[]> {
-  if (!patientId) return [];
+  const resolvedPatientId = patientId ?? getActiveRadiologyPatientId();
+  if (!resolvedPatientId) return [];
 
   const response = await fetch(
-    `${API_BASE_URL}/radiology-reports/patient/${patientId}?limit=50`,
+    `${API_BASE_URL}/radiology-reports/patient/${resolvedPatientId}?limit=50`,
     { headers: authHeaders() },
   );
   if (!response.ok) {
