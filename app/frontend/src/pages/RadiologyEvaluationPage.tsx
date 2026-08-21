@@ -5,17 +5,23 @@ import {
   deleteRadiologyReport,
   downloadRadiologyOriginalFile,
   isAnalyzableRadiologyReport,
+  isVisualAiReview,
   listPatientRadiologyReports,
+  uploadRadiologyImageReview,
   uploadRadiologyReportFile,
+  type RadiologyImageModality,
   type RadiologyReport,
 } from '../services/radiologyClient';
 
 const INPUT_CLASS =
   'block w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-950 placeholder:text-slate-400';
 
+type FilePurpose = 'report' | 'xray' | 'ultrasound';
+
 type FileUploadResult = {
   fileName: string;
   analyzed?: boolean;
+  visualAi?: boolean;
   error?: string;
 };
 
@@ -28,8 +34,24 @@ function formatDate(value: string | null) {
   return new Intl.DateTimeFormat('tr-TR', { dateStyle: 'medium' }).format(new Date(value));
 }
 
+function isSupportedVisualImage(file: File) {
+  const mediaType = file.type.toLowerCase();
+  const extension = file.name.toLowerCase().split('.').pop() ?? '';
+  return (
+    ['image/jpeg', 'image/png', 'image/webp'].includes(mediaType) ||
+    ['jpg', 'jpeg', 'png', 'webp'].includes(extension)
+  );
+}
+
+function purposeModality(purpose: FilePurpose): RadiologyImageModality | null {
+  if (purpose === 'xray') return 'XRAY';
+  if (purpose === 'ultrasound') return 'ULTRASOUND';
+  return null;
+}
+
 export default function RadiologyEvaluationPage() {
   const [mode, setMode] = useState<'manual' | 'file'>('manual');
+  const [filePurpose, setFilePurpose] = useState<FilePurpose>('report');
   const [reportText, setReportText] = useState('');
   const [files, setFiles] = useState<File[]>([]);
   const [uploadResults, setUploadResults] = useState<FileUploadResult[]>([]);
@@ -125,20 +147,27 @@ export default function RadiologyEvaluationPage() {
 
         const results: FileUploadResult[] = [];
         const failed: File[] = [];
+        const modality = purposeModality(filePurpose);
 
         for (let index = 0; index < files.length; index += 1) {
           const file = files[index];
-          setProgress(`${index + 1}/${files.length} · ${file.name} yükleniyor`);
+          const wantsVisualAi = Boolean(modality) && isSupportedVisualImage(file);
+          setProgress(
+            `${index + 1}/${files.length} · ${file.name} ${wantsVisualAi ? 'AI ile inceleniyor' : 'yükleniyor'}`,
+          );
 
           try {
-            const report = await uploadRadiologyReportFile(file, {
-              reportDate: new Date().toISOString().slice(0, 10),
-              modality: null,
-              bodyPart: null,
-            });
+            const report = wantsVisualAi && modality
+              ? await uploadRadiologyImageReview(file, modality)
+              : await uploadRadiologyReportFile(file, {
+                  reportDate: new Date().toISOString().slice(0, 10),
+                  modality,
+                  bodyPart: null,
+                });
             results.push({
               fileName: file.name,
               analyzed: isAnalyzableRadiologyReport(report),
+              visualAi: isVisualAiReview(report),
             });
           } catch (uploadError) {
             failed.push(file);
@@ -159,7 +188,7 @@ export default function RadiologyEvaluationPage() {
           setStatus(`${successful} dosya aktif hastanın kaydına eklendi.`);
         }
         if (failed.length > 0) {
-          setError(`${failed.length} dosya yüklenemedi; listede kalanları tekrar deneyebilirsin.`);
+          setError(`${failed.length} dosya işlenemedi; listede kalanları tekrar deneyebilirsin.`);
         }
       }
 
@@ -221,7 +250,7 @@ export default function RadiologyEvaluationPage() {
           Radyoloji ve Diğer Tetkik Raporları
         </h1>
         <p className="mt-2 text-sm leading-6 text-slate-500">
-          Rapor metni girebilir veya bir ya da birden fazla dosya yükleyebilirsin.
+          Rapor metni, dosya veya şimdilik röntgen/ultrason görüntüsü ekleyebilirsin.
         </p>
       </header>
 
@@ -247,7 +276,7 @@ export default function RadiologyEvaluationPage() {
                 : 'border-slate-200 text-slate-600'
             }`}
           >
-            Dosya yükle
+            Dosya / görüntü yükle
           </button>
         </div>
 
@@ -262,16 +291,37 @@ export default function RadiologyEvaluationPage() {
             placeholder="Rapor metnini buraya yapıştırın..."
           />
         ) : (
-          <div className="mt-4 space-y-3">
+          <div className="mt-4 space-y-4">
+            <label className="block max-w-sm text-sm font-medium text-slate-800">
+              Yükleme türü
+              <select
+                value={filePurpose}
+                onChange={(event) => setFilePurpose(event.target.value as FilePurpose)}
+                className={`${INPUT_CLASS} mt-2`}
+              >
+                <option value="report">Rapor / diğer dosya</option>
+                <option value="xray">Röntgen görüntüsü</option>
+                <option value="ultrasound">Ultrason görüntüsü</option>
+              </select>
+            </label>
+
             <input
               type="file"
               multiple
               onChange={addFiles}
               className="block w-full text-sm text-slate-600 file:mr-4 file:rounded-lg file:border-0 file:bg-blue-700 file:px-4 file:py-2.5 file:text-sm file:font-semibold file:text-white hover:file:bg-blue-800"
             />
-            <p className="text-xs leading-5 text-slate-500">
-              Tüm dosya türleri seçilebilir. PDF ve metin tabanlı dosyalar uygun olduğunda otomatik değerlendirilir; görüntü, DICOM, DOCX ve diğer formatlar dosya olarak saklanır ve otomatik görüntü yorumu yapılmaz. Dosya başına sınır 15 MB'dır.
-            </p>
+
+            {filePurpose === 'report' ? (
+              <p className="text-xs leading-5 text-slate-500">
+                Tüm dosya türleri seçilebilir. PDF ve metin tabanlı dosyalar uygun olduğunda değerlendirilir; diğer formatlar arşivlenir. Dosya başına sınır 15 MB'dır.
+              </p>
+            ) : (
+              <div className="rounded-lg border border-violet-200 bg-violet-50 p-3 text-xs leading-5 text-violet-900">
+                JPG, PNG veya WEBP görüntülerinde deneysel <strong>AI (DL/ML) ön değerlendirmesi</strong> çalışır. DICOM ve diğer formatlar aynı hastaya dosya olarak kaydedilir ancak şimdilik görüntü modeli tarafından yorumlanmaz. Bu çıktı tanı değildir ve hekim/radyolog doğrulaması gerektirir.
+              </div>
+            )}
+
             <p className="text-xs leading-5 text-amber-700">
               Yüklenen dosyalarda isim, soyisim, T.C. kimlik numarası veya benzeri doğrudan kişisel tanımlayıcılar bulunmamalıdır.
             </p>
@@ -308,7 +358,9 @@ export default function RadiologyEvaluationPage() {
             ? progress || 'Kaydediliyor…'
             : mode === 'manual'
               ? 'Değerlendir ve kaydet'
-              : 'Dosyaları yükle ve kaydet'}
+              : filePurpose === 'report'
+                ? 'Dosyaları yükle ve kaydet'
+                : 'Görüntüleri değerlendir ve kaydet'}
         </button>
       </form>
 
@@ -326,9 +378,11 @@ export default function RadiologyEvaluationPage() {
               <strong>{item.fileName}</strong>{' '}
               {item.error
                 ? `— ${item.error}`
-                : item.analyzed
-                  ? '— değerlendirildi ve kaydedildi'
-                  : '— dosya olarak kaydedildi (otomatik analiz yok)'}
+                : item.visualAi
+                  ? '— AI (DL/ML) ön değerlendirmesi yapıldı ve kaydedildi'
+                  : item.analyzed
+                    ? '— değerlendirildi ve kaydedildi'
+                    : '— dosya olarak kaydedildi (otomatik analiz yok)'}
             </div>
           ))}
         </div>
@@ -346,17 +400,45 @@ export default function RadiologyEvaluationPage() {
           <h2 className="text-lg font-semibold text-slate-950">Kaydedilen rapor ve dosyalar</h2>
           {reports.map((report) => {
             const analyzable = isAnalyzableRadiologyReport(report);
+            const visualAi = isVisualAiReview(report);
+            const limitations = Array.isArray(report.metadata_json.analysis_limitations)
+              ? (report.metadata_json.analysis_limitations as string[])
+              : [];
             return (
               <article key={report.id} className="rounded-xl border border-slate-200 bg-white p-4">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div className="min-w-0">
-                    <p className="truncate font-semibold text-slate-900">
-                      {report.file_name || 'Rapor metni'}
-                    </p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="truncate font-semibold text-slate-900">
+                        {report.file_name || 'Rapor metni'}
+                      </p>
+                      {visualAi ? (
+                        <span className="rounded-full bg-violet-100 px-2.5 py-1 text-xs font-semibold text-violet-800">
+                          AI görüntü ön değerlendirmesi
+                        </span>
+                      ) : null}
+                    </div>
                     <p className="mt-1 text-xs text-slate-500">
-                      {formatDate(report.report_date || report.created_at)} · {analyzable ? 'Değerlendirildi' : 'Dosya kaydı'}
+                      {formatDate(report.report_date || report.created_at)} · {report.modality} · {analyzable ? 'Değerlendirildi' : 'Dosya kaydı'}
                     </p>
                     <p className="mt-2 text-sm leading-6 text-slate-600">{report.summary}</p>
+
+                    {visualAi && report.findings.length > 0 ? (
+                      <div className="mt-3 rounded-lg bg-slate-50 p-3">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Görsel gözlemler</p>
+                        <ul className="mt-2 space-y-1 text-sm leading-6 text-slate-700">
+                          {report.findings.map((finding, index) => (
+                            <li key={`${report.id}-${index}`}>• {finding.text}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
+
+                    {visualAi && limitations.length > 0 ? (
+                      <p className="mt-3 text-xs leading-5 text-amber-700">
+                        Sınırlamalar: {limitations.join(' · ')}
+                      </p>
+                    ) : null}
                   </div>
                   <div className="flex shrink-0 flex-wrap gap-2">
                     {report.file_name && report.metadata_json.original_file_stored === true ? (
