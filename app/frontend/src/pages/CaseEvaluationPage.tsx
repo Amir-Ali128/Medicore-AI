@@ -23,11 +23,20 @@ function readClinicalIntake(): ClinicalIntakeInput | null {
   }
 }
 
-function hasClinicalData(value: ClinicalIntakeInput | null) {
-  if (!value) return false;
+function hasMeaningfulValue(value: unknown): boolean {
+  if (value === null || value === undefined) return false;
+  if (typeof value === 'string') return Boolean(value.trim());
+  if (typeof value === 'number') return Number.isFinite(value);
+  if (typeof value === 'boolean') return value;
+  if (Array.isArray(value)) return value.some(hasMeaningfulValue);
+  if (typeof value === 'object') {
+    return Object.values(value as Record<string, unknown>).some(hasMeaningfulValue);
+  }
+  return false;
+}
 
-  const serialized = JSON.stringify(value);
-  return !/^(?:\{|\[|\]|\}|:|,|"[^"]*"|null|false|0|\s)*$/.test(serialized);
+function hasClinicalData(value: ClinicalIntakeInput | null) {
+  return hasMeaningfulValue(value);
 }
 
 function SourceStatus({
