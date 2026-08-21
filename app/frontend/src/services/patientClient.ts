@@ -16,13 +16,12 @@ export type PatientRecord = {
   date_of_birth: string | null;
   is_pregnant: boolean | null;
   metadata_json: {
-    // Kept only for backward-compatible typing of older records/UI code.
-    // New patient records no longer send or store a full name.
     full_name?: string | null;
     age?: number | null;
     height_cm?: number | null;
     weight_kg?: number | null;
     clinical_context?: ClinicalIntakeInput;
+    owner_user_id?: string;
     [key: string]: unknown;
   };
   created_at: string;
@@ -75,13 +74,44 @@ export function getActivePatientProtocolNo(): string | null {
   return localStorage.getItem(ACTIVE_PATIENT_PROTOCOL_KEY);
 }
 
-function rememberPatientRecord(record: PatientRecord) {
+export function activatePatientRecord(record: PatientRecord): void {
   localStorage.setItem(ACTIVE_PATIENT_ID_KEY, record.id);
   localStorage.setItem(ACTIVE_PATIENT_PROTOCOL_KEY, record.protocol_no);
+
+  const intake = record.metadata_json?.clinical_context;
+  if (intake) {
+    localStorage.setItem(ACTIVE_CLINICAL_INTAKE_KEY, JSON.stringify(intake));
+  }
+
+  const age = intake?.patient_information.age ?? record.metadata_json?.age ?? null;
+  if (age !== null && age !== undefined) {
+    localStorage.setItem('medicore:lastPatientAge', String(age));
+  }
+
+  const sex = intake?.patient_information.sex ?? record.sex ?? null;
+  if (sex && sex !== 'unknown') {
+    localStorage.setItem('medicore:lastPatientSex', String(sex));
+  }
+
   window.dispatchEvent(
     new CustomEvent<PatientRecord>('medicore:patient-saved', {
       detail: record,
     }),
+  );
+}
+
+async function sendPatientSave(
+  intake: ClinicalIntakeInput,
+  patientId: string | null,
+  protocolNo: string,
+) {
+  return fetch(
+    patientId ? `${API_BASE_URL}/patients/${patientId}` : `${API_BASE_URL}/patients`,
+    {
+      method: patientId ? 'PUT' : 'POST',
+      headers: headers(),
+      body: JSON.stringify(payloadFromIntake(intake, protocolNo)),
+    },
   );
 }
 
@@ -91,25 +121,28 @@ export async function savePatientRecord(
 ): Promise<PatientRecord> {
   const activeId = getActivePatientId();
   const existingProtocolNo = getActivePatientProtocolNo();
-  const resolvedProtocolNo = normalizeProtocolNo(
+  let resolvedProtocolNo = normalizeProtocolNo(
     protocolNo ?? existingProtocolNo ?? createInternalIndividualReference(),
   );
 
-  const response = await fetch(
-    activeId ? `${API_BASE_URL}/patients/${activeId}` : `${API_BASE_URL}/patients`,
-    {
-      method: activeId ? 'PUT' : 'POST',
-      headers: headers(),
-      body: JSON.stringify(payloadFromIntake(intake, resolvedProtocolNo)),
-    },
-  );
+  let response = await sendPatientSave(intake, activeId, resolvedProtocolNo);
+
+  // Records created by older builds were not account-owned. If an old local
+  // patient id can no longer be updated, preserve the current form by creating
+  // a fresh account-owned record instead of forcing the patient to re-enter it.
+  if (activeId && (response.status === 403 || response.status === 404)) {
+    localStorage.removeItem(ACTIVE_PATIENT_ID_KEY);
+    localStorage.removeItem(ACTIVE_PATIENT_PROTOCOL_KEY);
+    resolvedProtocolNo = createInternalIndividualReference();
+    response = await sendPatientSave(intake, null, resolvedProtocolNo);
+  }
 
   if (!response.ok) {
     throw new Error(`Hasta kaydı kaydedilemedi: ${response.status} ${await readError(response)}`);
   }
 
   const record = (await response.json()) as PatientRecord;
-  rememberPatientRecord(record);
+  activatePatientRecord(record);
   return record;
 }
 
@@ -121,7 +154,7 @@ export async function getPatientRecord(patientId: string): Promise<PatientRecord
     throw new Error(`Hasta kaydı alınamadı: ${response.status} ${await readError(response)}`);
   }
   const record = (await response.json()) as PatientRecord;
-  rememberPatientRecord(record);
+  activatePatientRecord(record);
   return record;
 }
 

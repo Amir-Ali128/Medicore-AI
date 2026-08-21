@@ -3,26 +3,45 @@
 from __future__ import annotations
 
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.api.dependencies import SessionDep
+from app.api.routes.auth import get_current_active_user
+from app.domain.enums import UserRole
 from app.infrastructure.database.models.patient import Patient
+from app.infrastructure.database.models.user import User
 from app.schemas.patient_record import PatientRecordResponse, PatientRecordUpsert
 
 router = APIRouter(prefix="/patients", tags=["patients"])
 
 
-def _metadata_from_payload(payload: PatientRecordUpsert) -> dict:
+def _metadata_from_payload(
+    payload: PatientRecordUpsert,
+    *,
+    owner_user_id: uuid.UUID,
+) -> dict:
     return {
         "age": payload.age,
         "height_cm": payload.height_cm,
         "weight_kg": payload.weight_kg,
         "clinical_context": payload.clinical_context,
         "record_source": "medicore_frontend",
+        "owner_user_id": str(owner_user_id),
     }
+
+
+def _ensure_patient_access(patient: Patient, current_user: User) -> None:
+    if current_user.role != UserRole.PATIENT:
+        return
+
+    owner_user_id = (patient.metadata_json or {}).get("owner_user_id")
+    if owner_user_id != str(current_user.id):
+        # Do not reveal whether another account's patient record exists.
+        raise HTTPException(status_code=404, detail="Hasta kaydı bulunamadı.")
 
 
 async def _ensure_protocol_available(
@@ -47,6 +66,7 @@ async def _ensure_protocol_available(
 async def create_patient_record(
     payload: PatientRecordUpsert,
     session: SessionDep,
+    current_user: Annotated[User, Depends(get_current_active_user)],
 ) -> Patient:
     await _ensure_protocol_available(session, payload.protocol_no)
 
@@ -56,7 +76,10 @@ async def create_patient_record(
         sex=payload.sex,
         date_of_birth=None,
         is_pregnant=None,
-        metadata_json=_metadata_from_payload(payload),
+        metadata_json=_metadata_from_payload(
+            payload,
+            owner_user_id=current_user.id,
+        ),
     )
     session.add(patient)
 
@@ -74,17 +97,35 @@ async def create_patient_record(
 
 
 @router.get("", response_model=list[PatientRecordResponse])
-async def list_patient_records(session: SessionDep, limit: int = 100) -> list[Patient]:
+async def list_patient_records(
+    session: SessionDep,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    limit: int = 100,
+) -> list[Patient]:
     safe_limit = max(1, min(limit, 500))
-    stmt = select(Patient).order_by(Patient.updated_at.desc()).limit(safe_limit)
+    stmt = select(Patient).order_by(Patient.updated_at.desc())
+
+    if current_user.role == UserRole.PATIENT:
+        stmt = stmt.where(
+            Patient.metadata_json.contains(
+                {"owner_user_id": str(current_user.id)},
+            )
+        )
+
+    stmt = stmt.limit(safe_limit)
     return list((await session.execute(stmt)).scalars().all())
 
 
 @router.get("/{patient_id}", response_model=PatientRecordResponse)
-async def get_patient_record(patient_id: uuid.UUID, session: SessionDep) -> Patient:
+async def get_patient_record(
+    patient_id: uuid.UUID,
+    session: SessionDep,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+) -> Patient:
     patient = await session.get(Patient, patient_id)
     if patient is None:
         raise HTTPException(status_code=404, detail="Hasta kaydı bulunamadı.")
+    _ensure_patient_access(patient, current_user)
     return patient
 
 
@@ -93,10 +134,12 @@ async def update_patient_record(
     patient_id: uuid.UUID,
     payload: PatientRecordUpsert,
     session: SessionDep,
+    current_user: Annotated[User, Depends(get_current_active_user)],
 ) -> Patient:
     patient = await session.get(Patient, patient_id)
     if patient is None:
         raise HTTPException(status_code=404, detail="Hasta kaydı bulunamadı.")
+    _ensure_patient_access(patient, current_user)
 
     await _ensure_protocol_available(
         session,
@@ -108,7 +151,10 @@ async def update_patient_record(
     patient.sex = payload.sex
     patient.metadata_json = {
         **dict(patient.metadata_json or {}),
-        **_metadata_from_payload(payload),
+        **_metadata_from_payload(
+            payload,
+            owner_user_id=current_user.id,
+        ),
     }
     patient.metadata_json.pop("full_name", None)
 
