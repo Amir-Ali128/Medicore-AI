@@ -1,19 +1,21 @@
-import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react';
 
 import {
   createManualRadiologyReport,
   deleteRadiologyReport,
+  downloadRadiologyOriginalFile,
+  isAnalyzableRadiologyReport,
   listPatientRadiologyReports,
-  uploadRadiologyReportPdf,
+  uploadRadiologyReportFile,
   type RadiologyReport,
 } from '../services/radiologyClient';
 
 const INPUT_CLASS =
   'block w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-950 placeholder:text-slate-400';
 
-type PdfUploadResult = {
+type FileUploadResult = {
   fileName: string;
+  analyzed?: boolean;
   error?: string;
 };
 
@@ -21,88 +23,32 @@ function fileKey(file: File) {
   return `${file.name}:${file.size}:${file.lastModified}`;
 }
 
-function fold(value: string | null | undefined) {
-  return (value ?? '')
-    .toLocaleLowerCase('tr-TR')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/ı/g, 'i')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function reportFingerprint(report: RadiologyReport) {
-  const original = fold(report.original_text).replace(/[^a-z0-9]+/g, ' ').trim();
-  return original || `${report.modality}:${report.body_part}:${fold(report.summary)}`;
-}
-
-function uniqueLatestReports(reports: RadiologyReport[]) {
-  const seen = new Set<string>();
-  return [...reports]
-    .sort((left, right) => {
-      const leftDate = Date.parse(left.created_at ?? left.report_date ?? '') || 0;
-      const rightDate = Date.parse(right.created_at ?? right.report_date ?? '') || 0;
-      return rightDate - leftDate;
-    })
-    .filter((report) => {
-      const key = reportFingerprint(report) || report.id;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-}
-
-function reportSummary(report: RadiologyReport) {
-  if (report.summary?.trim() && report.summary !== 'Rapor özeti oluşturulamadı.') {
-    return report.summary.trim();
-  }
-  if (report.impression?.trim()) return report.impression.trim();
-
-  const abnormal = report.findings
-    .filter((finding) => finding.is_critical || finding.classification === 'abnormal')
-    .map((finding) => finding.text.trim())
-    .filter(Boolean);
-
-  if (abnormal.length > 0) return [...new Set(abnormal)].slice(0, 6).join(' ');
-
-  const conclusion = report.original_text.match(
-    /(?:sonuç|sonuc|izlenim)\s*:\s*([\s\S]{1,1200})$/i,
-  );
-  return conclusion?.[1]?.replace(/\s+/g, ' ').trim() || report.original_text.slice(0, 1000);
-}
-
-function urgency(report: RadiologyReport) {
-  if (report.critical_findings.length > 0) return 'ACİL İNCELEME';
-  if (report.findings.some((finding) => finding.classification === 'abnormal')) {
-    return 'ANORMAL BULGU';
-  }
-  return 'RUTİN';
-}
-
-function urgencyClass(report: RadiologyReport) {
-  const value = urgency(report);
-  if (value === 'ACİL İNCELEME') return 'bg-red-100 text-red-800';
-  if (value === 'ANORMAL BULGU') return 'bg-amber-100 text-amber-900';
-  return 'bg-emerald-100 text-emerald-800';
+function formatDate(value: string | null) {
+  if (!value) return 'Tarih yok';
+  return new Intl.DateTimeFormat('tr-TR', { dateStyle: 'medium' }).format(new Date(value));
 }
 
 export default function RadiologyEvaluationPage() {
-  const [mode, setMode] = useState<'manual' | 'pdf'>('manual');
+  const [mode, setMode] = useState<'manual' | 'file'>('manual');
   const [reportText, setReportText] = useState('');
-  const [pdfFiles, setPdfFiles] = useState<File[]>([]);
-  const [pdfUploadResults, setPdfUploadResults] = useState<PdfUploadResult[]>([]);
-  const [uploadProgress, setUploadProgress] = useState('');
+  const [files, setFiles] = useState<File[]>([]);
+  const [uploadResults, setUploadResults] = useState<FileUploadResult[]>([]);
   const [reports, setReports] = useState<RadiologyReport[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [deletingReportId, setDeletingReportId] = useState<string | null>(null);
-  const [deletingAll, setDeletingAll] = useState(false);
+  const [progress, setProgress] = useState('');
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [openingId, setOpeningId] = useState<string | null>(null);
 
   async function loadReports() {
-    const stored = await listPatientRadiologyReports();
-    setReports(uniqueLatestReports(stored));
+    const stored = await listPatientRadiologyReports(null, { includeUnanalyzed: true });
+    setReports(
+      [...stored].sort(
+        (a, b) => Date.parse(b.created_at ?? '') - Date.parse(a.created_at ?? ''),
+      ),
+    );
   }
 
   useEffect(() => {
@@ -112,14 +58,20 @@ export default function RadiologyEvaluationPage() {
       try {
         setLoading(true);
         setError('');
-        const stored = uniqueLatestReports(await listPatientRadiologyReports());
-        if (!cancelled) setReports(stored);
+        const stored = await listPatientRadiologyReports(null, { includeUnanalyzed: true });
+        if (!cancelled) {
+          setReports(
+            [...stored].sort(
+              (a, b) => Date.parse(b.created_at ?? '') - Date.parse(a.created_at ?? ''),
+            ),
+          );
+        }
       } catch (loadError) {
         if (!cancelled) {
           setError(
             loadError instanceof Error
               ? loadError.message
-              : 'Radyoloji kayıtları yüklenemedi.',
+              : 'Radyoloji ve tetkik kayıtları yüklenemedi.',
           );
         }
       } finally {
@@ -133,41 +85,29 @@ export default function RadiologyEvaluationPage() {
     };
   }, []);
 
-  function addPdfFiles(event: ChangeEvent<HTMLInputElement>) {
-    const incoming = Array.from(event.target.files ?? []).filter((file) =>
-      file.name.toLowerCase().endsWith('.pdf'),
-    );
-
-    setPdfFiles((current) => {
+  function addFiles(event: ChangeEvent<HTMLInputElement>) {
+    const incoming = Array.from(event.target.files ?? []);
+    setFiles((current) => {
       const existing = new Set(current.map(fileKey));
       return [...current, ...incoming.filter((file) => !existing.has(fileKey(file)))];
     });
-    setPdfUploadResults([]);
+    setUploadResults([]);
     setError('');
     setStatus('');
     event.target.value = '';
   }
 
-  function removePdfFile(file: File) {
-    setPdfFiles((current) =>
-      current.filter((item) => fileKey(item) !== fileKey(file)),
-    );
-    setPdfUploadResults([]);
-    setError('');
-  }
-
   async function submit(event: FormEvent) {
     event.preventDefault();
+    setBusy(true);
+    setError('');
+    setStatus('');
+    setUploadResults([]);
 
     try {
-      setBusy(true);
-      setError('');
-      setStatus('');
-      setPdfUploadResults([]);
-
       if (mode === 'manual') {
         if (reportText.trim().length < 10) {
-          throw new Error('Radyoloji rapor metni en az 10 karakter olmalıdır.');
+          throw new Error('Rapor metni en az 10 karakter olmalıdır.');
         }
 
         await createManualRadiologyReport({
@@ -177,48 +117,49 @@ export default function RadiologyEvaluationPage() {
           reportText,
         });
         setReportText('');
-        setStatus('Radyoloji raporu değerlendirildi ve kaydedildi.');
+        setStatus('Rapor değerlendirildi ve aktif hastanın kaydına eklendi.');
       } else {
-        if (pdfFiles.length === 0) {
-          throw new Error('Önce en az bir radyoloji PDF dosyası seçmelisin.');
+        if (files.length === 0) {
+          throw new Error('Önce en az bir dosya seçmelisin.');
         }
 
-        const results: PdfUploadResult[] = [];
-        const failedFiles: File[] = [];
-        let successCount = 0;
+        const results: FileUploadResult[] = [];
+        const failed: File[] = [];
 
-        for (let index = 0; index < pdfFiles.length; index += 1) {
-          const file = pdfFiles[index];
-          setUploadProgress(`${index + 1}/${pdfFiles.length} · ${file.name} işleniyor`);
+        for (let index = 0; index < files.length; index += 1) {
+          const file = files[index];
+          setProgress(`${index + 1}/${files.length} · ${file.name} yükleniyor`);
 
           try {
-            await uploadRadiologyReportPdf(file, {
+            const report = await uploadRadiologyReportFile(file, {
               reportDate: new Date().toISOString().slice(0, 10),
               modality: null,
               bodyPart: null,
             });
-            successCount += 1;
-            results.push({ fileName: file.name });
+            results.push({
+              fileName: file.name,
+              analyzed: isAnalyzableRadiologyReport(report),
+            });
           } catch (uploadError) {
-            failedFiles.push(file);
+            failed.push(file);
             results.push({
               fileName: file.name,
               error:
                 uploadError instanceof Error
                   ? uploadError.message
-                  : 'Radyoloji PDF’i işlenemedi.',
+                  : 'Dosya yüklenemedi.',
             });
           }
-
-          setPdfUploadResults([...results]);
+          setUploadResults([...results]);
         }
 
-        setPdfFiles(failedFiles);
-        if (successCount > 0) {
-          setStatus(`${successCount} radyoloji PDF’i değerlendirildi ve kaydedildi.`);
+        setFiles(failed);
+        const successful = results.filter((item) => !item.error).length;
+        if (successful > 0) {
+          setStatus(`${successful} dosya aktif hastanın kaydına eklendi.`);
         }
-        if (failedFiles.length > 0) {
-          setError(`${failedFiles.length} PDF işlenemedi. Başarısız dosyaları tekrar deneyebilirsin.`);
+        if (failed.length > 0) {
+          setError(`${failed.length} dosya yüklenemedi; listede kalanları tekrar deneyebilirsin.`);
         }
       }
 
@@ -227,91 +168,64 @@ export default function RadiologyEvaluationPage() {
       setError(
         submitError instanceof Error
           ? submitError.message
-          : 'Radyoloji raporu değerlendirilemedi.',
+          : 'Rapor veya dosya kaydedilemedi.',
       );
     } finally {
-      setUploadProgress('');
+      setProgress('');
       setBusy(false);
     }
   }
 
   async function removeReport(report: RadiologyReport) {
-    const approved = window.confirm(
-      'Bu radyoloji raporunu kalıcı olarak silmek istediğine emin misin?',
-    );
-    if (!approved) return;
+    if (!window.confirm('Bu kayıt kalıcı olarak silinsin mi?')) return;
 
     try {
-      setDeletingReportId(report.id);
+      setDeletingId(report.id);
       setError('');
       await deleteRadiologyReport(report.id);
       setReports((current) => current.filter((item) => item.id !== report.id));
-      setStatus('Radyoloji raporu silindi.');
+      setStatus('Kayıt silindi.');
     } catch (deleteError) {
       setError(
-        deleteError instanceof Error ? deleteError.message : 'Radyoloji raporu silinemedi.',
+        deleteError instanceof Error ? deleteError.message : 'Kayıt silinemedi.',
       );
     } finally {
-      setDeletingReportId(null);
+      setDeletingId(null);
     }
   }
 
-  async function removeAllReports() {
-    const approved = window.confirm(
-      'Bu hastaya ait tüm radyoloji raporlarını kalıcı olarak silmek istediğine emin misin?',
-    );
-    if (!approved) return;
-
+  async function openOriginalFile(report: RadiologyReport) {
     try {
-      setDeletingAll(true);
+      setOpeningId(report.id);
       setError('');
-      let deletedCount = 0;
-
-      while (true) {
-        const stored = await listPatientRadiologyReports();
-        if (stored.length === 0) break;
-        for (const report of stored) {
-          await deleteRadiologyReport(report.id);
-          deletedCount += 1;
-        }
-      }
-
-      setReports([]);
-      setStatus(`${deletedCount} radyoloji kaydı silindi.`);
-    } catch (deleteError) {
-      await loadReports().catch(() => undefined);
-      setError(
-        deleteError instanceof Error
-          ? deleteError.message
-          : 'Radyoloji kayıtları silinemedi.',
-      );
+      const blob = await downloadRadiologyOriginalFile(report.id);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = report.file_name || 'dosya';
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (openError) {
+      setError(openError instanceof Error ? openError.message : 'Dosya açılamadı.');
     } finally {
-      setDeletingAll(false);
+      setOpeningId(null);
     }
   }
-
-  const latestReport = reports[0] ?? null;
-  const abnormalFindings = useMemo(
-    () =>
-      latestReport?.findings.filter(
-        (finding) => finding.is_critical || finding.classification === 'abnormal',
-      ) ?? [],
-    [latestReport],
-  );
 
   return (
     <div className="space-y-6">
       <header>
-        <h1 className="text-2xl font-semibold text-slate-950">Radyoloji Raporu</h1>
+        <h1 className="text-2xl font-semibold text-slate-950">
+          Radyoloji ve Diğer Tetkik Raporları
+        </h1>
         <p className="mt-2 text-sm leading-6 text-slate-500">
-          Rapor metnini yapıştırın veya PDF yükleyin. Rapor değerlendirilip hasta kaydına eklenir.
+          Rapor metni girebilir veya bir ya da birden fazla dosya yükleyebilirsin.
         </p>
       </header>
 
-      <form
-        onSubmit={submit}
-        className="rounded-xl border border-slate-200 bg-white p-5"
-      >
+      <form onSubmit={submit} className="rounded-xl border border-slate-200 bg-white p-5">
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
@@ -319,21 +233,21 @@ export default function RadiologyEvaluationPage() {
             className={`rounded-lg border px-4 py-2 text-sm font-semibold ${
               mode === 'manual'
                 ? 'border-blue-300 bg-blue-50 text-blue-800'
-                : 'border-slate-200 bg-white text-slate-600'
+                : 'border-slate-200 text-slate-600'
             }`}
           >
             Rapor metni
           </button>
           <button
             type="button"
-            onClick={() => setMode('pdf')}
+            onClick={() => setMode('file')}
             className={`rounded-lg border px-4 py-2 text-sm font-semibold ${
-              mode === 'pdf'
+              mode === 'file'
                 ? 'border-blue-300 bg-blue-50 text-blue-800'
-                : 'border-slate-200 bg-white text-slate-600'
+                : 'border-slate-200 text-slate-600'
             }`}
           >
-            PDF yükle
+            Dosya yükle
           </button>
         </div>
 
@@ -345,62 +259,41 @@ export default function RadiologyEvaluationPage() {
             value={reportText}
             onChange={(event) => setReportText(event.target.value)}
             className={`${INPUT_CLASS} mt-4 resize-y`}
-            placeholder="Radyoloji rapor metnini buraya yapıştırın..."
+            placeholder="Rapor metnini buraya yapıştırın..."
           />
         ) : (
           <div className="mt-4 space-y-3">
             <input
               type="file"
-              accept="application/pdf,.pdf"
               multiple
-              onChange={addPdfFiles}
+              onChange={addFiles}
               className="block w-full text-sm text-slate-600 file:mr-4 file:rounded-lg file:border-0 file:bg-blue-700 file:px-4 file:py-2.5 file:text-sm file:font-semibold file:text-white hover:file:bg-blue-800"
             />
+            <p className="text-xs leading-5 text-slate-500">
+              Tüm dosya türleri seçilebilir. PDF ve metin tabanlı dosyalar uygun olduğunda otomatik değerlendirilir; görüntü, DICOM, DOCX ve diğer formatlar dosya olarak saklanır ve otomatik görüntü yorumu yapılmaz. Dosya başına sınır 15 MB'dır.
+            </p>
+            <p className="text-xs leading-5 text-amber-700">
+              Yüklenen dosyalarda isim, soyisim, T.C. kimlik numarası veya benzeri doğrudan kişisel tanımlayıcılar bulunmamalıdır.
+            </p>
 
-            {pdfFiles.length > 0 ? (
+            {files.length > 0 ? (
               <div className="space-y-2">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="text-sm font-semibold text-slate-900">
-                    Seçilen dosyalar ({pdfFiles.length})
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPdfFiles([]);
-                      setPdfUploadResults([]);
-                    }}
-                    disabled={busy}
-                    className="text-xs font-semibold text-slate-500 hover:text-red-600 disabled:opacity-50"
-                  >
-                    Temizle
-                  </button>
-                </div>
-
-                <div className="max-h-48 space-y-2 overflow-y-auto">
-                  {pdfFiles.map((file) => (
-                    <div
-                      key={fileKey(file)}
-                      className="flex items-center justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2"
-                    >
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-medium text-slate-900">
-                          {file.name}
-                        </p>
-                        <p className="text-xs text-slate-500">
-                          {(file.size / (1024 * 1024)).toFixed(2)} MB
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => removePdfFile(file)}
-                        disabled={busy}
-                        className="shrink-0 text-xs font-semibold text-red-600 disabled:opacity-50"
-                      >
-                        Kaldır
-                      </button>
+                {files.map((file) => (
+                  <div key={fileKey(file)} className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-slate-900">{file.name}</p>
+                      <p className="text-xs text-slate-500">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
                     </div>
-                  ))}
-                </div>
+                    <button
+                      type="button"
+                      onClick={() => setFiles((current) => current.filter((item) => fileKey(item) !== fileKey(file)))}
+                      disabled={busy}
+                      className="ml-3 text-xs font-semibold text-red-600 disabled:opacity-50"
+                    >
+                      Kaldır
+                    </button>
+                  </div>
+                ))}
               </div>
             ) : null}
           </div>
@@ -408,20 +301,20 @@ export default function RadiologyEvaluationPage() {
 
         <button
           type="submit"
-          disabled={busy || deletingAll || (mode === 'pdf' && pdfFiles.length === 0)}
+          disabled={busy || (mode === 'file' && files.length === 0)}
           className="mt-4 w-full rounded-lg bg-blue-700 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
         >
           {busy
-            ? uploadProgress || 'Değerlendiriliyor…'
-            : mode === 'pdf' && pdfFiles.length > 1
-              ? `${pdfFiles.length} PDF’yi değerlendir ve kaydet`
-              : 'Değerlendir ve kaydet'}
+            ? progress || 'Kaydediliyor…'
+            : mode === 'manual'
+              ? 'Değerlendir ve kaydet'
+              : 'Dosyaları yükle ve kaydet'}
         </button>
       </form>
 
-      {pdfUploadResults.length > 0 ? (
+      {uploadResults.length > 0 ? (
         <div className="space-y-2">
-          {pdfUploadResults.map((item) => (
+          {uploadResults.map((item) => (
             <div
               key={item.fileName}
               className={`rounded-lg border px-4 py-3 text-sm ${
@@ -430,130 +323,67 @@ export default function RadiologyEvaluationPage() {
                   : 'border-emerald-200 bg-emerald-50 text-emerald-800'
               }`}
             >
-              <strong>{item.fileName}</strong>
-              <span className="ml-2">
-                {item.error ? `— ${item.error}` : '— kaydedildi'}
-              </span>
+              <strong>{item.fileName}</strong>{' '}
+              {item.error
+                ? `— ${item.error}`
+                : item.analyzed
+                  ? '— değerlendirildi ve kaydedildi'
+                  : '— dosya olarak kaydedildi (otomatik analiz yok)'}
             </div>
           ))}
         </div>
       ) : null}
 
       {status ? (
-        <p className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
-          {status}
-        </p>
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">{status}</div>
       ) : null}
-
       {error ? (
-        <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-900">
-          {error}
-        </p>
+        <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">{error}</div>
       ) : null}
 
-      {loading ? (
-        <div className="rounded-xl border border-slate-200 bg-white p-5 text-sm text-slate-500">
-          Kayıtlı raporlar yükleniyor…
-        </div>
-      ) : latestReport ? (
-        <section className="rounded-xl border border-slate-200 bg-white p-5">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-semibold text-slate-950">Son radyoloji raporu</p>
-              <p className="mt-1 text-xs text-slate-500">
-                {latestReport.report_date || latestReport.created_at.slice(0, 10)}
-              </p>
-            </div>
-            <span
-              className={`rounded-full px-3 py-1.5 text-xs font-semibold ${urgencyClass(latestReport)}`}
-            >
-              {urgency(latestReport)}
-            </span>
-          </div>
-
-          <p className="mt-4 whitespace-pre-wrap text-sm leading-7 text-slate-700">
-            {reportSummary(latestReport)}
-          </p>
-
-          {abnormalFindings.length > 0 ? (
-            <div className="mt-4 space-y-2">
-              {abnormalFindings.slice(0, 5).map((finding, index) => (
-                <div
-                  key={`${finding.text}-${index}`}
-                  className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950"
-                >
-                  {finding.text}
-                </div>
-              ))}
-            </div>
-          ) : null}
-
-          <div className="mt-5 flex flex-wrap gap-2">
-            <Link
-              to="/combined-evaluation"
-              className="rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-800"
-            >
-              Birlikte değerlendir
-            </Link>
-            <button
-              type="button"
-              onClick={() => void removeReport(latestReport)}
-              disabled={deletingReportId === latestReport.id || deletingAll}
-              className="rounded-lg border border-red-200 px-4 py-2 text-sm font-semibold text-red-700 disabled:opacity-50"
-            >
-              {deletingReportId === latestReport.id ? 'Siliniyor…' : 'Sil'}
-            </button>
-          </div>
-        </section>
-      ) : null}
-
-      {reports.length > 1 ? (
-        <details className="rounded-xl border border-slate-200 bg-white p-5">
-          <summary className="cursor-pointer text-sm font-semibold text-slate-900">
-            Geçmiş radyoloji raporları ({reports.length - 1})
-          </summary>
-          <div className="mt-4 space-y-3">
-            {reports.slice(1, 9).map((report) => (
-              <article key={report.id} className="rounded-lg bg-slate-50 p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-semibold text-slate-900">
-                      {report.modality} · {report.body_part}
+      {!loading && reports.length > 0 ? (
+        <section className="space-y-3">
+          <h2 className="text-lg font-semibold text-slate-950">Kaydedilen rapor ve dosyalar</h2>
+          {reports.map((report) => {
+            const analyzable = isAnalyzableRadiologyReport(report);
+            return (
+              <article key={report.id} className="rounded-xl border border-slate-200 bg-white p-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <p className="truncate font-semibold text-slate-900">
+                      {report.file_name || 'Rapor metni'}
                     </p>
                     <p className="mt-1 text-xs text-slate-500">
-                      {report.report_date || report.created_at.slice(0, 10)}
+                      {formatDate(report.report_date || report.created_at)} · {analyzable ? 'Değerlendirildi' : 'Dosya kaydı'}
                     </p>
+                    <p className="mt-2 text-sm leading-6 text-slate-600">{report.summary}</p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => void removeReport(report)}
-                    disabled={deletingReportId === report.id || deletingAll}
-                    className="text-xs font-semibold text-red-600 disabled:opacity-50"
-                  >
-                    {deletingReportId === report.id ? 'Siliniyor…' : 'Sil'}
-                  </button>
+                  <div className="flex shrink-0 flex-wrap gap-2">
+                    {report.file_name && report.metadata_json.original_file_stored === true ? (
+                      <button
+                        type="button"
+                        onClick={() => void openOriginalFile(report)}
+                        disabled={openingId === report.id}
+                        className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 disabled:opacity-50"
+                      >
+                        {openingId === report.id ? 'Açılıyor…' : 'Dosyayı aç'}
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => void removeReport(report)}
+                      disabled={deletingId === report.id}
+                      className="rounded-lg border border-red-200 px-3 py-2 text-xs font-semibold text-red-700 disabled:opacity-50"
+                    >
+                      {deletingId === report.id ? 'Siliniyor…' : 'Sil'}
+                    </button>
+                  </div>
                 </div>
-                <p className="mt-3 line-clamp-3 text-sm leading-6 text-slate-600">
-                  {reportSummary(report)}
-                </p>
               </article>
-            ))}
-
-            <button
-              type="button"
-              onClick={() => void removeAllReports()}
-              disabled={deletingAll}
-              className="text-xs font-semibold text-red-700 disabled:opacity-50"
-            >
-              {deletingAll ? 'Tümü siliniyor…' : 'Tüm radyoloji geçmişini sil'}
-            </button>
-          </div>
-        </details>
+            );
+          })}
+        </section>
       ) : null}
-
-      <p className="text-xs leading-6 text-slate-500">
-        Radyoloji çıktıları karar destek amaçlıdır; hekim değerlendirmesinin yerine geçmez.
-      </p>
     </div>
   );
 }

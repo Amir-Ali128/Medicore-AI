@@ -2,11 +2,20 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import SectionCard from '../components/ui/SectionCard';
+import { listPatientLabReports } from '../services/labArchiveClient';
 import {
   activatePatientRecord,
   listPatientRecords,
   type PatientRecord,
 } from '../services/patientClient';
+import { listPatientRadiologyReports } from '../services/radiologyClient';
+
+type AttachmentSummary = {
+  labCount: number;
+  radiologyCount: number;
+  latestLabFile: string | null;
+  latestRadiologyFile: string | null;
+};
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat('tr-TR', {
@@ -44,9 +53,11 @@ function recordSummary(record: PatientRecord) {
 
 function RecordCard({
   record,
+  attachments,
   onRestore,
 }: {
   record: PatientRecord;
+  attachments?: AttachmentSummary;
   onRestore: (record: PatientRecord) => void;
 }) {
   const age = record.metadata_json?.age;
@@ -75,6 +86,31 @@ function RecordCard({
         </button>
       </div>
 
+      <div className="mt-5 grid gap-3 sm:grid-cols-2">
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 p-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-emerald-800">
+            Laboratuvar
+          </p>
+          <p className="mt-2 text-sm font-semibold text-slate-900">
+            {attachments ? `${attachments.labCount} kayıt` : 'Kontrol ediliyor…'}
+          </p>
+          {attachments?.latestLabFile ? (
+            <p className="mt-1 truncate text-xs text-slate-500">Son: {attachments.latestLabFile}</p>
+          ) : null}
+        </div>
+        <div className="rounded-lg border border-violet-200 bg-violet-50/60 p-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-violet-800">
+            Radyoloji / diğer tetkikler
+          </p>
+          <p className="mt-2 text-sm font-semibold text-slate-900">
+            {attachments ? `${attachments.radiologyCount} kayıt` : 'Kontrol ediliyor…'}
+          </p>
+          {attachments?.latestRadiologyFile ? (
+            <p className="mt-1 truncate text-xs text-slate-500">Son: {attachments.latestRadiologyFile}</p>
+          ) : null}
+        </div>
+      </div>
+
       {summary.length > 0 ? (
         <div className="mt-5 grid gap-3 md:grid-cols-2">
           {summary.map(([label, value]) => (
@@ -96,6 +132,7 @@ function RecordCard({
 export default function PatientHistoryPage() {
   const navigate = useNavigate();
   const [records, setRecords] = useState<PatientRecord[]>([]);
+  const [attachments, setAttachments] = useState<Record<string, AttachmentSummary>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -107,7 +144,28 @@ export default function PatientHistoryPage() {
         setLoading(true);
         setError('');
         const response = await listPatientRecords();
-        if (!cancelled) setRecords(response);
+        if (cancelled) return;
+        setRecords(response);
+
+        const summaries = await Promise.all(
+          response.map(async (record) => {
+            const [labs, radiology] = await Promise.all([
+              listPatientLabReports(record.id).catch(() => []),
+              listPatientRadiologyReports(record.id, { includeUnanalyzed: true }).catch(() => []),
+            ]);
+            return [
+              record.id,
+              {
+                labCount: labs.length,
+                radiologyCount: radiology.length,
+                latestLabFile: labs[0]?.file_name ?? null,
+                latestRadiologyFile: radiology[0]?.file_name ?? null,
+              } satisfies AttachmentSummary,
+            ] as const;
+          }),
+        );
+
+        if (!cancelled) setAttachments(Object.fromEntries(summaries));
       } catch (loadError) {
         if (!cancelled) {
           setError(
@@ -140,7 +198,7 @@ export default function PatientHistoryPage() {
         </p>
         <h1 className="mt-2 text-3xl font-semibold text-slate-950">Kaydedilen bilgiler</h1>
         <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-500">
-          Hasta Bilgileri ekranında Kaydet'e bastığınız bilgiler hesabınızda saklanır ve sonraki girişlerinizde yeniden açılabilir.
+          Klinik bilgiler, kaydettiğiniz laboratuvar sonuçları ile radyoloji ve diğer tetkik dosyaları aynı hasta kaydı altında tutulur.
         </p>
       </header>
 
@@ -168,6 +226,7 @@ export default function PatientHistoryPage() {
             <RecordCard
               key={record.id}
               record={record}
+              attachments={attachments[record.id]}
               onRestore={handleRestore}
             />
           ))}

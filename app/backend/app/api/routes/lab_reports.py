@@ -1,20 +1,20 @@
-"""Lab report read and clinical-context update routes.
-
-Raw lab payloads are not exposed. Structured patient and clinical context may be
-stored in metadata_json so PDF and manually entered reports share the same
-physician-review context.
-"""
+"""Lab report read, save-to-patient, and clinical-context routes."""
 
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime
-from typing import Any
+from datetime import UTC, date, datetime
+from typing import Annotated, Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import text as sql_text
 
 from app.api.dependencies import LabReportRepositoryDep, SessionDep
+from app.api.routes.auth import get_current_active_user
+from app.domain.enums import UserRole
+from app.infrastructure.database.models.patient import Patient
+from app.infrastructure.database.models.user import User
 from app.schemas.lab_analysis import (
     ClinicalAttachmentInput,
     ClinicalHistoryInput,
@@ -66,6 +66,31 @@ class LabReportClinicalContextUpdate(BaseModel):
     physical_exam: PhysicalExamInput = Field(default_factory=PhysicalExamInput)
     imaging_results: ImagingResultsInput = Field(default_factory=ImagingResultsInput)
     attachments: list[ClinicalAttachmentInput] = Field(default_factory=list)
+
+
+class LabReportSaveRequest(BaseModel):
+    patient_id: uuid.UUID
+
+
+def _ensure_patient_access(patient: Patient, current_user: User) -> None:
+    if current_user.role != UserRole.PATIENT:
+        return
+
+    owner_user_id = (patient.metadata_json or {}).get("owner_user_id")
+    if owner_user_id != str(current_user.id):
+        raise HTTPException(status_code=404, detail="Hasta kaydı bulunamadı.")
+
+
+async def _get_accessible_patient(
+    patient_id: uuid.UUID,
+    session: SessionDep,
+    current_user: User,
+) -> Patient:
+    patient = await session.get(Patient, patient_id)
+    if patient is None:
+        raise HTTPException(status_code=404, detail="Hasta kaydı bulunamadı.")
+    _ensure_patient_access(patient, current_user)
+    return patient
 
 
 @router.get("/lab-reports/{lab_report_id}", response_model=LabReportSummary)
@@ -158,6 +183,67 @@ async def update_lab_report_clinical_context(
     return report
 
 
+@router.patch(
+    "/lab-reports/{lab_report_id}/save",
+    response_model=LabReportSummary,
+)
+async def save_lab_report_to_patient(
+    lab_report_id: uuid.UUID,
+    payload: LabReportSaveRequest,
+    repository: LabReportRepositoryDep,
+    session: SessionDep,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+) -> LabReportSummary:
+    """Attach an analyzed report and its derived rows to the selected patient record."""
+    report = await repository.get_by_id(lab_report_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="Laboratuvar raporu bulunamadı.")
+
+    await _get_accessible_patient(payload.patient_id, session, current_user)
+
+    report.patient_id = payload.patient_id
+    report.uploaded_by_user_id = current_user.id
+    metadata = dict(report.metadata_json or {})
+    metadata.update(
+        {
+            "archived": True,
+            "archived_at": datetime.now(UTC).isoformat(),
+            "saved_by_user_id": str(current_user.id),
+        }
+    )
+    report.metadata_json = metadata
+
+    params = {
+        "patient_id": str(payload.patient_id),
+        "lab_report_id": str(lab_report_id),
+    }
+    await session.execute(
+        sql_text(
+            "UPDATE analysis_runs SET patient_id = :patient_id "
+            "WHERE lab_report_id = :lab_report_id"
+        ),
+        params,
+    )
+    await session.execute(
+        sql_text(
+            "UPDATE lab_results SET patient_id = :patient_id "
+            "WHERE lab_report_id = :lab_report_id"
+        ),
+        params,
+    )
+    await session.execute(
+        sql_text(
+            "UPDATE clinical_hypotheses SET patient_id = :patient_id "
+            "WHERE lab_report_id = :lab_report_id"
+        ),
+        params,
+    )
+
+    await session.commit()
+    await session.refresh(report)
+    return report
+
+
 @router.get(
     "/patients/{patient_id}/lab-reports",
     response_model=list[LabReportSummary],
@@ -165,5 +251,8 @@ async def update_lab_report_clinical_context(
 async def list_patient_lab_reports(
     patient_id: uuid.UUID,
     repository: LabReportRepositoryDep,
+    session: SessionDep,
+    current_user: Annotated[User, Depends(get_current_active_user)],
 ) -> list[LabReportSummary]:
+    await _get_accessible_patient(patient_id, session, current_user)
     return list(await repository.list_for_patient(patient_id))
