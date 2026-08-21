@@ -49,6 +49,9 @@ export default function HomePage() {
             Sistem çıktıları hatalı veya eksik olabilir ve hekim değerlendirmesinin yerine geçmez.
           </li>
           <li>
+            Röntgen ve ultrason görüntülerinde sunulan AI (DL/ML) ön değerlendirmesi deneyseldir; resmi radyoloji raporu veya hekim/radyolog değerlendirmesinin yerine geçmez.
+          </li>
+          <li>
             Verileri yüklerken isim, soyisim, T.C. kimlik numarası ve benzeri doğrudan kişisel tanımlayıcıları içermeyecek şekilde yükleyiniz.
           </li>
           <li>Doktorunuza danışmadan ilaç başlamayın, bırakmayın veya doz değiştirmeyin.</li>
