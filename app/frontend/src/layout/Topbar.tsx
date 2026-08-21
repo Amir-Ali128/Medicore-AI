@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 
 import { getStoredUser, logout } from '../services/authClient';
 
@@ -31,7 +31,11 @@ export default function Topbar() {
     <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/95 px-3 py-3 backdrop-blur sm:px-6 sm:py-4 lg:px-8">
       <div className="flex items-center justify-between gap-3 lg:items-center">
         <div className="min-w-0">
-          <div className="flex items-center gap-2">
+          <Link
+            to="/"
+            aria-label="MediCore AI ana sayfa"
+            className="flex min-w-0 items-center gap-2 rounded-xl outline-none transition hover:opacity-80 focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+          >
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-blue-600 text-sm font-bold text-white lg:hidden">
               M
             </div>
@@ -39,7 +43,7 @@ export default function Topbar() {
               <h1 className="truncate text-base font-semibold text-slate-950 sm:text-xl">MediCore AI</h1>
               <p className="hidden text-sm text-slate-500 sm:block">Klinik değerlendirme sistemi</p>
             </div>
-          </div>
+          </Link>
         </div>
 
         <div className="flex shrink-0 items-center gap-2 sm:gap-3">
