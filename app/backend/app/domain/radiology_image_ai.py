@@ -142,7 +142,6 @@ Yalnızca aşağıdaki JSON biçimini döndür:
     message = await client.messages.create(
         model=model,
         max_tokens=1100,
-        temperature=0,
         system=(
             "You are a cautious medical imaging support component. Your output is "
             "assistive only, never a diagnosis, and always requires physician review."
