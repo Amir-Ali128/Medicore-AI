@@ -16,7 +16,7 @@ const items: NavItem[] = [
   { label: 'Ana Sayfa', shortLabel: 'Ana', icon: '🏠', to: '/' },
   { label: 'Canlı Trafik', shortLabel: 'Trafik', icon: '📡', to: '/admin/analytics', adminOnly: true },
   { label: 'Geri Bildirimler', shortLabel: 'Mesajlar', icon: '💬', to: '/admin/feedback', adminOnly: true },
-  { label: 'Hasta Bilgileri', shortLabel: 'Hasta', icon: '👤', to: '/patients/demo' },
+  { label: 'Hasta Bilgileri', shortLabel: 'Hasta Bilgileri', icon: '👤', to: '/patients/demo' },
   { label: 'Laboratuvar Sonuçları', shortLabel: 'Sonuç', icon: '🩸', to: '/analysis/mock' },
   { label: 'Radyoloji ve Diğer Tetkik Raporları', shortLabel: 'Tetkikler', icon: '🩻', to: '/radiology' },
   { label: 'Bulguları Değerlendir', shortLabel: 'Değerlendir', icon: '🧩', to: '/combined-evaluation' },
@@ -124,7 +124,7 @@ export default function MobileNavigation() {
               }
             >
               <span className="text-lg leading-none" aria-hidden="true">{item.icon}</span>
-              <span className="mt-1 max-w-full truncate">{item.shortLabel}</span>
+              <span className="mt-1 max-w-full text-center leading-tight">{item.shortLabel}</span>
             </NavLink>
           ))}
 
