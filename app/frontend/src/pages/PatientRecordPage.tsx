@@ -1,12 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import ClinicalIntakeForm, {
   createEmptyClinicalIntake,
 } from '../components/clinical/ClinicalIntakeForm';
 import SectionCard from '../components/ui/SectionCard';
+import { getStoredUser } from '../services/authClient';
 import type { ClinicalIntakeInput } from '../services/labAnalysisClient';
 import {
   ACTIVE_CLINICAL_INTAKE_KEY,
+  activatePatientRecord,
+  listPatientRecords,
   savePatientRecord,
 } from '../services/patientClient';
 
@@ -23,12 +26,48 @@ function readStoredClinicalIntake(): ClinicalIntakeInput {
 }
 
 export default function PatientRecordPage() {
+  const user = getStoredUser();
+  const hadStoredIntakeAtMount = useRef(
+    Boolean(localStorage.getItem(ACTIVE_CLINICAL_INTAKE_KEY)),
+  );
   const [clinicalIntake, setClinicalIntake] = useState<ClinicalIntakeInput>(
     readStoredClinicalIntake,
   );
   const [savedMessage, setSavedMessage] = useState('');
+  const [restoreMessage, setRestoreMessage] = useState('');
   const [saveError, setSaveError] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function restoreLatestAccountRecord() {
+      if (user?.role !== 'patient' || hadStoredIntakeAtMount.current) return;
+
+      try {
+        const records = await listPatientRecords();
+        if (cancelled) return;
+
+        const latest = records.find(
+          (record) => Boolean(record.metadata_json?.clinical_context),
+        );
+        const storedIntake = latest?.metadata_json?.clinical_context;
+        if (!latest || !storedIntake) return;
+
+        activatePatientRecord(latest);
+        setClinicalIntake(storedIntake);
+        setRestoreMessage('Daha önce kaydettiğiniz bilgiler hesabınızdan yüklendi.');
+        window.setTimeout(() => setRestoreMessage(''), 4000);
+      } catch {
+        // The empty/local form remains usable if account restoration is unavailable.
+      }
+    }
+
+    void restoreLatestAccountRecord();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id, user?.role]);
 
   useEffect(() => {
     localStorage.setItem(
@@ -62,7 +101,7 @@ export default function PatientRecordPage() {
 
     try {
       await savePatientRecord(clinicalIntake);
-      setSavedMessage('Hasta bilgileri kaydedildi.');
+      setSavedMessage('Hasta bilgileri kaydedildi ve arşiv güncellendi.');
       window.setTimeout(() => setSavedMessage(''), 3000);
     } catch (error) {
       setSaveError(
@@ -79,8 +118,14 @@ export default function PatientRecordPage() {
     <div className="space-y-6">
       <SectionCard
         title="Hasta bilgileri"
-        description="Klinik değerlendirmede kullanılacak temel bilgileri girin."
+        description="Klinik değerlendirmede kullanılacak temel bilgileri girin. Kaydettiğiniz bilgiler sonraki girişlerinizde hesabınızdan yeniden yüklenir."
       >
+        {restoreMessage ? (
+          <div className="mb-4 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-medium text-blue-800">
+            {restoreMessage}
+          </div>
+        ) : null}
+
         <ClinicalIntakeForm
           value={clinicalIntake}
           onChange={setClinicalIntake}
