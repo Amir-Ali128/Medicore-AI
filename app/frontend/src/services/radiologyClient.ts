@@ -4,7 +4,6 @@ const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000';
 
 export const DEMO_PATIENT_ID = '3fa85f64-5717-4562-b3fc-2c963f66afa6';
-const DEMO_UPLOADED_BY_USER_ID = '3fa85f64-5717-4562-b3fc-2c963f66afa6';
 export const ACTIVE_PATIENT_ID_KEY = 'medicore:activePatientId';
 export const LAST_RADIOLOGY_REPORT_ID_KEY = 'medicore:lastRadiologyReportId';
 
@@ -62,8 +61,22 @@ export type RadiologyReportInput = {
   reportText: string;
 };
 
-export function getActiveRadiologyPatientId(): string {
-  return localStorage.getItem(ACTIVE_PATIENT_ID_KEY) ?? DEMO_PATIENT_ID;
+type ListRadiologyOptions = {
+  includeUnanalyzed?: boolean;
+};
+
+export function getActiveRadiologyPatientId(): string | null {
+  return localStorage.getItem(ACTIVE_PATIENT_ID_KEY);
+}
+
+function requireActivePatientId(): string {
+  const patientId = getActiveRadiologyPatientId();
+  if (!patientId) {
+    throw new Error(
+      'Önce Hasta Bilgileri bölümünde Kaydet’e basarak aktif hasta kaydını oluşturmalısın.',
+    );
+  }
+  return patientId;
 }
 
 function authHeaders(): HeadersInit {
@@ -104,10 +117,14 @@ function normalizeReport(report: RadiologyReport): RadiologyReport {
   };
 }
 
+export function isAnalyzableRadiologyReport(report: RadiologyReport): boolean {
+  return report.status !== 'file_saved' && report.metadata_json.analysis_available !== false;
+}
+
 async function parseReportResponse(response: Response): Promise<RadiologyReport> {
   if (!response.ok) {
     const message = await readErrorMessage(response);
-    throw new Error(`Radyoloji analizi başarısız: ${response.status} ${message}`);
+    throw new Error(`Radyoloji/dosya işlemi başarısız: ${response.status} ${message}`);
   }
   const report = normalizeReport((await response.json()) as RadiologyReport);
   localStorage.setItem(LAST_RADIOLOGY_REPORT_ID_KEY, report.id);
@@ -124,8 +141,7 @@ export async function createManualRadiologyReport(
       ...authHeaders(),
     },
     body: JSON.stringify({
-      patient_id: getActiveRadiologyPatientId(),
-      uploaded_by_user_id: DEMO_UPLOADED_BY_USER_ID,
+      patient_id: requireActivePatientId(),
       report_date: input.reportDate,
       modality: input.modality,
       body_part: input.bodyPart,
@@ -137,14 +153,13 @@ export async function createManualRadiologyReport(
   return parseReportResponse(response);
 }
 
-export async function uploadRadiologyReportPdf(
+export async function uploadRadiologyReportFile(
   file: File,
   input: Omit<RadiologyReportInput, 'reportText'>,
 ): Promise<RadiologyReport> {
   const formData = new FormData();
   formData.append('file', file);
-  formData.append('patient_id', getActiveRadiologyPatientId());
-  formData.append('uploaded_by_user_id', DEMO_UPLOADED_BY_USER_ID);
+  formData.append('patient_id', requireActivePatientId());
   if (input.reportDate) formData.append('report_date', input.reportDate);
   if (input.modality) formData.append('modality', input.modality);
   if (input.bodyPart) formData.append('body_part', input.bodyPart);
@@ -157,19 +172,40 @@ export async function uploadRadiologyReportPdf(
   return parseReportResponse(response);
 }
 
+/** Backward-compatible alias for older callers. */
+export const uploadRadiologyReportPdf = uploadRadiologyReportFile;
+
 export async function listPatientRadiologyReports(
-  patientId = getActiveRadiologyPatientId(),
+  patientId: string | null = getActiveRadiologyPatientId(),
+  options: ListRadiologyOptions = {},
 ): Promise<RadiologyReport[]> {
+  if (!patientId) return [];
+
   const response = await fetch(
     `${API_BASE_URL}/radiology-reports/patient/${patientId}?limit=50`,
     { headers: authHeaders() },
   );
   if (!response.ok) {
     const message = await readErrorMessage(response);
-    throw new Error(`Radyoloji geçmişi yüklenemedi: ${response.status} ${message}`);
+    throw new Error(`Radyoloji/dosya geçmişi yüklenemedi: ${response.status} ${message}`);
   }
-  const reports = (await response.json()) as RadiologyReport[];
-  return Array.isArray(reports) ? reports.map(normalizeReport) : [];
+
+  const rawReports = (await response.json()) as RadiologyReport[];
+  const reports = Array.isArray(rawReports) ? rawReports.map(normalizeReport) : [];
+  return options.includeUnanalyzed
+    ? reports
+    : reports.filter(isAnalyzableRadiologyReport);
+}
+
+export async function downloadRadiologyOriginalFile(reportId: string): Promise<Blob> {
+  const response = await fetch(`${API_BASE_URL}/radiology-reports/${reportId}/file`, {
+    headers: authHeaders(),
+  });
+  if (!response.ok) {
+    const message = await readErrorMessage(response);
+    throw new Error(`Dosya açılamadı: ${response.status} ${message}`);
+  }
+  return response.blob();
 }
 
 export async function deleteRadiologyReport(reportId: string): Promise<void> {
@@ -180,7 +216,7 @@ export async function deleteRadiologyReport(reportId: string): Promise<void> {
 
   if (!response.ok) {
     const message = await readErrorMessage(response);
-    throw new Error(`Radyoloji raporu silinemedi: ${response.status} ${message}`);
+    throw new Error(`Radyoloji/dosya kaydı silinemedi: ${response.status} ${message}`);
   }
 
   if (localStorage.getItem(LAST_RADIOLOGY_REPORT_ID_KEY) === reportId) {
