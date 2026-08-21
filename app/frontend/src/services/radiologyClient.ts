@@ -61,6 +61,8 @@ export type RadiologyReportInput = {
   reportText: string;
 };
 
+export type RadiologyImageModality = 'XRAY' | 'ULTRASOUND';
+
 type ListRadiologyOptions = {
   includeUnanalyzed?: boolean;
 };
@@ -121,6 +123,10 @@ export function isAnalyzableRadiologyReport(report: RadiologyReport): boolean {
   return report.status !== 'file_saved' && report.metadata_json.analysis_available !== false;
 }
 
+export function isVisualAiReview(report: RadiologyReport): boolean {
+  return report.metadata_json.visual_analysis_available === true;
+}
+
 async function parseReportResponse(response: Response): Promise<RadiologyReport> {
   if (!response.ok) {
     const message = await readErrorMessage(response);
@@ -165,6 +171,25 @@ export async function uploadRadiologyReportFile(
   if (input.bodyPart) formData.append('body_part', input.bodyPart);
 
   const response = await fetch(`${API_BASE_URL}/radiology-reports/upload`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: formData,
+  });
+  return parseReportResponse(response);
+}
+
+export async function uploadRadiologyImageReview(
+  file: File,
+  modality: RadiologyImageModality,
+  reportDate: string | null = new Date().toISOString().slice(0, 10),
+): Promise<RadiologyReport> {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('patient_id', requireActivePatientId());
+  formData.append('modality', modality);
+  if (reportDate) formData.append('report_date', reportDate);
+
+  const response = await fetch(`${API_BASE_URL}/radiology-reports/image-review`, {
     method: 'POST',
     headers: authHeaders(),
     body: formData,

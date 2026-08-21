@@ -58,6 +58,12 @@ class Settings(BaseSettings):
     # --- Claude clinical hypothesis copilot (Module J) ------------------
     claude_hypothesis_model: str | None = None
 
+    # --- Experimental X-ray / ultrasound image review -------------------
+    # Optional override. When unset, the image-review service falls back to the
+    # already configured hypothesis or extraction model so existing Render
+    # deployments do not require a new environment variable.
+    claude_vision_model: str | None = None
+
     @staticmethod
     def _with_driver(url: str, driver: str) -> str:
         """Convert Render/Postgres URL into SQLAlchemy driver URL."""

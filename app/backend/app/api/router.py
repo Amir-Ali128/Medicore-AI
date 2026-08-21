@@ -16,6 +16,7 @@ from app.api.routes import (
     lab_results,
     patient_timeline,
     patients,
+    radiology_image_review,
     radiology_reports,
 )
 from app.domain.radiology_report_safety import analyze_radiology_report_safely
@@ -42,3 +43,4 @@ api_router.include_router(clinical_copilot.router)
 api_router.include_router(extraction_review.router)
 api_router.include_router(patient_timeline.router)
 api_router.include_router(radiology_reports.router)
+api_router.include_router(radiology_image_review.router)
