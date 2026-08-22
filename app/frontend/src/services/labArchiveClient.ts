@@ -74,6 +74,68 @@ export async function saveLabReportToPatient(
   return contextResponse.json();
 }
 
+export async function uploadLabReportOriginalFile(
+  labReportId: string,
+  file: File,
+): Promise<LabReportSummary> {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const response = await fetch(`${API_BASE_URL}/lab-reports/${labReportId}/file`, {
+    method: 'POST',
+    headers: authHeaders(false),
+    body: formData,
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      `Özgün PDF kaydedilemedi: ${response.status} ${await readError(response)}`,
+    );
+  }
+
+  return response.json();
+}
+
+export async function openLabReportPdf(
+  labReportId: string,
+  fileName?: string | null,
+): Promise<void> {
+  const popup = window.open('', '_blank');
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/lab-reports/${labReportId}/file`, {
+      headers: authHeaders(false),
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        `PDF açılamadı: ${response.status} ${await readError(response)}`,
+      );
+    }
+
+    const blob = await response.blob();
+    const objectUrl = URL.createObjectURL(
+      blob.type ? blob : new Blob([blob], { type: 'application/pdf' }),
+    );
+
+    if (popup) {
+      popup.document.title = fileName || 'Laboratuvar PDF';
+      popup.location.href = objectUrl;
+    } else {
+      const anchor = document.createElement('a');
+      anchor.href = objectUrl;
+      anchor.target = '_blank';
+      anchor.rel = 'noopener noreferrer';
+      anchor.click();
+    }
+
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+  } catch (error) {
+    popup?.close();
+    throw error;
+  }
+}
+
 export async function listPatientLabReports(patientId: string): Promise<LabReportSummary[]> {
   const response = await fetch(`${API_BASE_URL}/patients/${patientId}/lab-reports`, {
     headers: authHeaders(false),
