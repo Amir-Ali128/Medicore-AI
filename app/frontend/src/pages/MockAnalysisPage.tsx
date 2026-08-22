@@ -220,6 +220,20 @@ export default function MockAnalysisPage() {
     event.target.value = '';
   }
 
+  function removeSelectedFile(file: File) {
+    setSelectedFiles((current) =>
+      current.filter((item) => fileKey(item) !== fileKey(file)),
+    );
+    setMessage('');
+    setError('');
+  }
+
+  function clearSelectedFiles() {
+    setSelectedFiles([]);
+    setMessage('Seçilen PDF’ler yükleme listesinden silindi.');
+    setError('');
+  }
+
   async function handleOpenPdf(report: LabReportSummary) {
     setOpeningPdfId(report.id);
     setArchiveError('');
@@ -235,8 +249,7 @@ export default function MockAnalysisPage() {
   }
 
   async function handleUpload() {
-    const patientId = getActivePatientId();
-    if (!patientId) {
+    if (!getActivePatientId()) {
       setError('Önce Hasta Bilgileri bölümünde Kaydet’e basarak aktif hasta kaydını oluşturmalısın.');
       return;
     }
@@ -245,7 +258,6 @@ export default function MockAnalysisPage() {
       return;
     }
 
-    const clinicalContext = readStoredClinicalIntake() ?? createEmptyClinicalIntake();
     setIsUploading(true);
     setError('');
     setMessage('');
@@ -262,38 +274,17 @@ export default function MockAnalysisPage() {
       try {
         const result = await uploadLabReportPdf(file, createEmptyClinicalIntake());
         latestSuccessful = result;
-
-        try {
-          setProgress(`${index + 1}/${selectedFiles.length} · ${file.name} kaydediliyor`);
-          await saveLabReportToPatient(
-            result.lab_report_id,
-            patientId,
-            clinicalContext,
-            result.patient,
-          );
-          await uploadLabReportOriginalFile(result.lab_report_id, file);
-          completedItem = {
-            fileName: file.name,
-            originalFile: file,
-            result,
-            saved: true,
-          };
-        } catch (saveError) {
-          completedItem = {
-            fileName: file.name,
-            originalFile: file,
-            result,
-            saved: false,
-            saveError:
-              saveError instanceof Error
-                ? saveError.message
-                : 'Analiz edildi ancak PDF arşive kaydedilemedi.',
-          };
-        }
+        completedItem = {
+          fileName: file.name,
+          originalFile: file,
+          result,
+          saved: false,
+        };
       } catch (uploadError) {
         failedFiles.push(file);
         completedItem = {
           fileName: file.name,
+          originalFile: file,
           error:
             uploadError instanceof Error
               ? uploadError.message
@@ -311,17 +302,8 @@ export default function MockAnalysisPage() {
     setIsUploading(false);
 
     const analyzed = nextResults.filter((item) => item.result).length;
-    const saved = nextResults.filter((item) => item.saved).length;
-    const pending = nextResults.filter((item) => item.result && !item.saved).length;
-
-    if (saved > 0) {
-      await refreshArchive(patientId);
-    }
-
-    if (saved > 0 && pending === 0) {
-      setMessage(`${saved} laboratuvar raporu analiz edildi; özgün PDF ile birlikte hastaya kaydedildi.`);
-    } else if (analyzed > 0 && pending > 0) {
-      setMessage(`${analyzed} rapor analiz edildi. Kaydedilemeyen ${pending} rapor için Kaydet’e basabilirsin.`);
+    if (analyzed > 0) {
+      setMessage(`${analyzed} laboratuvar raporu analiz edildi. Kalıcı arşive eklemek için Kaydet’e bas.`);
     } else if (!latestSuccessful) {
       setError('Seçilen PDF dosyalarının hiçbiri analiz edilemedi.');
     }
@@ -391,7 +373,7 @@ export default function MockAnalysisPage() {
       <header>
         <h1 className="text-2xl font-semibold text-slate-950">Laboratuvar Raporları</h1>
         <p className="mt-2 text-sm leading-6 text-slate-500">
-          PDF&apos;yi analiz ettiğinde sonuçlar ve özgün PDF aktif hastaya kaydedilir; daha sonra tekrar açılabilir.
+          PDF&apos;yi önce analiz et. Arşive kalıcı olarak eklemek istediğinde ayrıca Kaydet&apos;e bas; yanlış seçtiğin PDF&apos;yi Sil ile kaldırabilirsin.
         </p>
       </header>
 
@@ -412,20 +394,16 @@ export default function MockAnalysisPage() {
             {selectedFiles.map((file) => (
               <div
                 key={fileKey(file)}
-                className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2"
+                className="flex items-center justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2"
               >
-                <span className="truncate text-sm font-medium text-slate-900">{file.name}</span>
+                <span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-900">{file.name}</span>
                 <button
                   type="button"
-                  onClick={() =>
-                    setSelectedFiles((current) =>
-                      current.filter((item) => fileKey(item) !== fileKey(file)),
-                    )
-                  }
+                  onClick={() => removeSelectedFile(file)}
                   disabled={isUploading}
-                  className="ml-3 text-xs font-semibold text-red-600 disabled:opacity-50"
+                  className="shrink-0 rounded-lg border border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"
                 >
-                  Kaldır
+                  Sil
                 </button>
               </div>
             ))}
@@ -454,6 +432,17 @@ export default function MockAnalysisPage() {
                 : unsavedResults.length > 0
                   ? 'Kaydet'
                   : '✓ Kaydedildi'}
+            </button>
+          ) : null}
+
+          {selectedFiles.length > 0 ? (
+            <button
+              type="button"
+              onClick={clearSelectedFiles}
+              disabled={isUploading}
+              className="rounded-lg border border-red-200 bg-white px-5 py-3 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Sil
             </button>
           ) : null}
         </div>
@@ -538,7 +527,7 @@ export default function MockAnalysisPage() {
                   ? `— ${item.error}`
                   : item.saved
                     ? `— analiz edildi; PDF ve sonuçlar kaydedildi (${item.result?.counts.total ?? 0} sonuç)`
-                    : `— analiz edildi ancak PDF henüz tam kaydedilemedi (${item.result?.counts.total ?? 0} sonuç)`}
+                    : `— analiz edildi; henüz kaydedilmedi (${item.result?.counts.total ?? 0} sonuç)`}
               </span>
               {item.saveError ? (
                 <p className="mt-1 text-xs leading-5">{item.saveError}</p>
