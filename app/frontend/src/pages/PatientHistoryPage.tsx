@@ -2,7 +2,11 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import SectionCard from '../components/ui/SectionCard';
-import { listPatientLabReports } from '../services/labArchiveClient';
+import type { LabReportSummary } from '../services/labAnalysisClient';
+import {
+  listPatientLabReports,
+  openLabReportPdf,
+} from '../services/labArchiveClient';
 import {
   activatePatientRecord,
   listPatientRecords,
@@ -15,6 +19,7 @@ type AttachmentSummary = {
   radiologyCount: number;
   latestLabFile: string | null;
   latestRadiologyFile: string | null;
+  labReports: LabReportSummary[];
 };
 
 function formatDate(value: string) {
@@ -22,6 +27,13 @@ function formatDate(value: string) {
     dateStyle: 'medium',
     timeStyle: 'short',
   }).format(new Date(value));
+}
+
+function formatPdfDate(value: string | null | undefined) {
+  if (!value) return 'Tarih yok';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return new Intl.DateTimeFormat('tr-TR', { dateStyle: 'medium' }).format(parsed);
 }
 
 function sexLabel(value: string) {
@@ -60,8 +72,28 @@ function RecordCard({
   attachments?: AttachmentSummary;
   onRestore: (record: PatientRecord) => void;
 }) {
+  const [labOpen, setLabOpen] = useState(false);
+  const [openingLabId, setOpeningLabId] = useState<string | null>(null);
+  const [labOpenError, setLabOpenError] = useState('');
   const age = record.metadata_json?.age;
   const summary = recordSummary(record);
+  const labPdfs = (attachments?.labReports ?? []).filter((report) =>
+    report.file_name?.toLowerCase().endsWith('.pdf'),
+  );
+
+  async function handleOpenLabPdf(report: LabReportSummary) {
+    setOpeningLabId(report.id);
+    setLabOpenError('');
+    try {
+      await openLabReportPdf(report.id, report.file_name);
+    } catch (openError) {
+      setLabOpenError(
+        openError instanceof Error ? openError.message : 'PDF açılamadı.',
+      );
+    } finally {
+      setOpeningLabId(null);
+    }
+  }
 
   return (
     <article className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -87,17 +119,32 @@ function RecordCard({
       </div>
 
       <div className="mt-5 grid gap-3 sm:grid-cols-2">
-        <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 p-4">
-          <p className="text-xs font-semibold uppercase tracking-wide text-emerald-800">
-            Laboratuvar
-          </p>
-          <p className="mt-2 text-sm font-semibold text-slate-900">
-            {attachments ? `${attachments.labCount} kayıt` : 'Kontrol ediliyor…'}
-          </p>
-          {attachments?.latestLabFile ? (
-            <p className="mt-1 truncate text-xs text-slate-500">Son: {attachments.latestLabFile}</p>
-          ) : null}
-        </div>
+        <button
+          type="button"
+          onClick={() => {
+            setLabOpen((current) => !current);
+            setLabOpenError('');
+          }}
+          className="rounded-lg border border-emerald-200 bg-emerald-50/60 p-4 text-left transition hover:bg-emerald-50"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-xs font-semibold uppercase tracking-wide text-emerald-800">
+                Laboratuvar
+              </p>
+              <p className="mt-2 text-sm font-semibold text-slate-900">
+                {attachments ? `${attachments.labCount} kayıt` : 'Kontrol ediliyor…'}
+              </p>
+              {attachments?.latestLabFile ? (
+                <p className="mt-1 truncate text-xs text-slate-500">Son: {attachments.latestLabFile}</p>
+              ) : null}
+            </div>
+            <span className="shrink-0 text-xs font-semibold text-emerald-700">
+              {labOpen ? 'PDF’leri gizle' : 'PDF’leri aç'}
+            </span>
+          </div>
+        </button>
+
         <div className="rounded-lg border border-violet-200 bg-violet-50/60 p-4">
           <p className="text-xs font-semibold uppercase tracking-wide text-violet-800">
             Radyoloji / diğer tetkikler
@@ -110,6 +157,59 @@ function RecordCard({
           ) : null}
         </div>
       </div>
+
+      {labOpen ? (
+        <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50/30 p-4">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm font-semibold text-slate-900">Laboratuvar PDF&apos;leri</p>
+            <span className="text-xs font-semibold text-emerald-700">{labPdfs.length} PDF</span>
+          </div>
+
+          {labPdfs.length === 0 ? (
+            <p className="mt-3 text-sm text-slate-500">Bu hasta kaydında açılabilir laboratuvar PDF&apos;i yok.</p>
+          ) : (
+            <div className="mt-3 space-y-2">
+              {labPdfs.map((report) => {
+                const canOpen = report.metadata_json?.original_file_stored === true;
+                return (
+                  <div
+                    key={report.id}
+                    className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-white px-3 py-3 sm:flex-row sm:items-center sm:justify-between"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-slate-900">
+                        📄 {report.file_name || 'Laboratuvar raporu.pdf'}
+                      </p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {formatPdfDate(report.report_date || report.created_at)}
+                        {!canOpen ? ' · Eski kayıt, özgün PDF saklanmamış' : ''}
+                      </p>
+                    </div>
+                    {canOpen ? (
+                      <button
+                        type="button"
+                        onClick={() => void handleOpenLabPdf(report)}
+                        disabled={openingLabId === report.id}
+                        className="shrink-0 rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-800 disabled:opacity-50"
+                      >
+                        {openingLabId === report.id ? 'Açılıyor…' : 'PDF’yi aç'}
+                      </button>
+                    ) : (
+                      <span className="shrink-0 text-xs font-semibold text-slate-400">Dosya yok</span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {labOpenError ? (
+            <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+              {labOpenError}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       {summary.length > 0 ? (
         <div className="mt-5 grid gap-3 md:grid-cols-2">
@@ -160,6 +260,7 @@ export default function PatientHistoryPage() {
                 radiologyCount: radiology.length,
                 latestLabFile: labs[0]?.file_name ?? null,
                 latestRadiologyFile: radiology[0]?.file_name ?? null,
+                labReports: labs,
               } satisfies AttachmentSummary,
             ] as const;
           }),
@@ -198,7 +299,7 @@ export default function PatientHistoryPage() {
         </p>
         <h1 className="mt-2 text-3xl font-semibold text-slate-950">Kaydedilen bilgiler</h1>
         <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-500">
-          Klinik bilgiler, kaydettiğiniz laboratuvar sonuçları ile radyoloji ve diğer tetkik dosyaları aynı hasta kaydı altında tutulur.
+          Klinik bilgiler, laboratuvar sonuçları ve özgün PDF&apos;ler ile radyoloji ve diğer tetkik dosyaları aynı hasta kaydı altında tutulur.
         </p>
       </header>
 
