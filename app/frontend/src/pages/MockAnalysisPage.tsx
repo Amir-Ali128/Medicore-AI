@@ -1,4 +1,4 @@
-import { useMemo, useState, type ChangeEvent } from 'react';
+import { useEffect, useMemo, useState, type ChangeEvent } from 'react';
 
 import {
   createEmptyClinicalIntake,
@@ -8,9 +8,13 @@ import {
   uploadLabReportPdf,
   type LabAnalysisResponse,
   type LabAnalysisResult,
+  type LabReportSummary,
   type LabResultStatus,
 } from '../services/labAnalysisClient';
-import { saveLabReportToPatient } from '../services/labArchiveClient';
+import {
+  listPatientLabReports,
+  saveLabReportToPatient,
+} from '../services/labArchiveClient';
 import { getActivePatientId } from '../services/patientClient';
 
 type ResultTone = 'low' | 'high' | 'review';
@@ -35,6 +39,13 @@ function statusClassName(status: string) {
   if (status === 'high') return 'border-red-200 bg-red-50 text-red-700';
   if (status === 'low') return 'border-amber-200 bg-amber-50 text-amber-800';
   return 'border-violet-200 bg-violet-50 text-violet-700';
+}
+
+function formatArchiveDate(value: string | null) {
+  if (!value) return 'Tarih yok';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return new Intl.DateTimeFormat('tr-TR', { dateStyle: 'medium' }).format(parsed);
 }
 
 function StatusPill({ status }: { status: LabResultStatus | string }) {
@@ -129,6 +140,9 @@ export default function MockAnalysisPage() {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [uploadResults, setUploadResults] = useState<LabUploadResult[]>([]);
   const [backendResult, setBackendResult] = useState<LabAnalysisResponse | null>(null);
+  const [archivedReports, setArchivedReports] = useState<LabReportSummary[]>([]);
+  const [archiveLoading, setArchiveLoading] = useState(false);
+  const [archiveError, setArchiveError] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [isUploading, setIsUploading] = useState(false);
@@ -150,6 +164,39 @@ export default function MockAnalysisPage() {
   const successfulResults = uploadResults.filter((item) => Boolean(item.result));
   const unsavedResults = successfulResults.filter((item) => !item.saved);
   const savedCount = successfulResults.filter((item) => item.saved).length;
+  const archivedPdfs = archivedReports.filter((report) =>
+    report.file_name?.toLowerCase().endsWith('.pdf'),
+  );
+
+  async function refreshArchive(patientId = getActivePatientId()) {
+    if (!patientId) {
+      setArchivedReports([]);
+      return;
+    }
+
+    setArchiveLoading(true);
+    setArchiveError('');
+    try {
+      const reports = await listPatientLabReports(patientId);
+      setArchivedReports(
+        [...reports].sort(
+          (a, b) => Date.parse(b.created_at ?? '') - Date.parse(a.created_at ?? ''),
+        ),
+      );
+    } catch (loadError) {
+      setArchiveError(
+        loadError instanceof Error
+          ? loadError.message
+          : 'Kaydedilen laboratuvar PDF kayıtları yüklenemedi.',
+      );
+    } finally {
+      setArchiveLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void refreshArchive();
+  }, []);
 
   function addFiles(event: ChangeEvent<HTMLInputElement>) {
     const incoming = Array.from(event.target.files ?? []).filter((file) =>
@@ -160,7 +207,8 @@ export default function MockAnalysisPage() {
       const existing = new Set(current.map(fileKey));
       return [...current, ...incoming.filter((file) => !existing.has(fileKey(file)))];
     });
-    setUploadResults([]);
+    // Önceki analiz/kayıt satırlarını temizleme: hasta yeni PDF eklediğinde
+    // eski PDF kayıtları ekranda kalmaya devam eder.
     setMessage('');
     setError('');
     event.target.value = '';
@@ -181,7 +229,6 @@ export default function MockAnalysisPage() {
     setIsUploading(true);
     setError('');
     setMessage('');
-    setUploadResults([]);
 
     const nextResults: LabUploadResult[] = [];
     const failedFiles: File[] = [];
@@ -191,6 +238,7 @@ export default function MockAnalysisPage() {
       const file = selectedFiles[index];
       setProgress(`${index + 1}/${selectedFiles.length} · ${file.name} analiz ediliyor`);
 
+      let completedItem: LabUploadResult;
       try {
         const result = await uploadLabReportPdf(file, createEmptyClinicalIntake());
         latestSuccessful = result;
@@ -203,9 +251,9 @@ export default function MockAnalysisPage() {
             clinicalContext,
             result.patient,
           );
-          nextResults.push({ fileName: file.name, result, saved: true });
+          completedItem = { fileName: file.name, result, saved: true };
         } catch (saveError) {
-          nextResults.push({
+          completedItem = {
             fileName: file.name,
             result,
             saved: false,
@@ -213,19 +261,21 @@ export default function MockAnalysisPage() {
               saveError instanceof Error
                 ? saveError.message
                 : 'Analiz edildi ancak arşive otomatik kaydedilemedi.',
-          });
+          };
         }
       } catch (uploadError) {
         failedFiles.push(file);
-        nextResults.push({
+        completedItem = {
           fileName: file.name,
           error:
             uploadError instanceof Error
               ? uploadError.message
               : 'Laboratuvar analizi başarısız oldu.',
-        });
+        };
       }
-      setUploadResults([...nextResults]);
+
+      nextResults.push(completedItem);
+      setUploadResults((current) => [...current, completedItem]);
     }
 
     setBackendResult(latestSuccessful);
@@ -237,8 +287,12 @@ export default function MockAnalysisPage() {
     const saved = nextResults.filter((item) => item.saved).length;
     const pending = nextResults.filter((item) => item.result && !item.saved).length;
 
+    if (saved > 0) {
+      await refreshArchive(patientId);
+    }
+
     if (saved > 0 && pending === 0) {
-      setMessage(`${saved} laboratuvar raporu analiz edildi ve hastanın arşivine kaydedildi.`);
+      setMessage(`${saved} laboratuvar raporu analiz edildi ve hastanın kalıcı PDF listesine kaydedildi.`);
     } else if (analyzed > 0 && pending > 0) {
       setMessage(`${analyzed} rapor analiz edildi. Kaydedilemeyen ${pending} rapor için Kaydet’e basabilirsin.`);
     } else if (!latestSuccessful) {
@@ -292,7 +346,8 @@ export default function MockAnalysisPage() {
     );
 
     if (savedIds.size > 0) {
-      setMessage(`${savedIds.size} laboratuvar raporu hastanın arşivine kaydedildi.`);
+      await refreshArchive(patientId);
+      setMessage(`${savedIds.size} laboratuvar raporu hastanın kalıcı PDF listesine kaydedildi.`);
     }
     if (failedMessages.length > 0) {
       setError(failedMessages[0]);
@@ -305,7 +360,7 @@ export default function MockAnalysisPage() {
       <header>
         <h1 className="text-2xl font-semibold text-slate-950">Laboratuvar Raporları</h1>
         <p className="mt-2 text-sm leading-6 text-slate-500">
-          PDF&apos;yi analiz ettiğinde sonuçlar aktif hastaya otomatik kaydedilir. Kaydet düğmesi de ekranda kalır.
+          PDF&apos;yi analiz ettiğinde aktif hastaya kaydedilir ve bu sayfadaki PDF listesinde kalır.
         </p>
       </header>
 
@@ -373,11 +428,58 @@ export default function MockAnalysisPage() {
         </div>
       </section>
 
+      <section className="rounded-xl border border-slate-200 bg-white p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-base font-semibold text-slate-950">Kaydedilen PDF&apos;ler</h2>
+            <p className="mt-1 text-sm leading-6 text-slate-500">
+              Bu hastaya kaydedilen laboratuvar PDF kayıtları yeni PDF yüklendiğinde veya sayfa yeniden açıldığında silinmez.
+            </p>
+          </div>
+          <span className="shrink-0 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
+            {archivedPdfs.length} PDF
+          </span>
+        </div>
+
+        {archiveLoading ? (
+          <p className="mt-4 text-sm text-slate-500">Kaydedilen PDF&apos;ler yükleniyor…</p>
+        ) : archiveError ? (
+          <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+            {archiveError}
+          </div>
+        ) : archivedPdfs.length === 0 ? (
+          <p className="mt-4 rounded-lg bg-slate-50 p-4 text-sm text-slate-500">
+            Bu hastaya kaydedilmiş laboratuvar PDF&apos;i henüz yok.
+          </p>
+        ) : (
+          <div className="mt-4 space-y-2">
+            {archivedPdfs.map((report) => (
+              <div
+                key={report.id}
+                className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-slate-900">
+                    {report.file_name || 'Laboratuvar raporu.pdf'}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {formatArchiveDate(report.report_date || report.created_at)} · Arşive bağlı
+                  </p>
+                </div>
+                <span className="shrink-0 text-xs font-semibold text-emerald-700">
+                  ✓ Kaydedildi
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
       {uploadResults.length > 0 ? (
         <div className="space-y-2">
-          {uploadResults.map((item) => (
+          {uploadResults.map((item, index) => (
             <div
-              key={item.fileName}
+              key={item.result?.lab_report_id ?? `${item.fileName}-${index}`}
               className={`rounded-lg border px-4 py-3 text-sm ${
                 item.error
                   ? 'border-red-200 bg-red-50 text-red-800'
