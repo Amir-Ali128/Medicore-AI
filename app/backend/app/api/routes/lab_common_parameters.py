@@ -29,7 +29,7 @@ COMMON_PARAMETERS: dict[str, dict[str, Any]] = {
     "Potasyum": {
         "code": "POTASYUM",
         "unit": "mmol/L",
-        "aliases": ["POTASYUM", "POTASSIUM", "K", "K+"],
+        "aliases": ["POTASYUM", "POTASSIUM"],
     },
     "Klor": {
         "code": "KLOR",
