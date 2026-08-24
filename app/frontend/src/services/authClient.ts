@@ -57,6 +57,22 @@ function readStoredUserUnsafe(): AuthUser | null {
   }
 }
 
+function isJwtExpiredOrInvalid(token: string): boolean {
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3 || !parts[1]) return true;
+
+    const normalized = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
+    const payload = JSON.parse(atob(padded)) as { exp?: number };
+
+    if (typeof payload.exp !== 'number') return true;
+    return payload.exp * 1000 <= Date.now();
+  } catch {
+    return true;
+  }
+}
+
 /**
  * Remove every client-side MediCore value from this browser profile.
  *
@@ -97,6 +113,13 @@ export function getAccessToken(): string | null {
   return localStorage.getItem(ACCESS_TOKEN_KEY);
 }
 
+export function clearAccessToken(): void {
+  // Preserve the current user's local clinical workspace so the same user can
+  // sign in again without losing unsaved browser-side context. A different user
+  // is still protected by storeAuth(), which clears the full MediCore state.
+  localStorage.removeItem(ACCESS_TOKEN_KEY);
+}
+
 export function getCurrentUser(): AuthUser | null {
   const raw = localStorage.getItem(CURRENT_USER_KEY);
 
@@ -119,7 +142,15 @@ export function getStoredUser(): AuthUser | null {
 }
 
 export function isAuthenticated(): boolean {
-  return Boolean(getAccessToken());
+  const token = getAccessToken();
+  if (!token) return false;
+
+  if (isJwtExpiredOrInvalid(token)) {
+    clearAccessToken();
+    return false;
+  }
+
+  return true;
 }
 
 export function logout(): void {

@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 
 import {
   evaluateClaudeAbnormalResults,
   type ClaudeReviewGenerationResult,
 } from '../services/claudeReviewClient';
+import { clearAccessToken } from '../services/authClient';
 import {
   getAnalysisRunResults,
   LAST_ANALYSIS_RUN_ID_KEY,
@@ -37,6 +38,21 @@ function hasMeaningfulValue(value: unknown): boolean {
 
 function hasClinicalData(value: ClinicalIntakeInput | null) {
   return hasMeaningfulValue(value);
+}
+
+function errorMessage(value: unknown): string {
+  return value instanceof Error ? value.message : String(value ?? '');
+}
+
+function isAuthSessionError(value: unknown): boolean {
+  const message = errorMessage(value).toLowerCase();
+  return (
+    message.includes('401') &&
+    (message.includes('auth token') ||
+      message.includes('expired') ||
+      message.includes('unauthorized') ||
+      message.includes('user not found'))
+  );
 }
 
 function SourceStatus({
@@ -75,6 +91,7 @@ function SourceStatus({
 }
 
 export default function CaseEvaluationPage() {
+  const navigate = useNavigate();
   const [clinicalIntake, setClinicalIntake] = useState<ClinicalIntakeInput | null>(null);
   const [labReady, setLabReady] = useState(false);
   const [radiologyReady, setRadiologyReady] = useState(false);
@@ -91,37 +108,56 @@ export default function CaseEvaluationPage() {
     let cancelled = false;
 
     async function loadSources() {
-      try {
-        setLoading(true);
-        setError('');
-        const intake = readClinicalIntake();
-        const [labs, reports] = await Promise.all([
-          analysisRunId ? getAnalysisRunResults(analysisRunId) : Promise.resolve([]),
-          listPatientRadiologyReports(),
-        ]);
+      setLoading(true);
+      setError('');
 
-        if (cancelled) return;
+      const intake = readClinicalIntake();
+      if (!cancelled) {
+        // Local patient data should not be marked "Eksik" only because another
+        // source request failed. Each source is evaluated independently below.
         setClinicalIntake(intake);
-        setLabReady(labs.length > 0);
-        setRadiologyReady(reports.length > 0);
-      } catch (loadError) {
-        if (!cancelled) {
-          setError(
-            loadError instanceof Error
-              ? loadError.message
-              : 'Kayıtlı bilgiler yüklenemedi.',
-          );
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
       }
+
+      const [labsResult, reportsResult] = await Promise.allSettled([
+        analysisRunId ? getAnalysisRunResults(analysisRunId) : Promise.resolve([]),
+        listPatientRadiologyReports(),
+      ]);
+
+      if (cancelled) return;
+
+      setLabReady(
+        labsResult.status === 'fulfilled' && labsResult.value.length > 0,
+      );
+      setRadiologyReady(
+        reportsResult.status === 'fulfilled' && reportsResult.value.length > 0,
+      );
+
+      const failures = [labsResult, reportsResult]
+        .filter(
+          (entry): entry is PromiseRejectedResult => entry.status === 'rejected',
+        )
+        .map((entry) => entry.reason);
+
+      if (failures.some(isAuthSessionError)) {
+        // Keep the current user's local clinical workspace, remove only the stale
+        // token and require a fresh login instead of exposing the raw backend 401.
+        clearAccessToken();
+        navigate('/login', { replace: true });
+        return;
+      }
+
+      if (failures.length > 0) {
+        setError(errorMessage(failures[0]) || 'Kayıtlı bilgiler yüklenemedi.');
+      }
+
+      setLoading(false);
     }
 
     void loadSources();
     return () => {
       cancelled = true;
     };
-  }, [analysisRunId]);
+  }, [analysisRunId, navigate]);
 
   const findings = useMemo(() => {
     if (!result) return [];
@@ -150,6 +186,12 @@ export default function CaseEvaluationPage() {
       );
       setResult(nextResult);
     } catch (evaluationError) {
+      if (isAuthSessionError(evaluationError)) {
+        clearAccessToken();
+        navigate('/login', { replace: true });
+        return;
+      }
+
       setError(
         evaluationError instanceof Error
           ? evaluationError.message
