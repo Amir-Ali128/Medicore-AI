@@ -12,6 +12,7 @@ from app.api.routes import (
     extraction_review,
     feedback,
     lab_analysis,
+    lab_manual_entry,
     lab_reports,
     lab_results,
     patient_timeline,
@@ -56,6 +57,7 @@ api_router.include_router(analytics.router)
 api_router.include_router(feedback.router)
 api_router.include_router(patients.router)
 api_router.include_router(lab_analysis.router)
+api_router.include_router(lab_manual_entry.router)
 api_router.include_router(combined_case_import.router)
 api_router.include_router(lab_reports.router)
 api_router.include_router(analysis_runs.router)
