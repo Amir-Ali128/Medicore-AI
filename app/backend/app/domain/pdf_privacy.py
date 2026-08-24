@@ -11,7 +11,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 
-import fitz  # PyMuPDF
+import pymupdf as fitz
 
 
 _DIRECT_IDENTIFIER_MARKERS = (
@@ -19,7 +19,6 @@ _DIRECT_IDENTIFIER_MARKERS = (
     "HASTA ADI",
     "AD SOYAD",
     "ADI SOYADI",
-    "AD SOYAD",
     "TC KIMLIK",
     "T C KIMLIK",
     "T.C. KIMLIK",
@@ -44,13 +43,21 @@ _DIRECT_IDENTIFIER_MARKERS = (
     "HASTA NO",
 )
 
+_NAME_MARKERS = (
+    "HASTANIN ADI",
+    "HASTA ADI",
+    "AD SOYAD",
+    "ADI SOYADI",
+)
+
 _TCKN_RE = re.compile(r"(?<!\d)[1-9]\d{10}(?!\d)")
 _EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
-_PHONE_RE = re.compile(r"(?<!\d)(?:\+?90\s*)?(?:\(?0?5\d{2}\)?[\s.-]*)\d{3}[\s.-]*\d{2}[\s.-]*\d{2}(?!\d)")
-_DATE_RE = re.compile(r"(?<!\d)(?:0?[1-9]|[12]\d|3[01])[./-](?:0?[1-9]|1[0-2])[./-](?:19|20)\d{2}(?!\d)")
+_PHONE_RE = re.compile(
+    r"(?<!\d)(?:\+?90\s*)?(?:\(?0?5\d{2}\)?[\s.-]*)\d{3}[\s.-]*\d{2}[\s.-]*\d{2}(?!\d)"
+)
 
 _NAME_LABEL_RE = re.compile(
-    r"(?:HASTANIN\s+ADI(?:\s*,?\s*SOYADI)?|HASTA\s+AD(?:I|\s+SOYAD)|ADI\s+SOYADI|AD\s+SOYAD)\s*[:.-]?\s*([^\n\r]{2,100})",
+    r"(?:HASTAN[ıi]N\s+AD[ıi](?:\s*,?\s*SOYAD[ıi])?|HASTA\s+AD(?:[ıi]|\s+SOYAD)|AD[ıi]\s+SOYAD[ıi]|AD\s+SOYAD)\s*[:.-]?\s*([^\n\r]{2,100})",
     re.IGNORECASE,
 )
 
@@ -71,7 +78,7 @@ def _candidate_names(text: str) -> set[str]:
     names: set[str] = set()
     for match in _NAME_LABEL_RE.finditer(text):
         candidate = re.split(
-            r"\b(?:TC\s*KIMLIK|T\.?\s*C\.?\s*KIMLIK|D(?:OGUM)?\s*TARIHI|DOSYA|KAYIT|PROTOKOL)\b",
+            r"\b(?:TC\s*K[İI]ML[İI]K|T\.?\s*C\.?\s*K[İI]ML[İI]K|D(?:OĞUM|OGUM)?\s*TAR[İI]H[İI]|DOSYA|KAYIT|PROTOKOL)\b",
             match.group(1),
             maxsplit=1,
             flags=re.IGNORECASE,
@@ -81,20 +88,48 @@ def _candidate_names(text: str) -> set[str]:
     return names
 
 
-def _line_rects_for_markers(page: fitz.Page) -> list[fitz.Rect]:
-    rects: list[fitz.Rect] = []
+def _page_lines(page: fitz.Page) -> list[tuple[str, fitz.Rect]]:
+    lines: list[tuple[str, fitz.Rect]] = []
     page_dict = page.get_text("dict")
     for block in page_dict.get("blocks", []):
         for line in block.get("lines", []):
             spans = line.get("spans", [])
             line_text = " ".join(str(span.get("text", "")) for span in spans).strip()
-            if not line_text:
-                continue
-            folded = _fold(line_text)
-            if any(marker in folded for marker in _DIRECT_IDENTIFIER_MARKERS):
-                bbox = line.get("bbox")
-                if bbox:
-                    rects.append(fitz.Rect(bbox))
+            bbox = line.get("bbox")
+            if line_text and bbox:
+                lines.append((line_text, fitz.Rect(bbox)))
+    return lines
+
+
+def _line_rects_for_markers(page: fitz.Page) -> list[fitz.Rect]:
+    rects: list[fitz.Rect] = []
+    lines = _page_lines(page)
+    for index, (line_text, rect) in enumerate(lines):
+        folded = _fold(line_text)
+        matching_markers = [
+            marker for marker in _DIRECT_IDENTIFIER_MARKERS if marker in folded
+        ]
+        if not matching_markers:
+            continue
+
+        rects.append(rect)
+
+        # Some hospital/lab PDFs put the patient's name on the next visual line
+        # after a standalone "Hastanın Adı" label. Redact that short text line too.
+        if any(marker in _NAME_MARKERS for marker in matching_markers):
+            marker_only = folded.rstrip(":.- ") in _NAME_MARKERS
+            if marker_only and index + 1 < len(lines):
+                next_text, next_rect = lines[index + 1]
+                next_folded = _fold(next_text)
+                if (
+                    2 <= len(next_text.strip()) <= 100
+                    and not any(char.isdigit() for char in next_text)
+                    and not any(
+                        marker in next_folded for marker in _DIRECT_IDENTIFIER_MARKERS
+                    )
+                ):
+                    rects.append(next_rect)
+
     return rects
 
 
@@ -111,8 +146,10 @@ def anonymize_lab_pdf(content: bytes) -> PdfAnonymizationResult:
     """Remove common direct identifiers from a text-based laboratory PDF.
 
     Redactions are applied to the PDF content itself, not merely covered by a
-    visual overlay, so the removed text is not left searchable underneath.
-    The function fails closed when the document cannot be processed.
+    visual overlay, so removed text is not left searchable underneath. Report,
+    sample and result dates are preserved unless they share a direct-identifier
+    line such as "Doğum Tarihi". The function fails closed when the document
+    cannot be processed safely.
     """
     if not content:
         raise ValueError("Boş PDF anonimleştirilemez.")
@@ -138,10 +175,6 @@ def anonymize_lab_pdf(content: bytes) -> PdfAnonymizationResult:
     exact_values.update(_TCKN_RE.findall(full_text))
     exact_values.update(_EMAIL_RE.findall(full_text))
     exact_values.update(_PHONE_RE.findall(full_text))
-
-    # Exact dates are direct identifiers in this archive context. Age, when
-    # separately extracted by the analyzer, remains available as coarse metadata.
-    exact_values.update(_DATE_RE.findall(full_text))
 
     redaction_count = 0
     for page in document:
@@ -169,7 +202,9 @@ def anonymize_lab_pdf(content: bytes) -> PdfAnonymizationResult:
     # Verify the strongest machine-detectable identifiers were actually removed.
     try:
         verification_document = fitz.open(stream=sanitized, filetype="pdf")
-        verification_text = "\n".join(page.get_text("text") for page in verification_document)
+        verification_text = "\n".join(
+            page.get_text("text") for page in verification_document
+        )
         verification_document.close()
     except Exception as exc:  # pragma: no cover
         raise ValueError("Anonimleştirilmiş PDF doğrulanamadı.") from exc
