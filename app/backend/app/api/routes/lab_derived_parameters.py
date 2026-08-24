@@ -1,12 +1,14 @@
 """Derived laboratory parameters used by the Phase 1 PDF flow.
 
-The source report may provide BUN directly or may provide only urea.  This
-module keeps the calculation deterministic and prevents the parser from
-reusing a neighbouring reference range for the ratio.
+The source report may provide BUN directly or may provide only urea. This
+module keeps the calculation deterministic for a ratio that is explicitly
+reported by the source PDF. It must never invent a new visible lab result that
+does not exist in the uploaded report.
 """
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import date
 from typing import Any
@@ -21,6 +23,11 @@ _UREA_NAME = "Üre"
 _RATIO_MIN = 10.0
 _RATIO_MAX = 20.0
 _UREA_TO_BUN_DIVISOR = 2.14
+_RATIO_ROW_MARKERS = (
+    "BUN/KREATININ",
+    "BUN/CREATININE",
+    "BUNCREATININERATIO",
+)
 
 
 lab_analysis.LAB_PARAMETER_ALIASES.setdefault(
@@ -112,20 +119,40 @@ def _number(values: dict[str, dict[str, Any]], name: str) -> float | None:
         return None
 
 
+def _source_reports_ratio(text: str) -> bool:
+    """Return True only when the PDF itself contains a BUN/creatinine ratio row."""
+    for raw_line in text.splitlines():
+        normalized = lab_analysis._normalize_text(raw_line).upper().strip()
+        compact = re.sub(r"\s+", "", normalized)
+        if any(compact.startswith(marker) for marker in _RATIO_ROW_MARKERS):
+            return True
+    return False
+
+
 def _parse_with_derived_ratio(text: str) -> list[dict[str, Any]]:
     parsed = _original_parse_lab_values(text)
 
-    # A reported ratio can inherit the BUN range from the same PDF row layout.
-    # Always replace it with a deterministic calculation from the base values.
+    reported_ratio = next(
+        (item for item in parsed if item.get("raw_parameter_name") == _RATIO_NAME),
+        None,
+    )
     parsed = [item for item in parsed if item.get("raw_parameter_name") != _RATIO_NAME]
-    by_name = {str(item.get("raw_parameter_name")): item for item in parsed}
 
+    # Source fidelity rule: values that are not actually present in the PDF must
+    # never be surfaced as measured/high/low laboratory results. In particular,
+    # do not create BUN/Kreatinin merely because BUN and creatinine both exist.
+    if not _source_reports_ratio(text):
+        return parsed
+
+    by_name = {str(item.get("raw_parameter_name")): item for item in parsed}
     creatinine = _number(by_name, "Kreatinin")
     bun = _number(by_name, "BUN")
     urea = _number(by_name, _UREA_NAME)
 
+    # If the report contains the ratio but base values are unavailable, keep the
+    # explicitly reported parsed row instead of silently inventing a calculation.
     if creatinine is None or creatinine <= 0:
-        return parsed
+        return parsed + ([reported_ratio] if reported_ratio is not None else [])
 
     ratio_source = "BUN"
     if bun is None and urea is not None:
@@ -133,7 +160,7 @@ def _parse_with_derived_ratio(text: str) -> list[dict[str, Any]]:
         ratio_source = "Üre üzerinden hesaplanan BUN"
 
     if bun is None:
-        return parsed
+        return parsed + ([reported_ratio] if reported_ratio is not None else [])
 
     ratio = round(bun / creatinine, 2)
     parsed.append(
@@ -150,6 +177,7 @@ def _parse_with_derived_ratio(text: str) -> list[dict[str, Any]]:
                 "derived": True,
                 "formula": "BUN / Kreatinin",
                 "source": ratio_source,
+                "source_reported_parameter": True,
             },
         }
     )
