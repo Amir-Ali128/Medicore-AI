@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import text as sql_text
 
 from app.api.dependencies import AnalysisPipelineDep, SessionDep
 from app.api.routes import lab_analysis
@@ -119,6 +120,46 @@ async def analyze_manual_lab_report(
     )
 
     try:
-        return await pipeline.run(secured_payload)
+        result = await pipeline.run(secured_payload)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    # Analyse against the selected patient's demographics, but preserve the same
+    # explicit Analyse -> Save workflow used by PDF uploads. Until Save is pressed,
+    # move the generated rows back to the demo holding patient so they do not
+    # appear in the selected patient's archive prematurely.
+    hold_params = {
+        "patient_id": str(lab_analysis.DEMO_PATIENT_ID),
+        "lab_report_id": str(result.lab_report_id),
+    }
+    await session.execute(
+        sql_text(
+            "UPDATE lab_reports SET patient_id = :patient_id "
+            "WHERE id = :lab_report_id"
+        ),
+        hold_params,
+    )
+    await session.execute(
+        sql_text(
+            "UPDATE analysis_runs SET patient_id = :patient_id "
+            "WHERE lab_report_id = :lab_report_id"
+        ),
+        hold_params,
+    )
+    await session.execute(
+        sql_text(
+            "UPDATE lab_results SET patient_id = :patient_id "
+            "WHERE lab_report_id = :lab_report_id"
+        ),
+        hold_params,
+    )
+    await session.execute(
+        sql_text(
+            "UPDATE clinical_hypotheses SET patient_id = :patient_id "
+            "WHERE lab_report_id = :lab_report_id"
+        ),
+        hold_params,
+    )
+    await session.commit()
+
+    return result
