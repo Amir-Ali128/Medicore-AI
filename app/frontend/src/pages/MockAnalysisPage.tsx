@@ -4,6 +4,7 @@ import {
   createEmptyClinicalIntake,
   readStoredClinicalIntake,
 } from '../components/clinical/ClinicalIntakeForm';
+import ManualLabEntrySection from '../components/lab/ManualLabEntrySection';
 import {
   uploadLabReportPdf,
   type LabAnalysisResponse,
@@ -54,6 +55,17 @@ function formatArchiveDate(value: string | null) {
 
 function hasStoredOriginalPdf(report: LabReportSummary) {
   return report.metadata_json?.original_file_stored === true;
+}
+
+function archiveReportLabel(report: LabReportSummary) {
+  const fileName = report.file_name ?? '';
+  if (fileName.toLowerCase().endsWith('.pdf')) {
+    return fileName || 'Laboratuvar raporu.pdf';
+  }
+  if (fileName.startsWith('manual-entry-')) {
+    return 'Manuel laboratuvar girişi';
+  }
+  return fileName || 'Laboratuvar kaydı';
 }
 
 function StatusPill({ status }: { status: LabResultStatus | string }) {
@@ -174,9 +186,7 @@ export default function MockAnalysisPage() {
   const successfulResults = uploadResults.filter((item) => Boolean(item.result));
   const unsavedResults = successfulResults.filter((item) => !item.saved);
   const savedCount = successfulResults.filter((item) => item.saved).length;
-  const archivedPdfs = archivedReports.filter((report) =>
-    report.file_name?.toLowerCase().endsWith('.pdf'),
-  );
+  const archivedRecords = archivedReports;
 
   async function refreshArchive(patientId = getActivePatientId()) {
     if (!patientId) {
@@ -197,7 +207,7 @@ export default function MockAnalysisPage() {
       setArchiveError(
         loadError instanceof Error
           ? loadError.message
-          : 'Kaydedilen laboratuvar PDF kayıtları yüklenemedi.',
+          : 'Kaydedilen laboratuvar kayıtları yüklenemedi.',
       );
     } finally {
       setArchiveLoading(false);
@@ -251,9 +261,8 @@ export default function MockAnalysisPage() {
   }
 
   async function handleDeleteArchivedPdf(report: LabReportSummary) {
-    const confirmed = window.confirm(
-      `${report.file_name || 'Laboratuvar raporu.pdf'} arşivden kalıcı olarak silinsin mi?`,
-    );
+    const label = archiveReportLabel(report);
+    const confirmed = window.confirm(`${label} arşivden kalıcı olarak silinsin mi?`);
     if (!confirmed) return;
 
     setDeletingPdfId(report.id);
@@ -268,7 +277,7 @@ export default function MockAnalysisPage() {
       if (backendResult?.lab_report_id === report.id) {
         setBackendResult(null);
       }
-      setMessage(`${report.file_name || 'Laboratuvar raporu.pdf'} arşivden silindi.`);
+      setMessage(`${label} arşivden silindi.`);
     } catch (deleteError) {
       setArchiveError(
         deleteError instanceof Error
@@ -405,17 +414,36 @@ export default function MockAnalysisPage() {
       <header>
         <h1 className="text-2xl font-semibold text-slate-950">Laboratuvar Raporları</h1>
         <p className="mt-2 text-sm leading-6 text-slate-500">
-          PDF&apos;yi önce analiz et. Arşive kalıcı olarak eklemek istediğinde ayrıca Kaydet&apos;e bas; yanlış seçtiğin PDF&apos;yi Sil ile kaldırabilirsin.
+          Sonuçları PDF&apos;den analiz edebilir veya manuel girebilirsin. Her iki akışta da analizden sonra ayrıca Kaydet&apos;e basarak aktif hastanın arşivine ekle.
         </p>
       </header>
 
+      <ManualLabEntrySection
+        onAnalyzed={(result) => {
+          setBackendResult(result);
+          setError('');
+        }}
+        onSaved={async (result) => {
+          setBackendResult(result);
+          await refreshArchive(result.patient_id);
+          setMessage('Manuel laboratuvar kaydı aktif hastanın arşivine eklendi.');
+          setError('');
+        }}
+      />
+
       <section className="rounded-xl border border-slate-200 bg-white p-5">
+        <div>
+          <h2 className="text-base font-semibold text-slate-950">PDF ile laboratuvar girişi</h2>
+          <p className="mt-1 text-sm leading-6 text-slate-500">
+            PDF&apos;yi önce analiz et. Arşive kalıcı olarak eklemek istediğinde ayrıca Kaydet&apos;e bas; yanlış seçtiğin PDF&apos;yi Sil ile kaldırabilirsin.
+          </p>
+        </div>
         <input
           type="file"
           accept="application/pdf,.pdf"
           multiple
           onChange={addFiles}
-          className="block w-full text-sm text-slate-600 file:mr-4 file:rounded-lg file:border-0 file:bg-blue-700 file:px-4 file:py-2.5 file:text-sm file:font-semibold file:text-white hover:file:bg-blue-800"
+          className="mt-4 block w-full text-sm text-slate-600 file:mr-4 file:rounded-lg file:border-0 file:bg-blue-700 file:px-4 file:py-2.5 file:text-sm file:font-semibold file:text-white hover:file:bg-blue-800"
         />
         <p className="mt-3 text-xs leading-5 text-amber-700">
           Kaydet sırasında isim/soyisim, T.C. kimlik numarası, tam doğum tarihi ve benzeri doğrudan tanımlayıcılar PDF&apos;den çıkarılır. Güvenli anonimleştirme yapılamazsa PDF arşive kaydedilmez.
@@ -483,46 +511,48 @@ export default function MockAnalysisPage() {
       <section className="rounded-xl border border-slate-200 bg-white p-5">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h2 className="text-base font-semibold text-slate-950">Kaydedilen PDF&apos;ler</h2>
+            <h2 className="text-base font-semibold text-slate-950">Kaydedilen laboratuvar kayıtları</h2>
             <p className="mt-1 text-sm leading-6 text-slate-500">
-              Bu hastaya kaydedilen laboratuvar PDF&apos;leri anonimleştirilmiş kopyalardır. PDF&apos;yi açabilir veya Sil ile arşiv kaydını kaldırabilirsin.
+              Bu hastaya kaydedilen PDF ve manuel laboratuvar girişleri burada tutulur. PDF kayıtlarını açabilir, tüm kayıtları Sil ile arşivden kaldırabilirsin.
             </p>
           </div>
           <span className="shrink-0 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
-            {archivedPdfs.length} PDF
+            {archivedRecords.length} kayıt
           </span>
         </div>
 
         {archiveLoading ? (
-          <p className="mt-4 text-sm text-slate-500">Kaydedilen PDF&apos;ler yükleniyor…</p>
+          <p className="mt-4 text-sm text-slate-500">Kaydedilen laboratuvar kayıtları yükleniyor…</p>
         ) : archiveError ? (
           <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
             {archiveError}
           </div>
-        ) : archivedPdfs.length === 0 ? (
+        ) : archivedRecords.length === 0 ? (
           <p className="mt-4 rounded-lg bg-slate-50 p-4 text-sm text-slate-500">
-            Bu hastaya kaydedilmiş laboratuvar PDF&apos;i henüz yok.
+            Bu hastaya kaydedilmiş laboratuvar kaydı henüz yok.
           </p>
         ) : (
           <div className="mt-4 space-y-2">
-            {archivedPdfs.map((report) => {
-              const canOpen = hasStoredOriginalPdf(report);
+            {archivedRecords.map((report) => {
+              const isPdf = report.file_name?.toLowerCase().endsWith('.pdf') ?? false;
+              const canOpen = isPdf && hasStoredOriginalPdf(report);
+              const label = archiveReportLabel(report);
               return (
                 <div
                   key={report.id}
                   className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
                 >
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-slate-900">
-                      {report.file_name || 'Laboratuvar raporu.pdf'}
-                    </p>
+                    <p className="truncate text-sm font-semibold text-slate-900">{label}</p>
                     <p className="mt-1 text-xs text-slate-500">
                       {formatArchiveDate(report.report_date || report.created_at)} ·{' '}
-                      {canOpen
-                        ? report.metadata_json?.original_file_anonymized === true
-                          ? 'Anonimleştirilmiş PDF saklandı'
-                          : 'Eski kayıt · PDF saklandı'
-                        : 'Eski kayıt · PDF saklanmamış'}
+                      {isPdf
+                        ? canOpen
+                          ? report.metadata_json?.original_file_anonymized === true
+                            ? 'Anonimleştirilmiş PDF saklandı'
+                            : 'Eski kayıt · PDF saklandı'
+                          : 'Eski kayıt · PDF saklanmamış'
+                        : 'Manuel laboratuvar girişi'}
                     </p>
                   </div>
                   <div className="flex shrink-0 flex-wrap gap-2">
@@ -623,7 +653,7 @@ export default function MockAnalysisPage() {
 
       {savedCount > 0 ? (
         <p className="text-xs text-slate-500">
-          {savedCount} rapor bu oturumda anonimleştirilmiş PDF ile aktif hastanın arşivine kaydedildi.
+          {savedCount} PDF raporu bu oturumda anonimleştirilmiş kopya ile aktif hastanın arşivine kaydedildi.
         </p>
       ) : null}
     </div>
