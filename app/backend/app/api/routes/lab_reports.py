@@ -14,6 +14,7 @@ from sqlalchemy import text as sql_text
 from app.api.dependencies import LabReportRepositoryDep, SessionDep
 from app.api.routes.auth import get_current_active_user
 from app.domain.enums import UserRole
+from app.domain.pdf_privacy import anonymize_lab_pdf
 from app.infrastructure.database.models.patient import Patient
 from app.infrastructure.database.models.user import User
 from app.schemas.lab_analysis import (
@@ -97,7 +98,7 @@ async def _get_accessible_patient(
 
 
 async def _ensure_lab_file_columns(session: SessionDep) -> None:
-    """Add original-file columns to existing databases without a destructive migration."""
+    """Add archived-file columns to existing databases without a destructive migration."""
     await session.execute(
         sql_text(
             "ALTER TABLE lab_reports "
@@ -134,25 +135,22 @@ async def update_lab_report_patient_metadata(
     repository: LabReportRepositoryDep,
     session: SessionDep,
 ) -> LabReportSummary:
-    """Persist display-only patient metadata extracted from an uploaded PDF."""
+    """Persist only coarse demographics; never copy direct PDF identifiers."""
     report = await repository.get_by_id(lab_report_id)
     if report is None:
         raise HTTPException(status_code=404, detail="Lab report not found.")
 
     metadata = dict(report.metadata_json or {})
-    updates: dict[str, Any] = {
-        "patient_display_name": payload.display_name,
-        "patient_age": payload.age,
-        "patient_sex": payload.sex,
-        "patient_birth_date": (
-            payload.birth_date.isoformat() if payload.birth_date is not None else None
-        ),
-        "patient_metadata_source": "pdf_upload",
-    }
 
-    for key, value in updates.items():
-        if value is not None:
-            metadata[key] = value
+    # Remove legacy direct identifiers if an older version wrote them.
+    metadata.pop("patient_display_name", None)
+    metadata.pop("patient_birth_date", None)
+
+    if payload.age is not None:
+        metadata["patient_age"] = payload.age
+    if payload.sex:
+        metadata["patient_sex"] = payload.sex
+    metadata["patient_metadata_source"] = "pdf_upload_privacy_filtered"
 
     report.metadata_json = metadata
     await session.commit()
@@ -275,7 +273,7 @@ async def store_lab_report_original_file(
     current_user: Annotated[User, Depends(get_current_active_user)],
     file: UploadFile = File(...),
 ) -> LabReportSummary:
-    """Persist the original PDF bytes after the analyzed report is claimed by a patient."""
+    """Anonymize a PDF and persist only the privacy-filtered bytes."""
     await _ensure_lab_file_columns(session)
     report = await repository.get_by_id(lab_report_id)
     if report is None:
@@ -294,7 +292,18 @@ async def store_lab_report_original_file(
     if len(content) > _MAX_LAB_FILE_BYTES:
         raise HTTPException(status_code=413, detail="PDF dosyası 10 MB sınırını aşıyor.")
 
-    stored_content_type = file.content_type or "application/pdf"
+    try:
+        anonymized = anonymize_lab_pdf(content)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "PDF anonimleştirilemedi; kişisel bilgi içerebilecek özgün dosya "
+                f"arşive kaydedilmedi. {exc}"
+            ),
+        ) from exc
+
+    stored_content_type = "application/pdf"
     await session.execute(
         sql_text(
             "UPDATE lab_reports "
@@ -304,7 +313,7 @@ async def store_lab_report_original_file(
             "WHERE id = :lab_report_id"
         ),
         {
-            "content": content,
+            "content": anonymized.content,
             "content_type": stored_content_type,
             "lab_report_id": str(lab_report_id),
         },
@@ -314,9 +323,11 @@ async def store_lab_report_original_file(
     metadata.update(
         {
             "original_file_stored": True,
-            "original_file_size_bytes": len(content),
+            "original_file_anonymized": True,
+            "original_file_size_bytes": len(anonymized.content),
             "original_file_content_type": stored_content_type,
             "original_file_saved_at": datetime.now(UTC).isoformat(),
+            "original_file_redaction_count": anonymized.redaction_count,
         }
     )
     report.metadata_json = metadata
@@ -335,7 +346,7 @@ async def open_lab_report_original_file(
     session: SessionDep,
     current_user: Annotated[User, Depends(get_current_active_user)],
 ) -> Response:
-    """Return the stored original PDF inline for the authorized patient/user."""
+    """Return the stored anonymized PDF inline for the authorized patient/user."""
     await _ensure_lab_file_columns(session)
     report = await repository.get_by_id(lab_report_id)
     if report is None:
@@ -356,7 +367,7 @@ async def open_lab_report_original_file(
     if not row or row["original_file_data"] is None:
         raise HTTPException(
             status_code=404,
-            detail="Bu kaydın özgün PDF'i saklanmamış. PDF'i yeniden yükleyip Kaydet'e basın.",
+            detail="Bu kaydın PDF'i saklanmamış. PDF'i yeniden yükleyip Kaydet'e basın.",
         )
 
     filename = report.file_name or "laboratuvar-raporu.pdf"
@@ -369,6 +380,31 @@ async def open_lab_report_original_file(
             "Cache-Control": "private, no-store",
         },
     )
+
+
+@router.delete("/lab-reports/{lab_report_id}", status_code=204)
+async def delete_lab_report(
+    lab_report_id: uuid.UUID,
+    repository: LabReportRepositoryDep,
+    session: SessionDep,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+) -> Response:
+    """Delete an accessible archived lab report, its PDF bytes, and derived rows."""
+    report = await repository.get_by_id(lab_report_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="Laboratuvar raporu bulunamadı.")
+
+    await _get_accessible_patient(report.patient_id, session, current_user)
+
+    # Hypotheses use SET NULL for report deletion, so remove report-specific ones
+    # explicitly instead of leaving detached clinical suggestions behind.
+    await session.execute(
+        sql_text("DELETE FROM clinical_hypotheses WHERE lab_report_id = :lab_report_id"),
+        {"lab_report_id": str(lab_report_id)},
+    )
+    await session.delete(report)
+    await session.commit()
+    return Response(status_code=204)
 
 
 @router.get(
