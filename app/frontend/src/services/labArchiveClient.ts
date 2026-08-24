@@ -66,7 +66,7 @@ export async function saveLabReportToPatient(
         display_name: null,
         age: patientMetadata.age ?? null,
         sex: patientMetadata.sex ?? null,
-        birth_date: patientMetadata.birth_date ?? null,
+        birth_date: null,
       }),
     }).catch(() => undefined);
   }
@@ -89,7 +89,7 @@ export async function uploadLabReportOriginalFile(
 
   if (!response.ok) {
     throw new Error(
-      `Özgün PDF kaydedilemedi: ${response.status} ${await readError(response)}`,
+      `PDF anonimleştirilip kaydedilemedi: ${response.status} ${await readError(response)}`,
     );
   }
 
@@ -133,6 +133,19 @@ export async function openLabReportPdf(
   } catch (error) {
     popup?.close();
     throw error;
+  }
+}
+
+export async function deleteLabReport(labReportId: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/lab-reports/${labReportId}`, {
+    method: 'DELETE',
+    headers: authHeaders(false),
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      `Laboratuvar kaydı silinemedi: ${response.status} ${await readError(response)}`,
+    );
   }
 }
 
