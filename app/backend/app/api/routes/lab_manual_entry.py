@@ -105,6 +105,10 @@ async def analyze_manual_lab_report(
             detail="En az bir laboratuvar sonucu girilmelidir.",
         )
 
+    # Keep manual entry aligned with the PDF flow: all runtime parser additions
+    # and their database records must exist before the deterministic pipeline runs.
+    await lab_analysis._ensure_demo_patient_and_user()
+
     report_date = payload.report_date
     secured_payload = payload.model_copy(
         update={
