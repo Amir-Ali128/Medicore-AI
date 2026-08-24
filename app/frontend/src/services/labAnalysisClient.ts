@@ -91,6 +91,12 @@ export type LabAnalysisResponse = {
   };
 };
 
+export type ManualLabOption = {
+  name: string;
+  default_unit: string;
+  unit_options: string[];
+};
+
 export type ManualLabValueInput = {
   raw_parameter_name: string;
   normalized_value: number;
@@ -165,6 +171,7 @@ export type ClinicalIntakeInput = {
 };
 
 export type ManualLabReportInput = {
+  patient_id: string;
   report_date: string;
   clinical_context: ClinicalIntakeInput;
   values: ManualLabValueInput[];
@@ -316,8 +323,9 @@ export async function saveLabReportClinicalContext(
 async function submitStructuredLabReport(
   payload: Record<string, unknown>,
   errorPrefix: string,
+  endpoint = '/lab-analysis/mock',
 ): Promise<LabAnalysisResponse> {
-  const response = await fetch(`${API_BASE_URL}/lab-analysis/mock`, {
+  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -335,6 +343,24 @@ async function submitStructuredLabReport(
   rememberLatestAnalysis(result);
 
   return result;
+}
+
+export async function fetchManualLabOptions(): Promise<ManualLabOption[]> {
+  const response = await fetch(`${API_BASE_URL}/lab-analysis/manual-options`, {
+    headers: {
+      ...authHeaders(),
+    },
+  });
+
+  if (!response.ok) {
+    const errorText = await readErrorMessage(response);
+    throw new Error(
+      `Manuel laboratuvar test listesi yüklenemedi: ${response.status} ${errorText}`,
+    );
+  }
+
+  const body = (await response.json()) as { parameters?: ManualLabOption[] };
+  return Array.isArray(body.parameters) ? body.parameters : [];
 }
 
 export async function runBackendMockAnalysis(): Promise<LabAnalysisResponse> {
@@ -383,8 +409,8 @@ export async function submitManualLabResults(
 
   return submitStructuredLabReport(
     {
-      patient_id: DEMO_PATIENT_ID,
-      uploaded_by_user_id: DEMO_UPLOADED_BY_USER_ID,
+      patient_id: input.patient_id,
+      uploaded_by_user_id: null,
       file_name: `manual-entry-${input.report_date}.json`,
       report_date: input.report_date,
       ...context,
@@ -394,6 +420,7 @@ export async function submitManualLabResults(
       values,
     },
     'Manual result analysis failed',
+    '/lab-analysis/manual',
   );
 }
 
