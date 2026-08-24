@@ -12,6 +12,7 @@ import {
   type LabResultStatus,
 } from '../services/labAnalysisClient';
 import {
+  deleteLabReport,
   listPatientLabReports,
   openLabReportPdf,
   saveLabReportToPatient,
@@ -151,6 +152,7 @@ export default function MockAnalysisPage() {
   const [archiveLoading, setArchiveLoading] = useState(false);
   const [archiveError, setArchiveError] = useState('');
   const [openingPdfId, setOpeningPdfId] = useState<string | null>(null);
+  const [deletingPdfId, setDeletingPdfId] = useState<string | null>(null);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [isUploading, setIsUploading] = useState(false);
@@ -248,6 +250,36 @@ export default function MockAnalysisPage() {
     }
   }
 
+  async function handleDeleteArchivedPdf(report: LabReportSummary) {
+    const confirmed = window.confirm(
+      `${report.file_name || 'Laboratuvar raporu.pdf'} arşivden kalıcı olarak silinsin mi?`,
+    );
+    if (!confirmed) return;
+
+    setDeletingPdfId(report.id);
+    setArchiveError('');
+    setMessage('');
+    try {
+      await deleteLabReport(report.id);
+      setArchivedReports((current) => current.filter((item) => item.id !== report.id));
+      setUploadResults((current) =>
+        current.filter((item) => item.result?.lab_report_id !== report.id),
+      );
+      if (backendResult?.lab_report_id === report.id) {
+        setBackendResult(null);
+      }
+      setMessage(`${report.file_name || 'Laboratuvar raporu.pdf'} arşivden silindi.`);
+    } catch (deleteError) {
+      setArchiveError(
+        deleteError instanceof Error
+          ? deleteError.message
+          : 'Laboratuvar kaydı silinemedi.',
+      );
+    } finally {
+      setDeletingPdfId(null);
+    }
+  }
+
   async function handleUpload() {
     if (!getActivePatientId()) {
       setError('Önce Hasta Bilgileri bölümünde Kaydet’e basarak aktif hasta kaydını oluşturmalısın.');
@@ -335,7 +367,7 @@ export default function MockAnalysisPage() {
           item.result.patient,
         );
         if (!item.originalFile) {
-          throw new Error(`${item.fileName} için özgün PDF yeniden seçilmeden kaydedilemez.`);
+          throw new Error(`${item.fileName} için PDF yeniden seçilmeden kaydedilemez.`);
         }
         await uploadLabReportOriginalFile(item.result.lab_report_id, item.originalFile);
         savedIds.add(item.result.lab_report_id);
@@ -360,7 +392,7 @@ export default function MockAnalysisPage() {
 
     if (savedIds.size > 0) {
       await refreshArchive(patientId);
-      setMessage(`${savedIds.size} laboratuvar raporu özgün PDF ile birlikte hastanın arşivine kaydedildi.`);
+      setMessage(`${savedIds.size} laboratuvar raporu anonimleştirilmiş PDF ile hastanın arşivine kaydedildi.`);
     }
     if (failedMessages.length > 0) {
       setError(failedMessages[0]);
@@ -386,7 +418,7 @@ export default function MockAnalysisPage() {
           className="block w-full text-sm text-slate-600 file:mr-4 file:rounded-lg file:border-0 file:bg-blue-700 file:px-4 file:py-2.5 file:text-sm file:font-semibold file:text-white hover:file:bg-blue-800"
         />
         <p className="mt-3 text-xs leading-5 text-amber-700">
-          Dosyalarda isim, soyisim, T.C. kimlik numarası veya benzeri doğrudan kişisel tanımlayıcılar bulunmamalıdır.
+          Kaydet sırasında isim/soyisim, T.C. kimlik numarası, tam doğum tarihi ve benzeri doğrudan tanımlayıcılar PDF&apos;den çıkarılır. Güvenli anonimleştirme yapılamazsa PDF arşive kaydedilmez.
         </p>
 
         {selectedFiles.length > 0 ? (
@@ -453,7 +485,7 @@ export default function MockAnalysisPage() {
           <div>
             <h2 className="text-base font-semibold text-slate-950">Kaydedilen PDF&apos;ler</h2>
             <p className="mt-1 text-sm leading-6 text-slate-500">
-              Bu hastaya kaydedilen laboratuvar PDF&apos;leri kalıcıdır. Özgün dosyası saklanan kayıtları buradan açabilirsin.
+              Bu hastaya kaydedilen laboratuvar PDF&apos;leri anonimleştirilmiş kopyalardır. PDF&apos;yi açabilir veya Sil ile arşiv kaydını kaldırabilirsin.
             </p>
           </div>
           <span className="shrink-0 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
@@ -486,21 +518,35 @@ export default function MockAnalysisPage() {
                     </p>
                     <p className="mt-1 text-xs text-slate-500">
                       {formatArchiveDate(report.report_date || report.created_at)} ·{' '}
-                      {canOpen ? 'Özgün PDF saklandı' : 'Eski kayıt · özgün PDF saklanmamış'}
+                      {canOpen
+                        ? report.metadata_json?.original_file_anonymized === true
+                          ? 'Anonimleştirilmiş PDF saklandı'
+                          : 'Eski kayıt · PDF saklandı'
+                        : 'Eski kayıt · PDF saklanmamış'}
                     </p>
                   </div>
-                  {canOpen ? (
+                  <div className="flex shrink-0 flex-wrap gap-2">
+                    {canOpen ? (
+                      <button
+                        type="button"
+                        onClick={() => void handleOpenPdf(report)}
+                        disabled={openingPdfId === report.id || deletingPdfId === report.id}
+                        className="rounded-lg border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
+                      >
+                        {openingPdfId === report.id ? 'Açılıyor…' : 'PDF’yi aç'}
+                      </button>
+                    ) : (
+                      <span className="self-center text-xs font-semibold text-slate-400">✓ Kayıt var</span>
+                    )}
                     <button
                       type="button"
-                      onClick={() => void handleOpenPdf(report)}
-                      disabled={openingPdfId === report.id}
-                      className="shrink-0 rounded-lg border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
+                      onClick={() => void handleDeleteArchivedPdf(report)}
+                      disabled={deletingPdfId === report.id || openingPdfId === report.id}
+                      className="rounded-lg border border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"
                     >
-                      {openingPdfId === report.id ? 'Açılıyor…' : 'PDF’yi aç'}
+                      {deletingPdfId === report.id ? 'Siliniyor…' : 'Sil'}
                     </button>
-                  ) : (
-                    <span className="shrink-0 text-xs font-semibold text-slate-400">✓ Kayıt var</span>
-                  )}
+                  </div>
                 </div>
               );
             })}
@@ -526,7 +572,7 @@ export default function MockAnalysisPage() {
                 {item.error
                   ? `— ${item.error}`
                   : item.saved
-                    ? `— analiz edildi; PDF ve sonuçlar kaydedildi (${item.result?.counts.total ?? 0} sonuç)`
+                    ? `— analiz edildi; anonimleştirilmiş PDF ve sonuçlar kaydedildi (${item.result?.counts.total ?? 0} sonuç)`
                     : `— analiz edildi; henüz kaydedilmedi (${item.result?.counts.total ?? 0} sonuç)`}
               </span>
               {item.saveError ? (
@@ -577,7 +623,7 @@ export default function MockAnalysisPage() {
 
       {savedCount > 0 ? (
         <p className="text-xs text-slate-500">
-          {savedCount} rapor bu oturumda özgün PDF ile birlikte aktif hastanın arşivine kaydedildi.
+          {savedCount} rapor bu oturumda anonimleştirilmiş PDF ile aktif hastanın arşivine kaydedildi.
         </p>
       ) : null}
     </div>
