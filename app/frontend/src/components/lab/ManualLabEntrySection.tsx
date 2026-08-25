@@ -64,6 +64,7 @@ export default function ManualLabEntrySection({ onAnalyzed, onSaved }: Props) {
   const [loadingOptions, setLoadingOptions] = useState(true);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [savingRowId, setSavingRowId] = useState<string | null>(null);
   const [analysisResult, setAnalysisResult] = useState<LabAnalysisResponse | null>(null);
   const [saved, setSaved] = useState(false);
   const [message, setMessage] = useState('');
@@ -222,6 +223,71 @@ export default function ManualLabEntrySection({ onAnalyzed, onSaved }: Props) {
     }
   }
 
+  async function handleSaveRow(row: ManualRow) {
+    const patientId = getActivePatientId();
+    if (!patientId) {
+      setError('Önce Hasta Bilgileri bölümünde Kaydet’e basarak aktif hasta oluşturmalısın.');
+      return;
+    }
+
+    if (!row.testName.trim()) {
+      setError('Kaydetmeden önce bir test adı seçmelisin.');
+      return;
+    }
+
+    const normalizedValue = Number(row.value.replace(',', '.'));
+    if (!Number.isFinite(normalizedValue)) {
+      setError(`${row.testName} için geçerli bir sonuç değeri gir.`);
+      return;
+    }
+
+    const referenceMin = parseOptionalNumber(row.referenceMin);
+    const referenceMax = parseOptionalNumber(row.referenceMax);
+    if (row.referenceMin.trim() && referenceMin === null) {
+      setError(`${row.testName} için alt referans değeri geçersiz.`);
+      return;
+    }
+    if (row.referenceMax.trim() && referenceMax === null) {
+      setError(`${row.testName} için üst referans değeri geçersiz.`);
+      return;
+    }
+
+    setSavingRowId(row.id);
+    setError('');
+    setMessage('');
+    try {
+      const clinicalContext = readStoredClinicalIntake() ?? createEmptyClinicalIntake();
+      const result = await submitManualLabResults({
+        patient_id: patientId,
+        report_date: reportDate,
+        clinical_context: clinicalContext,
+        values: [
+          {
+            raw_parameter_name: row.testName,
+            normalized_value: normalizedValue,
+            unit: row.unit,
+            extracted_reference_min: referenceMin,
+            extracted_reference_max: referenceMax,
+            measured_at: reportDate,
+          },
+        ],
+      });
+      onAnalyzed(result);
+      await saveLabReportToPatient(result.lab_report_id, patientId, clinicalContext, result.patient);
+      await onSaved(result);
+      setMessage(`${row.testName} hasta arşivine kaydedildi.`);
+      setRows((current) =>
+        current.map((item) => (item.id === row.id ? emptyRow() : item)),
+      );
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error ? saveError.message : `${row.testName} kaydedilemedi.`,
+      );
+    } finally {
+      setSavingRowId(null);
+    }
+  }
+
   async function handleSave() {
     const patientId = getActivePatientId();
     if (!patientId || !analysisResult) return;
@@ -257,7 +323,7 @@ export default function ManualLabEntrySection({ onAnalyzed, onSaved }: Props) {
         <div>
           <h2 className="text-base font-semibold text-slate-950">Manuel laboratuvar girişi</h2>
           <p className="mt-1 text-sm leading-6 text-slate-500">
-            Test adını listeden seç, sonucu ve birimi gir. Referans alt/üst sınırları isteğe bağlıdır; boş bırakırsan sistem kendi referans çözümleyicisini kullanır.
+            Test adını listeden seç, sonucu ve birimi gir. Referans alt/üst sınırları isteğe bağlıdır; boş bırakırsan sistem kendi referans çözümleyicisini kullanır. Her satırın kendi Kaydet butonuna basarak o testi hemen hasta arşivine ekleyebilir, birden fazla testi tek raporda toplu kaydetmek istersen aşağıdaki Manuel sonuçları analiz et / Kaydet adımlarını kullanabilirsin.
           </p>
         </div>
         <label className="text-xs font-semibold text-slate-600">
@@ -284,7 +350,7 @@ export default function ManualLabEntrySection({ onAnalyzed, onSaved }: Props) {
             return (
               <div
                 key={row.id}
-                className="grid gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 lg:grid-cols-[minmax(180px,2fr)_minmax(100px,1fr)_minmax(130px,1fr)_minmax(100px,1fr)_minmax(100px,1fr)_auto]"
+                className="grid gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 lg:grid-cols-[minmax(180px,2fr)_minmax(100px,1fr)_minmax(130px,1fr)_minmax(100px,1fr)_minmax(100px,1fr)_auto_auto]"
               >
                 <label className="text-xs font-semibold text-slate-600">
                   Test adı
@@ -350,6 +416,16 @@ export default function ManualLabEntrySection({ onAnalyzed, onSaved }: Props) {
                     className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-normal text-slate-900"
                   />
                 </label>
+
+                <button
+                  type="button"
+                  onClick={() => void handleSaveRow(row)}
+                  disabled={savingRowId === row.id}
+                  className="self-end rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-800 disabled:opacity-50"
+                  aria-label={`${index + 1}. manuel laboratuvar satırını kaydet`}
+                >
+                  {savingRowId === row.id ? 'Kaydediliyor…' : 'Kaydet'}
+                </button>
 
                 <button
                   type="button"
