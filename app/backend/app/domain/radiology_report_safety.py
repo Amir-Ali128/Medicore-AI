@@ -184,6 +184,11 @@ def _filter_findings_to_active_sections(text: str, findings: list[dict[str, Any]
     return filtered
 
 
+def _text_mentions_term(text: str, variants: Iterable[str]) -> bool:
+    folded_text = f" {_compact(_ascii_fold(text))} "
+    return any(_ascii_fold(variant) in folded_text for variant in variants)
+
+
 def _apply_critical_evidence(text: str, findings: list[dict[str, Any]]) -> list[str]:
     supported = [
         label for label, variants in _CRITICAL_VARIANTS.items()
@@ -210,6 +215,12 @@ def analyze_radiology_report_safely(text: str) -> dict[str, Any]:
     findings = _filter_findings_to_active_sections(text, list(result.get("findings", [])))
     supported_labels = _apply_critical_evidence(text, findings)
 
+    mentioned_unsupported = sorted(
+        label
+        for label, variants in _CRITICAL_VARIANTS.items()
+        if label not in supported_labels and _text_mentions_term(text, variants)
+    )
+
     result["findings"] = findings
     result["critical_findings"] = supported_labels
     result["safety_version"] = SAFETY_VERSION
@@ -224,6 +235,13 @@ def analyze_radiology_report_safely(text: str) -> dict[str, Any]:
     )
 
     warnings = list(result.get("warnings", []))
+    if mentioned_unsupported:
+        warnings.append(
+            "Rapor metninde geçen ancak güncel bulgu olarak doğrulanamadığı için "
+            "suppressed unsupported critical mentions olarak işaretlenen ifadeler var "
+            f"(öykü/istem bölümünde veya negatif ifadeyle geçmiş olabilir): "
+            f"{', '.join(mentioned_unsupported)}."
+        )
     if critical_count:
         warnings.append("Acil/kritik ifadeler saptandı; gecikmeden hekim değerlendirmesi gerekir.")
     result["warnings"] = warnings
