@@ -17,6 +17,7 @@ from app.api.dependencies import (
     AnalysisPipelineDep,
     ClaudeLabExtractionServiceDep,
 )
+from app.api.routes import lab_analysis
 from app.domain.claude_lab_extraction_service import (
     SUPPORTED_CONTENT_TYPES,
 )
@@ -69,6 +70,9 @@ async def extract_and_analyze_lab_report(
 ) -> ExtractionAndAnalysisResult:
     data = await file.read()
     content_type = _resolve_content_type(file)
+
+    if patient_id == lab_analysis.DEMO_PATIENT_ID:
+        await lab_analysis._ensure_demo_patient_and_user()
 
     try:
         extraction = await service.extract_from_bytes(data, file.filename, content_type)

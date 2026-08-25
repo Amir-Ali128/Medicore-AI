@@ -6,6 +6,7 @@ import {
 } from '../components/clinical/ClinicalIntakeForm';
 import ManualLabEntrySection from '../components/lab/ManualLabEntrySection';
 import {
+  analyzeLabReportImage,
   uploadLabReportPdf,
   type LabAnalysisResponse,
   type LabAnalysisResult,
@@ -34,6 +35,14 @@ type LabUploadResult = {
 
 function fileKey(file: File) {
   return `${file.name}:${file.size}:${file.lastModified}`;
+}
+
+function isImageLabFile(file: File) {
+  return /\.jpe?g$/i.test(file.name) || file.type === 'image/jpeg';
+}
+
+function isSupportedLabFile(file: File) {
+  return file.name.toLowerCase().endsWith('.pdf') || isImageLabFile(file);
 }
 
 function statusLabel(status: string) {
@@ -65,7 +74,21 @@ function archiveReportLabel(report: LabReportSummary) {
   if (fileName.startsWith('manual-entry-')) {
     return 'Manuel laboratuvar girişi';
   }
+  if (/\.jpe?g$/i.test(fileName)) {
+    return fileName || 'Laboratuvar fotoğrafı';
+  }
   return fileName || 'Laboratuvar kaydı';
+}
+
+function archiveSourceDescription(report: LabReportSummary) {
+  const fileName = report.file_name ?? '';
+  if (fileName.startsWith('manual-entry-')) {
+    return 'Manuel laboratuvar girişi';
+  }
+  if (/\.jpe?g$/i.test(fileName)) {
+    return 'Fotoğraftan laboratuvar girişi';
+  }
+  return 'Laboratuvar kaydı';
 }
 
 function StatusPill({ status }: { status: LabResultStatus | string }) {
@@ -219,9 +242,7 @@ export default function MockAnalysisPage() {
   }, []);
 
   function addFiles(event: ChangeEvent<HTMLInputElement>) {
-    const incoming = Array.from(event.target.files ?? []).filter((file) =>
-      file.name.toLowerCase().endsWith('.pdf'),
-    );
+    const incoming = Array.from(event.target.files ?? []).filter(isSupportedLabFile);
 
     setSelectedFiles((current) => {
       const existing = new Set(current.map(fileKey));
@@ -242,7 +263,7 @@ export default function MockAnalysisPage() {
 
   function clearSelectedFiles() {
     setSelectedFiles([]);
-    setMessage('Seçilen PDF’ler yükleme listesinden silindi.');
+    setMessage('Seçilen dosyalar yükleme listesinden silindi.');
     setError('');
   }
 
@@ -295,7 +316,7 @@ export default function MockAnalysisPage() {
       return;
     }
     if (selectedFiles.length === 0) {
-      setError('Önce en az bir PDF dosyası seçmelisin.');
+      setError('Önce en az bir PDF dosyası veya JPG ekran görüntüsü seçmelisin.');
       return;
     }
 
@@ -313,7 +334,9 @@ export default function MockAnalysisPage() {
 
       let completedItem: LabUploadResult;
       try {
-        const result = await uploadLabReportPdf(file, createEmptyClinicalIntake());
+        const result = isImageLabFile(file)
+          ? await analyzeLabReportImage(file, createEmptyClinicalIntake())
+          : await uploadLabReportPdf(file, createEmptyClinicalIntake());
         latestSuccessful = result;
         completedItem = {
           fileName: file.name,
@@ -375,10 +398,12 @@ export default function MockAnalysisPage() {
           clinicalContext,
           item.result.patient,
         );
-        if (!item.originalFile) {
-          throw new Error(`${item.fileName} için PDF yeniden seçilmeden kaydedilemez.`);
+        if (!item.originalFile || !isImageLabFile(item.originalFile)) {
+          if (!item.originalFile) {
+            throw new Error(`${item.fileName} için PDF yeniden seçilmeden kaydedilemez.`);
+          }
+          await uploadLabReportOriginalFile(item.result.lab_report_id, item.originalFile);
         }
-        await uploadLabReportOriginalFile(item.result.lab_report_id, item.originalFile);
         savedIds.add(item.result.lab_report_id);
       } catch (saveError) {
         failedMessages.push(
@@ -433,20 +458,20 @@ export default function MockAnalysisPage() {
 
       <section className="rounded-xl border border-slate-200 bg-white p-5">
         <div>
-          <h2 className="text-base font-semibold text-slate-950">PDF ile laboratuvar girişi</h2>
+          <h2 className="text-base font-semibold text-slate-950">PDF veya JPG ile laboratuvar girişi</h2>
           <p className="mt-1 text-sm leading-6 text-slate-500">
-            PDF&apos;yi önce analiz et. Arşive kalıcı olarak eklemek istediğinde ayrıca Kaydet&apos;e bas; yanlış seçtiğin PDF&apos;yi Sil ile kaldırabilirsin.
+            PDF&apos;yi ya da laboratuvar sonucunun JPG ekran görüntüsünü/fotoğrafını önce analiz et. Arşive kalıcı olarak eklemek istediğinde ayrıca Kaydet&apos;e bas; yanlış seçtiğin dosyayı Sil ile kaldırabilirsin.
           </p>
         </div>
         <input
           type="file"
-          accept="application/pdf,.pdf"
+          accept="application/pdf,.pdf,image/jpeg,.jpg,.jpeg"
           multiple
           onChange={addFiles}
           className="mt-4 block w-full text-sm text-slate-600 file:mr-4 file:rounded-lg file:border-0 file:bg-blue-700 file:px-4 file:py-2.5 file:text-sm file:font-semibold file:text-white hover:file:bg-blue-800"
         />
         <p className="mt-3 text-xs leading-5 text-amber-700">
-          Kaydet sırasında isim/soyisim, T.C. kimlik numarası, tam doğum tarihi ve benzeri doğrudan tanımlayıcılar PDF&apos;den çıkarılır. Güvenli anonimleştirme yapılamazsa PDF arşive kaydedilmez.
+          Kaydet sırasında isim/soyisim, T.C. kimlik numarası, tam doğum tarihi ve benzeri doğrudan tanımlayıcılar PDF&apos;den çıkarılır. Güvenli anonimleştirme yapılamazsa PDF arşive kaydedilmez. JPG fotoğraflar arşive orijinal görsel olarak kaydedilmez; yalnızca fotoğraftan okunan test sonuçları saklanır.
         </p>
 
         {selectedFiles.length > 0 ? (
@@ -552,7 +577,7 @@ export default function MockAnalysisPage() {
                             ? 'Anonimleştirilmiş PDF saklandı'
                             : 'Eski kayıt · PDF saklandı'
                           : 'Eski kayıt · PDF saklanmamış'
-                        : 'Manuel laboratuvar girişi'}
+                        : archiveSourceDescription(report)}
                     </p>
                   </div>
                   <div className="flex shrink-0 flex-wrap gap-2">
@@ -602,7 +627,9 @@ export default function MockAnalysisPage() {
                 {item.error
                   ? `— ${item.error}`
                   : item.saved
-                    ? `— analiz edildi; anonimleştirilmiş PDF ve sonuçlar kaydedildi (${item.result?.counts.total ?? 0} sonuç)`
+                    ? item.originalFile && isImageLabFile(item.originalFile)
+                      ? `— analiz edildi; sonuçlar kaydedildi (${item.result?.counts.total ?? 0} sonuç)`
+                      : `— analiz edildi; anonimleştirilmiş PDF ve sonuçlar kaydedildi (${item.result?.counts.total ?? 0} sonuç)`
                     : `— analiz edildi; henüz kaydedilmedi (${item.result?.counts.total ?? 0} sonuç)`}
               </span>
               {item.saveError ? (
@@ -653,7 +680,7 @@ export default function MockAnalysisPage() {
 
       {savedCount > 0 ? (
         <p className="text-xs text-slate-500">
-          {savedCount} PDF raporu bu oturumda anonimleştirilmiş kopya ile aktif hastanın arşivine kaydedildi.
+          {savedCount} laboratuvar raporu bu oturumda aktif hastanın arşivine kaydedildi.
         </p>
       ) : null}
     </div>

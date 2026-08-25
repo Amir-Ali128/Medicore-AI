@@ -158,6 +158,23 @@ export async function getPatientRecord(patientId: string): Promise<PatientRecord
   return record;
 }
 
+export async function deletePatientRecord(patientId: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/patients/${patientId}`, {
+    method: 'DELETE',
+    headers: headers(),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Hasta kaydı silinemedi: ${response.status} ${await readError(response)}`);
+  }
+
+  if (getActivePatientId() === patientId) {
+    localStorage.removeItem(ACTIVE_PATIENT_ID_KEY);
+    localStorage.removeItem(ACTIVE_PATIENT_PROTOCOL_KEY);
+    localStorage.removeItem(ACTIVE_CLINICAL_INTAKE_KEY);
+  }
+}
+
 export async function listPatientRecords(): Promise<PatientRecord[]> {
   const response = await fetch(`${API_BASE_URL}/patients?limit=100`, {
     headers: headers(),

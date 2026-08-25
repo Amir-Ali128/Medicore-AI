@@ -9,6 +9,7 @@ import {
 } from '../services/labArchiveClient';
 import {
   activatePatientRecord,
+  deletePatientRecord,
   listPatientRecords,
   type PatientRecord,
 } from '../services/patientClient';
@@ -67,10 +68,14 @@ function RecordCard({
   record,
   attachments,
   onRestore,
+  onDelete,
+  deleting,
 }: {
   record: PatientRecord;
   attachments?: AttachmentSummary;
   onRestore: (record: PatientRecord) => void;
+  onDelete: (record: PatientRecord) => void;
+  deleting: boolean;
 }) {
   const [labOpen, setLabOpen] = useState(false);
   const [openingLabId, setOpeningLabId] = useState<string | null>(null);
@@ -109,13 +114,23 @@ function RecordCard({
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={() => onRestore(record)}
-          className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
-        >
-          Kaydı aç
-        </button>
+        <div className="flex shrink-0 gap-2">
+          <button
+            type="button"
+            onClick={() => onRestore(record)}
+            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+          >
+            Kaydı aç
+          </button>
+          <button
+            type="button"
+            onClick={() => onDelete(record)}
+            disabled={deleting}
+            className="rounded-lg border border-red-200 bg-white px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"
+          >
+            {deleting ? 'Siliniyor…' : 'Sil'}
+          </button>
+        </div>
       </div>
 
       <div className="mt-5 grid gap-3 sm:grid-cols-2">
@@ -235,6 +250,7 @@ export default function PatientHistoryPage() {
   const [attachments, setAttachments] = useState<Record<string, AttachmentSummary>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -291,6 +307,37 @@ export default function PatientHistoryPage() {
     navigate('/patients/demo');
   }
 
+  async function handleDelete(record: PatientRecord) {
+    const summary = attachments[record.id];
+    const recordCount = (summary?.labCount ?? 0) + (summary?.radiologyCount ?? 0);
+    const warning =
+      recordCount > 0
+        ? `Bu hastaya bağlı ${recordCount} laboratuvar/radyoloji kaydı da birlikte silinecek. `
+        : '';
+    const confirmed = window.confirm(
+      `${warning}Bu hasta kaydı kalıcı olarak silinsin mi? Bu işlem geri alınamaz.`,
+    );
+    if (!confirmed) return;
+
+    setDeletingId(record.id);
+    setError('');
+    try {
+      await deletePatientRecord(record.id);
+      setRecords((current) => current.filter((item) => item.id !== record.id));
+      setAttachments((current) => {
+        const next = { ...current };
+        delete next[record.id];
+        return next;
+      });
+    } catch (deleteError) {
+      setError(
+        deleteError instanceof Error ? deleteError.message : 'Hasta kaydı silinemedi.',
+      );
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <header>
@@ -329,6 +376,8 @@ export default function PatientHistoryPage() {
               record={record}
               attachments={attachments[record.id]}
               onRestore={handleRestore}
+              onDelete={(item) => void handleDelete(item)}
+              deleting={deletingId === record.id}
             />
           ))}
         </div>

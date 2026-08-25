@@ -455,6 +455,39 @@ export async function uploadLabReportPdf(
   return result;
 }
 
+export async function analyzeLabReportImage(
+  file: File,
+  clinicalContext?: ClinicalIntakeInput,
+): Promise<LabAnalysisResponse> {
+  const formData = new FormData();
+  formData.append('patient_id', DEMO_PATIENT_ID);
+  formData.append('file', file);
+
+  const response = await fetch(`${API_BASE_URL}/extraction/lab-report/analyze`, {
+    method: 'POST',
+    headers: {
+      ...authHeaders(),
+    },
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const errorText = await readErrorMessage(response);
+    throw new Error(`Fotoğraf analizi başarısız oldu: ${response.status} ${errorText}`);
+  }
+
+  const body = (await response.json()) as { analysis: LabAnalysisResponse };
+  const result = body.analysis;
+
+  await Promise.all([
+    saveLabReportPatientMetadata(result.lab_report_id, result.patient),
+    saveLabReportClinicalContext(result.lab_report_id, clinicalContext),
+  ]);
+  rememberLatestAnalysis(result);
+
+  return result;
+}
+
 export async function getAnalysisRunResults(
   analysisRunId: string,
 ): Promise<LabAnalysisResult[]> {

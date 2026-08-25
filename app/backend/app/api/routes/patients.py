@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
@@ -94,6 +94,31 @@ async def create_patient_record(
 
     await session.refresh(patient)
     return patient
+
+
+@router.delete("/{patient_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_patient_record(
+    patient_id: uuid.UUID,
+    session: SessionDep,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+) -> Response:
+    """Permanently delete a patient record and any lab/radiology data tied to it."""
+    patient = await session.get(Patient, patient_id)
+    if patient is None:
+        raise HTTPException(status_code=404, detail="Hasta kaydı bulunamadı.")
+    _ensure_patient_access(patient, current_user)
+
+    await session.delete(patient)
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Bu hastaya bağlı kayıtlar olduğu için silinemedi.",
+        ) from exc
+
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("", response_model=list[PatientRecordResponse])
