@@ -193,6 +193,7 @@ export default function MockAnalysisPage() {
   const [isUploading, setIsUploading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [progress, setProgress] = useState('');
+  const [savingFileKey, setSavingFileKey] = useState<string | null>(null);
 
   const groupedResults = useMemo(() => {
     const results = backendResult?.results ?? [];
@@ -373,6 +374,44 @@ export default function MockAnalysisPage() {
     }
   }
 
+  async function handleSaveFile(file: File) {
+    const patientId = getActivePatientId();
+    if (!patientId) {
+      setError('Önce Hasta Bilgileri bölümünde Kaydet’e basarak aktif hasta kaydını oluşturmalısın.');
+      return;
+    }
+
+    setSavingFileKey(fileKey(file));
+    setError('');
+    setMessage('');
+    try {
+      const result = isImageLabFile(file)
+        ? await analyzeLabReportImage(file, createEmptyClinicalIntake())
+        : await uploadLabReportPdf(file, createEmptyClinicalIntake());
+
+      const clinicalContext = readStoredClinicalIntake() ?? createEmptyClinicalIntake();
+      await saveLabReportToPatient(result.lab_report_id, patientId, clinicalContext, result.patient);
+      if (!isImageLabFile(file)) {
+        await uploadLabReportOriginalFile(result.lab_report_id, file);
+      }
+
+      setUploadResults((current) => [
+        ...current,
+        { fileName: file.name, originalFile: file, result, saved: true },
+      ]);
+      setBackendResult(result);
+      setSelectedFiles((current) => current.filter((item) => fileKey(item) !== fileKey(file)));
+      await refreshArchive(patientId);
+      setMessage(`${file.name} analiz edildi ve hastanın arşivine kaydedildi.`);
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error ? saveError.message : `${file.name} kaydedilemedi.`,
+      );
+    } finally {
+      setSavingFileKey(null);
+    }
+  }
+
   async function handleSave() {
     const patientId = getActivePatientId();
     if (!patientId) {
@@ -484,8 +523,16 @@ export default function MockAnalysisPage() {
                 <span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-900">{file.name}</span>
                 <button
                   type="button"
+                  onClick={() => void handleSaveFile(file)}
+                  disabled={isUploading || savingFileKey === fileKey(file)}
+                  className="shrink-0 rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-800 disabled:opacity-50"
+                >
+                  {savingFileKey === fileKey(file) ? 'Kaydediliyor…' : 'Kaydet'}
+                </button>
+                <button
+                  type="button"
                   onClick={() => removeSelectedFile(file)}
-                  disabled={isUploading}
+                  disabled={isUploading || savingFileKey === fileKey(file)}
                   className="shrink-0 rounded-lg border border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"
                 >
                   Sil
