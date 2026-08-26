@@ -21,7 +21,6 @@ import PatientHistoryPage from './pages/PatientHistoryPage';
 import PatientRecordPage from './pages/PatientRecordPage';
 import RadiologyEvaluationPage from './pages/RadiologyEvaluationPage';
 import SendPage from './pages/SendPage';
-import TimelinePage from './pages/TimelinePage';
 import UserFeedbackPage from './pages/UserFeedbackPage';
 
 export const router = createHashRouter([
@@ -79,7 +78,6 @@ export const router = createHashRouter([
           { path: '/clinical-hypotheses', element: <ClinicalHypothesesPage /> },
           { path: '/doctor-review', element: <DoctorReviewPage /> },
           { path: '/doctor-worklist', element: <DoctorWorklistPage /> },
-          { path: '/timeline', element: <TimelinePage /> },
           { path: '/patient-history', element: <PatientHistoryPage /> },
         ],
       },
