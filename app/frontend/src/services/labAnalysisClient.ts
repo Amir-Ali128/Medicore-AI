@@ -91,6 +91,20 @@ export type LabAnalysisResponse = {
   };
 };
 
+type AnalysisRunSummary = {
+  id: string;
+  patient_id: string;
+  lab_report_id: string;
+  total_results: number;
+  normal_count: number;
+  low_count: number;
+  high_count: number;
+  needs_review_count: number;
+  unknown_count: number;
+  completed_at: string | null;
+  created_at: string;
+};
+
 export type ManualLabOption = {
   name: string;
   default_unit: string;
@@ -220,6 +234,12 @@ function hasPatientMetadata(patient: PatientMetadata | null | undefined): boolea
 
 function rememberPatientMetadata(response: LabAnalysisResponse): void {
   const patient = response.patient;
+
+  // Restored archive responses do not repeat PDF demographics. Keep the
+  // already stored patient profile instead of erasing it during navigation.
+  if (!patient) {
+    return;
+  }
 
   if (patient?.display_name) {
     localStorage.setItem(
@@ -505,5 +525,57 @@ export async function getAnalysisRunResults(
     throw new Error(`Results fetch failed: ${response.status} ${errorText}`);
   }
 
-  return response.json();
+  const rows = (await response.json()) as Array<
+    LabAnalysisResult & { id?: string }
+  >;
+
+  return rows.map((row) => ({
+    ...row,
+    lab_result_id: row.lab_result_id ?? row.id ?? '',
+  }));
+}
+
+export async function getLatestAnalysisForLabReport(
+  labReportId: string,
+  patientId: string,
+): Promise<LabAnalysisResponse | null> {
+  const response = await fetch(
+    `${API_BASE_URL}/lab-reports/${labReportId}/analysis-runs`,
+    { headers: { ...authHeaders() } },
+  );
+
+  if (!response.ok) {
+    const errorText = await readErrorMessage(response);
+    throw new Error(
+      `Kayıtlı laboratuvar analizi yüklenemedi: ${response.status} ${errorText}`,
+    );
+  }
+
+  const runs = (await response.json()) as AnalysisRunSummary[];
+  const latestRun = [...runs].sort((left, right) => {
+    const leftTime = Date.parse(left.completed_at ?? left.created_at) || 0;
+    const rightTime = Date.parse(right.completed_at ?? right.created_at) || 0;
+    return rightTime - leftTime;
+  })[0];
+
+  if (!latestRun) return null;
+
+  const results = await getAnalysisRunResults(latestRun.id);
+  const restored: LabAnalysisResponse = {
+    analysis_run_id: latestRun.id,
+    lab_report_id: latestRun.lab_report_id,
+    patient_id: patientId,
+    results,
+    counts: {
+      total: latestRun.total_results,
+      normal: latestRun.normal_count,
+      low: latestRun.low_count,
+      high: latestRun.high_count,
+      needs_review: latestRun.needs_review_count,
+      unknown: latestRun.unknown_count,
+    },
+  };
+
+  rememberLatestAnalysis(restored);
+  return restored;
 }
