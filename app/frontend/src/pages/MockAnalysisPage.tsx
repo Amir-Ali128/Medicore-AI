@@ -7,6 +7,7 @@ import {
 import ManualLabEntrySection from '../components/lab/ManualLabEntrySection';
 import {
   analyzeLabReportImage,
+  getLatestAnalysisForLabReport,
   uploadLabReportPdf,
   type LabAnalysisResponse,
   type LabAnalysisResult,
@@ -227,6 +228,18 @@ export default function MockAnalysisPage() {
           (a, b) => Date.parse(b.created_at ?? '') - Date.parse(a.created_at ?? ''),
         ),
       );
+      const latestReport = [...reports].sort(
+        (a, b) => Date.parse(b.created_at ?? '') - Date.parse(a.created_at ?? ''),
+      )[0];
+      if (latestReport) {
+        const restored = await getLatestAnalysisForLabReport(
+          latestReport.id,
+          patientId,
+        );
+        setBackendResult(restored);
+      } else {
+        setBackendResult(null);
+      }
     } catch (loadError) {
       setArchiveError(
         loadError instanceof Error
@@ -292,13 +305,10 @@ export default function MockAnalysisPage() {
     setMessage('');
     try {
       await deleteLabReport(report.id);
-      setArchivedReports((current) => current.filter((item) => item.id !== report.id));
       setUploadResults((current) =>
         current.filter((item) => item.result?.lab_report_id !== report.id),
       );
-      if (backendResult?.lab_report_id === report.id) {
-        setBackendResult(null);
-      }
+      await refreshArchive();
       setMessage(`${label} arşivden silindi.`);
     } catch (deleteError) {
       setArchiveError(
