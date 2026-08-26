@@ -12,6 +12,10 @@ import {
   type ClinicalIntakeInput,
 } from '../services/labAnalysisClient';
 import { listPatientRadiologyReports } from '../services/radiologyClient';
+import {
+  getClinicalHypothesesForAnalysisRun,
+  type ClinicalHypothesis,
+} from '../services/clinicalHypothesesClient';
 
 const ACTIVE_CLINICAL_INTAKE_KEY = 'medicore:activeClinicalIntake';
 
@@ -98,6 +102,9 @@ export default function CaseEvaluationPage() {
   const [loading, setLoading] = useState(true);
   const [evaluating, setEvaluating] = useState(false);
   const [result, setResult] = useState<ClaudeReviewGenerationResult | null>(null);
+  const [storedHypotheses, setStoredHypotheses] = useState<
+    ClinicalHypothesis[]
+  >([]);
   const [error, setError] = useState('');
 
   const analysisRunId = localStorage.getItem(LAST_ANALYSIS_RUN_ID_KEY);
@@ -118,10 +125,16 @@ export default function CaseEvaluationPage() {
         setClinicalIntake(intake);
       }
 
-      const [labsResult, reportsResult] = await Promise.allSettled([
-        analysisRunId ? getAnalysisRunResults(analysisRunId) : Promise.resolve([]),
-        listPatientRadiologyReports(),
-      ]);
+      const [labsResult, reportsResult, hypothesesResult] =
+        await Promise.allSettled([
+          analysisRunId
+            ? getAnalysisRunResults(analysisRunId)
+            : Promise.resolve([]),
+          listPatientRadiologyReports(),
+          analysisRunId
+            ? getClinicalHypothesesForAnalysisRun(analysisRunId)
+            : Promise.resolve([]),
+        ]);
 
       if (cancelled) return;
 
@@ -131,8 +144,11 @@ export default function CaseEvaluationPage() {
       setRadiologyReady(
         reportsResult.status === 'fulfilled' && reportsResult.value.length > 0,
       );
+      setStoredHypotheses(
+        hypothesesResult.status === 'fulfilled' ? hypothesesResult.value : [],
+      );
 
-      const failures = [labsResult, reportsResult]
+      const failures = [labsResult, reportsResult, hypothesesResult]
         .filter(
           (entry): entry is PromiseRejectedResult => entry.status === 'rejected',
         )
@@ -160,17 +176,18 @@ export default function CaseEvaluationPage() {
   }, [analysisRunId, navigate]);
 
   const findings = useMemo(() => {
-    if (!result) return [];
-    const hypotheses = result.created_hypotheses?.length
-      ? result.created_hypotheses
-      : result.hypotheses ?? [];
+    const hypotheses = result
+      ? result.created_hypotheses?.length
+        ? result.created_hypotheses
+        : result.hypotheses ?? []
+      : storedHypotheses;
 
     return hypotheses.map((item) => ({
       id: item.id,
       title: item.title,
       summary: item.summary,
     }));
-  }, [result]);
+  }, [result, storedHypotheses]);
 
   async function handleEvaluate() {
     if (!analysisRunId || !clinicalIntake || !allReady) return;
@@ -185,6 +202,9 @@ export default function CaseEvaluationPage() {
         clinicalIntake,
       );
       setResult(nextResult);
+      setStoredHypotheses(
+        nextResult.created_hypotheses ?? nextResult.hypotheses ?? [],
+      );
     } catch (evaluationError) {
       if (isAuthSessionError(evaluationError)) {
         clearAccessToken();
@@ -238,7 +258,7 @@ export default function CaseEvaluationPage() {
         </p>
       ) : null}
 
-      {result ? (
+      {result || storedHypotheses.length > 0 ? (
         <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <h2 className="text-lg font-bold text-slate-950">Değerlendirme</h2>
 
@@ -257,7 +277,7 @@ export default function CaseEvaluationPage() {
             </p>
           )}
 
-          {result.warnings.length > 0 ? (
+          {result && result.warnings.length > 0 ? (
             <p className="mt-4 text-xs leading-5 text-slate-500">
               {result.warnings.join(' ')}
             </p>
