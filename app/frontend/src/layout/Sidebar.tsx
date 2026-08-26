@@ -17,7 +17,6 @@ const items: NavItem[] = [
   { label: '🩸 Laboratuvar Sonuçları', to: '/analysis/mock' },
   { label: '🩻 Radyoloji ve Diğer Tetkik Raporları', to: '/radiology' },
   { label: '🧩 Bulguları Değerlendir', to: '/combined-evaluation' },
-  { label: '📈 Trend Analizi', to: '/timeline' },
   { label: '📄 Arşiv', to: '/patient-history' },
   { label: '✉️ Gönder', to: '/send' },
   { label: '💡 Önerileriniz', to: '/feedback', patientOnly: true },
