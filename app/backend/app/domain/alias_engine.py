@@ -64,6 +64,7 @@ _CURATED_ALIAS_TARGETS_RAW: dict[str, tuple[str, ...]] = {
     "Sedimentasyon": ("ESR", "Sedimentation Rate", "Sedimantasyon"),
     "CRP": ("CRP", "C-Reactive Protein"),
     "Folik Asit": ("Folate", "Folic Acid", "Folik Asit"),
+    "CK": ("CK", "CK (CPK)", "CPK", "Creatine Kinase", "Kreatin Kinaz"),
 
     # CBC
     "Lökosit": ("WBC", "Lökosit", "Lokosit", "Leukocyte"),
