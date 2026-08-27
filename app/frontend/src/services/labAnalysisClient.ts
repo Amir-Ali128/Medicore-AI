@@ -13,6 +13,7 @@ export const LAST_PATIENT_BIRTH_DATE_KEY = 'medicore:lastPatientBirthDate';
 
 const DEMO_PATIENT_ID = '3fa85f64-5717-4562-b3fc-2c963f66afa6';
 const DEMO_UPLOADED_BY_USER_ID = '3fa85f64-5717-4562-b3fc-2c963f66afa6';
+const ACTIVE_PATIENT_ID_KEY = 'medicore:activePatientId';
 
 export type LabResultStatus =
   | 'normal'
@@ -479,8 +480,15 @@ export async function analyzeLabReportImage(
   file: File,
   clinicalContext?: ClinicalIntakeInput,
 ): Promise<LabAnalysisResponse> {
+  const patientId = localStorage.getItem(ACTIVE_PATIENT_ID_KEY);
+  if (!patientId) {
+    throw new Error(
+      'Önce Hasta Bilgileri bölümünde Kaydet’e basarak aktif hasta kaydını oluşturmalısın.',
+    );
+  }
+
   const formData = new FormData();
-  formData.append('patient_id', DEMO_PATIENT_ID);
+  formData.append('patient_id', patientId);
   formData.append('file', file);
 
   const response = await fetch(`${API_BASE_URL}/extraction/lab-report/analyze`, {
