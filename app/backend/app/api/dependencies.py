@@ -146,7 +146,7 @@ ParameterAliasRepositoryDep = Annotated[
 
 ReferenceRangeRepositoryDep = Annotated[
     ReferenceRangeRepository,
-    Depends(get_reference_range_repository),
+    Depends(get_reference_resolver),
 ]
 
 LabReportRepositoryDep = Annotated[
@@ -281,11 +281,16 @@ DoctorReviewServiceDep = Annotated[
 # --- Module I: Claude lab extraction service -----------------------------
 def get_claude_lab_extraction_service() -> ClaudeLabExtractionService:
     settings = get_settings()
+    model = (
+        settings.claude_extraction_model
+        or settings.claude_vision_model
+        or settings.claude_hypothesis_model
+    )
 
     try:
         return ClaudeLabExtractionService(
             api_key=settings.anthropic_api_key,
-            model=settings.claude_extraction_model,
+            model=model,
         )
     except ValueError:
         raise HTTPException(
