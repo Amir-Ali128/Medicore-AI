@@ -30,14 +30,37 @@ from app.schemas.lab_analysis import MockLabReportInput, RawLabValue
 router = APIRouter(prefix="/extraction", tags=["extraction"])
 
 _PATIENT_NOT_FOUND = "Patient not found."
+_MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 
 
 def _resolve_content_type(file: UploadFile) -> str | None:
-    content_type = (file.content_type or "").lower() or None
+    content_type = (file.content_type or "").lower().strip() or None
     if content_type in SUPPORTED_CONTENT_TYPES:
         return content_type
     guessed, _ = mimetypes.guess_type(file.filename or "")
-    return guessed or content_type
+    return guessed if guessed in SUPPORTED_CONTENT_TYPES else content_type
+
+
+async def _read_supported_upload(file: UploadFile) -> tuple[bytes, str]:
+    content_type = _resolve_content_type(file)
+    if content_type not in SUPPORTED_CONTENT_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Laboratuvar analizi için PDF, JPG/JPEG, PNG veya WEBP yükleyin.",
+        )
+
+    data = await file.read(_MAX_UPLOAD_BYTES + 1)
+    if not data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Boş laboratuvar dosyası analiz edilemez.",
+        )
+    if len(data) > _MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Laboratuvar dosyası 10 MB sınırını aşıyor.",
+        )
+    return data, content_type
 
 
 @router.post("/lab-report", response_model=LabExtractionResult)
@@ -45,8 +68,7 @@ async def extract_lab_report(
     service: ClaudeLabExtractionServiceDep,
     file: UploadFile = File(...),
 ) -> LabExtractionResult:
-    data = await file.read()
-    content_type = _resolve_content_type(file)
+    data, content_type = await _read_supported_upload(file)
     try:
         return await service.extract_from_bytes(data, file.filename, content_type)
     except ValueError as exc:
@@ -68,8 +90,7 @@ async def extract_and_analyze_lab_report(
     report_date: date | None = Form(default=None),
     file: UploadFile = File(...),
 ) -> ExtractionAndAnalysisResult:
-    data = await file.read()
-    content_type = _resolve_content_type(file)
+    data, content_type = await _read_supported_upload(file)
 
     if patient_id == lab_analysis.DEMO_PATIENT_ID:
         await lab_analysis._ensure_demo_patient_and_user()
@@ -80,6 +101,16 @@ async def extract_and_analyze_lab_report(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
         ) from None
+
+    if not extraction.values:
+        warning = extraction.warnings[0] if extraction.warnings else None
+        detail = "Görüntüden okunabilir laboratuvar test sonucu çıkarılamadı."
+        if warning:
+            detail = f"{detail} {warning}"
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=detail,
+        )
 
     raw_values = [
         RawLabValue(
