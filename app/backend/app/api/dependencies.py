@@ -146,7 +146,7 @@ ParameterAliasRepositoryDep = Annotated[
 
 ReferenceRangeRepositoryDep = Annotated[
     ReferenceRangeRepository,
-    Depends(get_reference_resolver),
+    Depends(get_reference_range_repository),
 ]
 
 LabReportRepositoryDep = Annotated[
