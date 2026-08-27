@@ -57,7 +57,7 @@ async def _read_supported_upload(file: UploadFile) -> tuple[bytes, str]:
         )
     if len(data) > _MAX_UPLOAD_BYTES:
         raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            status_code=413,
             detail="Laboratuvar dosyası 10 MB sınırını aşıyor.",
         )
     return data, content_type
