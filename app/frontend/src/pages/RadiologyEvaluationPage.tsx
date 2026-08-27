@@ -147,21 +147,22 @@ export default function RadiologyEvaluationPage() {
 
         const results: FileUploadResult[] = [];
         const failed: File[] = [];
-        const modality = purposeModality(filePurpose);
+        const explicitModality = purposeModality(filePurpose);
 
         for (let index = 0; index < files.length; index += 1) {
           const file = files[index];
-          const wantsVisualAi = Boolean(modality) && isSupportedVisualImage(file);
+          const wantsVisualAi = isSupportedVisualImage(file);
+          const visualModality: RadiologyImageModality = explicitModality ?? 'AUTO';
           setProgress(
             `${index + 1}/${files.length} · ${file.name} ${wantsVisualAi ? 'AI ile inceleniyor' : 'yükleniyor'}`,
           );
 
           try {
-            const report = wantsVisualAi && modality
-              ? await uploadRadiologyImageReview(file, modality)
+            const report = wantsVisualAi
+              ? await uploadRadiologyImageReview(file, visualModality)
               : await uploadRadiologyReportFile(file, {
                   reportDate: new Date().toISOString().slice(0, 10),
-                  modality,
+                  modality: explicitModality,
                   bodyPart: null,
                 });
             results.push({
@@ -314,7 +315,7 @@ export default function RadiologyEvaluationPage() {
 
             {filePurpose === 'report' ? (
               <p className="text-xs leading-5 text-slate-500">
-                Tüm dosya türleri seçilebilir. PDF ve metin tabanlı dosyalar uygun olduğunda değerlendirilir; diğer formatlar arşivlenir. Dosya başına sınır 15 MB'dır.
+                PDF ve metin tabanlı dosyalar uygun olduğunda değerlendirilir. JPG, PNG ve WEBP görüntüler otomatik olarak görüntü AI akışına gönderilir; modalite belirtilmemişse sistem röntgen/ultrason ayrımını otomatik yapar. Diğer formatlar arşivlenir. Dosya başına sınır 15 MB'dır.
               </p>
             ) : (
               <div className="rounded-lg border border-violet-200 bg-violet-50 p-3 text-xs leading-5 text-violet-900">
@@ -359,7 +360,7 @@ export default function RadiologyEvaluationPage() {
             : mode === 'manual'
               ? 'Değerlendir ve kaydet'
               : filePurpose === 'report'
-                ? 'Dosyaları yükle ve kaydet'
+                ? 'Dosyaları değerlendir ve kaydet'
                 : 'Görüntüleri değerlendir ve kaydet'}
         </button>
       </form>

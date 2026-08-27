@@ -21,7 +21,8 @@ SUPPORTED_IMAGE_MEDIA_TYPES = {
     "image/png",
     "image/webp",
 }
-SUPPORTED_MODALITIES = {"XRAY", "ULTRASOUND"}
+SUPPORTED_MODALITIES = {"XRAY", "ULTRASOUND", "AUTO"}
+_DETECTED_MODALITIES = {"XRAY", "ULTRASOUND", "UNKNOWN"}
 
 
 @dataclass(frozen=True)
@@ -31,6 +32,7 @@ class RadiologyImageReview:
     limitations: list[str]
     visible_text: str
     model: str
+    detected_modality: str
 
 
 def normalize_image_modality(value: str | None) -> str | None:
@@ -47,6 +49,9 @@ def normalize_image_modality(value: str | None) -> str | None:
         "ULTRASON": "ULTRASOUND",
         "ULTRASONOGRAFI": "ULTRASOUND",
         "ULTRASONOGRAFİ": "ULTRASOUND",
+        "AUTOMATIC": "AUTO",
+        "AUTO_DETECT": "AUTO",
+        "AUTODETECT": "AUTO",
     }
     return aliases.get(normalized, normalized or None)
 
@@ -113,10 +118,19 @@ async def review_radiology_image(
     if not settings.anthropic_api_key or not model:
         return None
 
-    modality_label = "röntgen" if normalized_modality == "XRAY" else "ultrason"
+    if normalized_modality == "AUTO":
+        modality_context = (
+            "Görüntünün modalitesi kullanıcı tarafından belirtilmemiştir. Önce yalnızca "
+            "görsel özelliklere göre bunun röntgen (XRAY), ultrason (ULTRASOUND) veya "
+            "belirlenemeyen/uyumsuz (UNKNOWN) olduğunu sınıflandır."
+        )
+    else:
+        modality_label = "röntgen" if normalized_modality == "XRAY" else "ultrason"
+        modality_context = f"Bu görüntü kullanıcı tarafından {modality_label} olarak işaretlenmiştir."
+
     prompt = f"""
-Bu görüntü kullanıcı tarafından {modality_label} olarak işaretlenmiştir. Görüntü bir
-PACS ekran görüntüsü, cihaz ekranı veya rapor ekran görüntüsü olabilir.
+{modality_context} Görüntü bir PACS ekran görüntüsü, cihaz ekranı veya rapor ekran
+görüntüsü olabilir.
 
 Amaç: hekime yardımcı olacak, TANISAL OLMAYAN bir ön inceleme üretmek.
 - Kesin tanı koyma, hastalık olasılığı yüzdesi verme veya tedavi önerme.
@@ -128,9 +142,11 @@ Amaç: hekime yardımcı olacak, TANISAL OLMAYAN bir ön inceleme üretmek.
 - Görüntü belirtilen modaliteyle uyumlu görünmüyorsa bunu sınırlama olarak belirt.
 - Bulguları aşırı yorumlama; şüpheli görünen şeyi "hekim tarafından doğrulanmalı"
   şeklinde ifade et.
+- detected_modality alanı yalnızca XRAY, ULTRASOUND veya UNKNOWN olmalıdır.
 
 Yalnızca aşağıdaki JSON biçimini döndür:
 {{
+  "detected_modality": "XRAY | ULTRASOUND | UNKNOWN",
   "summary": "1-3 cümlelik tanısal olmayan genel özet",
   "observations": ["en fazla 6 doğrudan görsel gözlem"],
   "limitations": ["en fazla 5 sınırlama"],
@@ -178,6 +194,19 @@ Yalnızca aşağıdaki JSON biçimini döndür:
     limitations = _string_list(payload.get("limitations"), limit=5)
     visible_text = " ".join(str(payload.get("visible_text") or "").split()).strip()
 
+    if normalized_modality in {"XRAY", "ULTRASOUND"}:
+        detected_modality = normalized_modality
+    else:
+        detected_modality = (
+            str(payload.get("detected_modality") or "UNKNOWN")
+            .strip()
+            .upper()
+            .replace("-", "_")
+            .replace(" ", "_")
+        )
+        if detected_modality not in _DETECTED_MODALITIES:
+            detected_modality = "UNKNOWN"
+
     if not summary:
         summary = "Görüntü için tanısal olmayan AI ön incelemesi oluşturuldu; hekim doğrulaması gereklidir."
 
@@ -187,4 +216,5 @@ Yalnızca aşağıdaki JSON biçimini döndür:
         limitations=limitations,
         visible_text=visible_text[:5000],
         model=model,
+        detected_modality=detected_modality,
     )

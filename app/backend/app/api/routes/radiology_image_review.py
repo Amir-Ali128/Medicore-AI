@@ -66,7 +66,7 @@ async def create_radiology_image_review(
     if normalized_modality not in SUPPORTED_MODALITIES:
         raise HTTPException(
             status_code=400,
-            detail="AI görüntü ön değerlendirmesi şimdilik yalnızca röntgen ve ultrason için açıktır.",
+            detail="AI görüntü ön değerlendirmesi röntgen, ultrason veya otomatik modalite algılama ile kullanılabilir.",
         )
 
     media_type = _resolve_media_type(filename, file.content_type)
@@ -117,13 +117,19 @@ async def create_radiology_image_review(
         for observation in review.observations
     ]
 
+    stored_modality = (
+        review.detected_modality
+        if normalized_modality == "AUTO"
+        else normalized_modality
+    )
+
     report = RadiologyReport(
         patient_id=patient_id,
         uploaded_by_user_id=current_user.id,
         source_type="image_ai_review",
         file_name=filename,
         report_date=report_date,
-        modality=normalized_modality,
+        modality=stored_modality,
         body_part="OTHER",
         original_text=review.visible_text,
         findings_json=findings,
@@ -144,7 +150,9 @@ async def create_radiology_image_review(
             "analysis_limitations": review.limitations,
             "physician_review_required": True,
             "not_diagnostic": True,
-            "supported_modality": normalized_modality,
+            "requested_modality": normalized_modality,
+            "detected_modality": review.detected_modality,
+            "supported_modality": stored_modality,
         },
     )
     repository = RadiologyReportRepository(session)

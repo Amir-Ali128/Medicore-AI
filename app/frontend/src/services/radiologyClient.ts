@@ -61,7 +61,7 @@ export type RadiologyReportInput = {
   reportText: string;
 };
 
-export type RadiologyImageModality = 'XRAY' | 'ULTRASOUND';
+export type RadiologyImageModality = 'XRAY' | 'ULTRASOUND' | 'AUTO';
 
 type ListRadiologyOptions = {
   includeUnanalyzed?: boolean;
