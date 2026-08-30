@@ -24,6 +24,35 @@ async def ai_costs(
     cutoff = datetime.now(UTC) - timedelta(minutes=minutes)
 
     async with AsyncSessionFactory() as session:
+        aggregate = (
+            await session.execute(
+                text(
+                    """
+                    SELECT
+                        COUNT(*)::integer AS compact_evaluations,
+                        COUNT(*) FILTER (
+                            WHERE metadata_json->'claude_usage'->>'input_tokens' IS NOT NULL
+                              AND metadata_json->'claude_usage'->>'output_tokens' IS NOT NULL
+                        )::integer AS tracked_calls,
+                        COUNT(*) FILTER (
+                            WHERE COALESCE((metadata_json->>'ai_called')::boolean, false) = true
+                              AND metadata_json->'claude_usage'->>'input_tokens' IS NULL
+                        )::integer AS untracked_ai_calls,
+                        COUNT(*) FILTER (
+                            WHERE COALESCE((metadata_json->>'ai_called')::boolean, false) = false
+                        )::integer AS fallback_count,
+                        COALESCE(SUM(NULLIF(metadata_json->'claude_usage'->>'input_tokens', '')::integer), 0)::bigint AS input_tokens,
+                        COALESCE(SUM(NULLIF(metadata_json->'claude_usage'->>'output_tokens', '')::integer), 0)::bigint AS output_tokens,
+                        COALESCE(SUM(NULLIF(metadata_json->'claude_usage'->>'estimated_cost_usd', '')::numeric), 0)::numeric AS estimated_cost_usd
+                    FROM clinical_hypotheses
+                    WHERE source = 'claude_compact_risk_summary'
+                      AND created_at >= :cutoff
+                    """
+                ),
+                {"cutoff": cutoff},
+            )
+        ).mappings().one()
+
         rows = (
             await session.execute(
                 text(
@@ -51,39 +80,25 @@ async def ai_costs(
         ).mappings().all()
 
     events: list[dict[str, Any]] = []
-    input_tokens = 0
-    output_tokens = 0
-    cost_usd = 0.0
-    tracked_calls = 0
-    untracked_ai_calls = 0
-    fallback_count = 0
-
     for row in rows:
         item = dict(row)
         raw_cost = item.get("estimated_cost_usd")
         item["estimated_cost_usd"] = float(raw_cost) if raw_cost is not None else None
-        if item.get("input_tokens") is not None and item.get("output_tokens") is not None:
-            tracked_calls += 1
-            input_tokens += int(item["input_tokens"] or 0)
-            output_tokens += int(item["output_tokens"] or 0)
-            cost_usd += float(item["estimated_cost_usd"] or 0.0)
-        elif item.get("ai_called"):
-            untracked_ai_calls += 1
-        else:
-            fallback_count += 1
         events.append(item)
 
+    input_tokens = int(aggregate.get("input_tokens") or 0)
+    output_tokens = int(aggregate.get("output_tokens") or 0)
     return {
         "generated_at": datetime.now(UTC),
         "window_minutes": minutes,
-        "compact_evaluations": len(events),
-        "tracked_calls": tracked_calls,
-        "untracked_ai_calls": untracked_ai_calls,
-        "fallback_count": fallback_count,
+        "compact_evaluations": int(aggregate.get("compact_evaluations") or 0),
+        "tracked_calls": int(aggregate.get("tracked_calls") or 0),
+        "untracked_ai_calls": int(aggregate.get("untracked_ai_calls") or 0),
+        "fallback_count": int(aggregate.get("fallback_count") or 0),
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
         "total_tokens": input_tokens + output_tokens,
-        "estimated_cost_usd": round(cost_usd, 8),
+        "estimated_cost_usd": round(float(aggregate.get("estimated_cost_usd") or 0.0), 8),
         "pricing": {
             "model": "claude-sonnet-5",
             "input_per_million_usd": 2.0,
