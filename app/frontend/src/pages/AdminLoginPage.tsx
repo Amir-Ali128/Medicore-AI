@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 
 import {
-  getStoredUser,
+  getAuthenticatedRole,
   isAuthenticated,
   login,
   logout,
@@ -16,9 +16,7 @@ export default function AdminLoginPage() {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    // Do not redirect from a stale localStorage user record. A valid JWT is
-    // required; otherwise the old behavior could bounce between login/routes.
-    if (isAuthenticated() && getStoredUser()?.role === 'admin') {
+    if (isAuthenticated() && getAuthenticatedRole() === 'admin') {
       navigate('/admin/analytics', { replace: true });
     }
   }, [navigate]);
@@ -30,7 +28,9 @@ export default function AdminLoginPage() {
       setIsSubmitting(true);
       setError('');
 
-      const user = await login(nickname, password, 'institutional');
+      const user = await login(nickname, password, 'institutional', {
+        allowAdmin: true,
+      });
       if (user.role !== 'admin') {
         logout();
         throw new Error('Bu hesap yönetici yetkisine sahip değil.');

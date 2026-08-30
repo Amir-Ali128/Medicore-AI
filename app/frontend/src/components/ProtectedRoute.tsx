@@ -1,6 +1,13 @@
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
 
-import { isAuthenticated } from '../services/authClient';
+import {
+  getAuthenticatedRole,
+  isAuthenticated,
+} from '../services/authClient';
+
+function clinicalHome(role: string | null) {
+  return role === 'patient' ? '/patients/demo' : '/analysis/mock';
+}
 
 export default function ProtectedRoute() {
   const location = useLocation();
@@ -10,6 +17,17 @@ export default function ProtectedRoute() {
       ? '/admin/login'
       : '/login';
     return <Navigate to={loginPath} replace state={{ from: location }} />;
+  }
+
+  const role = getAuthenticatedRole();
+  const isAdminRoute = location.pathname.startsWith('/admin/');
+
+  if (role === 'admin' && !isAdminRoute) {
+    return <Navigate to="/admin/analytics" replace />;
+  }
+
+  if (role !== 'admin' && isAdminRoute) {
+    return <Navigate to={clinicalHome(role)} replace />;
   }
 
   return <Outlet />;
