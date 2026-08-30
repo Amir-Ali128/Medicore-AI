@@ -262,6 +262,10 @@ export async function login(
 
   const auth = (await response.json()) as AuthResponse;
 
+  if (options.allowAdmin === true && auth.user.role !== 'admin') {
+    throw new Error('Bu hesap yönetici yetkisine sahip değil.');
+  }
+
   if (auth.user.role === 'admin' && options.allowAdmin !== true) {
     throw new Error('Bu hesap yönetici hesabıdır. Yönetici girişini kullanın.');
   }
