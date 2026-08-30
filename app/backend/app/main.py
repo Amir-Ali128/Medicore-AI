@@ -19,6 +19,7 @@ from app.api.routes import lab_globulin_fix as _lab_globulin_fix  # noqa: F401
 from app.api.routes import lab_case01_safety as _lab_case01_safety  # noqa: F401
 from app.api.routes import lab_case01_sql_hotfix as _lab_case01_sql_hotfix  # noqa: F401
 from app.domain import claude_compact_runtime_fix as _claude_compact_runtime_fix  # noqa: F401
+from app.domain import pathological_findings_runtime as _pathological_findings_runtime  # noqa: F401
 from app.infrastructure.admin_bootstrap import ensure_bootstrap_admin
 from app.infrastructure.database.feedback_migrations import ensure_user_feedback
 from app.infrastructure.database.session import AsyncSessionFactory, engine
@@ -42,7 +43,7 @@ async def lifespan(_: FastAPI):
     patient_backfilled = await ensure_patient_protocol_numbers(engine)
     if patient_backfilled:
         print(
-            "Patient protocol startup migration completed: "
+            "Patient protocol number startup migration completed: "
             f"backfilled {patient_backfilled} patient(s)."
         )
 
