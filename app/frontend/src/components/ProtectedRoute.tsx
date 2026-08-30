@@ -1,13 +1,12 @@
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
 
 import {
-  getStoredUser,
+  getAuthenticatedRole,
   isAuthenticated,
-  type AuthUser,
 } from '../services/authClient';
 
-function clinicalHome(user: AuthUser | null) {
-  return user?.role === 'patient' ? '/patients/demo' : '/analysis/mock';
+function clinicalHome(role: string | null) {
+  return role === 'patient' ? '/patients/demo' : '/analysis/mock';
 }
 
 export default function ProtectedRoute() {
@@ -20,21 +19,15 @@ export default function ProtectedRoute() {
     return <Navigate to={loginPath} replace state={{ from: location }} />;
   }
 
-  const user = getStoredUser();
+  const role = getAuthenticatedRole();
   const isAdminRoute = location.pathname.startsWith('/admin/');
 
-  // Admin and clinical workspaces are deliberately separate. An authenticated
-  // admin never falls through into patient/clinical screens, even by typing a
-  // clinical URL manually.
-  if (user?.role === 'admin' && !isAdminRoute) {
+  if (role === 'admin' && !isAdminRoute) {
     return <Navigate to="/admin/analytics" replace />;
   }
 
-  // Likewise, patient/doctor/lab accounts cannot enter the admin workspace by
-  // manually editing the hash URL. Backend role checks remain the authority for
-  // admin APIs; this guard keeps the UI/workspace boundary explicit as well.
-  if (user?.role !== 'admin' && isAdminRoute) {
-    return <Navigate to={clinicalHome(user)} replace />;
+  if (role !== 'admin' && isAdminRoute) {
+    return <Navigate to={clinicalHome(role)} replace />;
   }
 
   return <Outlet />;
