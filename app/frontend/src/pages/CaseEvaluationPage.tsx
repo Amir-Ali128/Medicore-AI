@@ -149,7 +149,7 @@ export default function CaseEvaluationPage() {
   const [labResults, setLabResults] = useState<LabAnalysisResult[]>([]);
   const [radiologyReports, setRadiologyReports] = useState<RadiologyReport[]>([]);
   const [labReady, setLabReady] = useState(false);
-  const [radiologyReady, setRadiologyReady] = useState(false);
+  const [ultrasoundReady, setUltrasoundReady] = useState(false);
   const [loading, setLoading] = useState(true);
   const [evaluating, setEvaluating] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -159,7 +159,7 @@ export default function CaseEvaluationPage() {
 
   const analysisRunId = localStorage.getItem(LAST_ANALYSIS_RUN_ID_KEY);
   const clinicalReady = hasClinicalData(clinicalIntake);
-  const allReady = clinicalReady && labReady && radiologyReady;
+  const allReady = clinicalReady && labReady && ultrasoundReady;
 
   useEffect(() => {
     let cancelled = false;
@@ -189,7 +189,7 @@ export default function CaseEvaluationPage() {
       setLabResults(labs);
       setRadiologyReports(reports);
       setLabReady(labs.length > 0);
-      setRadiologyReady(reports.length > 0);
+      setUltrasoundReady(Boolean(getLatestUltrasoundReport(reports)));
       setStoredHypotheses(
         hypothesesResult.status === 'fulfilled' ? hypothesesResult.value : [],
       );
@@ -318,7 +318,7 @@ export default function CaseEvaluationPage() {
       <div className="grid gap-3 md:grid-cols-3">
         <SourceStatus title="Hasta bilgileri" ready={clinicalReady} link="/patients/demo" />
         <SourceStatus title="Laboratuvar" ready={labReady} link="/analysis/mock" />
-        <SourceStatus title="Radyoloji / diğer tetkikler" ready={radiologyReady} link="/radiology" />
+        <SourceStatus title="Ultrason" ready={ultrasoundReady} link="/radiology" />
       </div>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -352,7 +352,7 @@ export default function CaseEvaluationPage() {
 
       {!loading && !allReady ? (
         <p className="text-sm text-slate-500">
-          Değerlendirme için üç bölümün de hazır olması gerekiyor.
+          Değerlendirme için klinik, laboratuvar ve ultrason bölümlerinin hazır olması gerekiyor.
         </p>
       ) : null}
 
