@@ -13,14 +13,14 @@ function readPathologicalFindings(value: unknown): ClaudePathologicalFinding[] {
   if (!Array.isArray(value)) return [];
 
   return value.filter((item): item is ClaudePathologicalFinding => {
+    if (typeof item !== 'object' || item === null) return false;
+    const finding = item as Record<string, unknown>;
     return (
-      typeof item === 'object' &&
-      item !== null &&
-      typeof item.name === 'string' &&
-      typeof item.status === 'string' &&
-      typeof item.status_label === 'string' &&
-      typeof item.display === 'string' &&
-      (item.source === 'laboratory' || item.source === 'vital')
+      typeof finding.name === 'string' &&
+      typeof finding.status === 'string' &&
+      typeof finding.status_label === 'string' &&
+      typeof finding.display === 'string' &&
+      (finding.source === 'laboratory' || finding.source === 'vital')
     );
   });
 }
