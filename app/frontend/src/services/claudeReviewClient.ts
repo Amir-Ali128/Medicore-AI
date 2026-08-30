@@ -15,10 +15,23 @@ export type ClaudeSuggestedTest = {
   priority: 'routine' | 'soon' | 'urgent' | null;
 };
 
+export type ClaudePathologicalFinding = {
+  source: 'laboratory' | 'vital';
+  name: string;
+  status: string;
+  status_label: string;
+  value: string | null;
+  unit: string | null;
+  display: string;
+};
+
 export type ClaudeEvaluationMetadata = Record<string, unknown> & {
   risk?: number;
   flags?: string[];
   symptoms?: string[];
+  pathological_findings?: ClaudePathologicalFinding[];
+  pathological_count?: number;
+  pathological_findings_source?: string;
   ai_called?: boolean;
   compact_mode?: boolean;
   max_output_tokens?: number;
