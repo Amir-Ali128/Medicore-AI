@@ -5,7 +5,13 @@ const ACCESS_TOKEN_KEY = 'medicore:accessToken';
 const CURRENT_USER_KEY = 'medicore:currentUser';
 const MEDICORE_STORAGE_PREFIX = 'medicore:';
 
-export type UserRole = 'admin' | 'doctor' | 'patient' | 'lab_staff' | 'system';
+export type UserRole =
+  | 'admin'
+  | 'doctor'
+  | 'patient'
+  | 'lab_staff'
+  | 'viewer'
+  | 'system';
 export type AccountType = 'individual' | 'institutional';
 
 export type AuthUser = {
@@ -41,11 +47,7 @@ async function readErrorMessage(response: Response): Promise<string> {
   if (contentType.includes('application/json')) {
     try {
       const body = await response.json();
-
-      if (typeof body?.detail === 'string') {
-        return body.detail;
-      }
-
+      if (typeof body?.detail === 'string') return body.detail;
       return JSON.stringify(body?.detail ?? body);
     } catch {
       return response.statusText;
@@ -85,6 +87,7 @@ function isKnownRole(value: unknown): value is UserRole {
     value === 'doctor' ||
     value === 'patient' ||
     value === 'lab_staff' ||
+    value === 'viewer' ||
     value === 'system'
   );
 }
@@ -95,22 +98,12 @@ function isJwtExpiredOrInvalid(token: string): boolean {
   return payload.exp * 1000 <= Date.now();
 }
 
-/**
- * Remove every client-side MediCore value from this browser profile.
- *
- * Patient forms, active patient ids, report ids, local archive snapshots and auth
- * data all use the `medicore:` prefix. Clearing the complete prefix is deliberate:
- * a different account must never inherit health information left in localStorage
- * by the previous account on the same browser.
- */
 function clearMediCoreLocalState(): void {
   const keysToRemove: string[] = [];
 
   for (let index = 0; index < localStorage.length; index += 1) {
     const key = localStorage.key(index);
-    if (key?.startsWith(MEDICORE_STORAGE_PREFIX)) {
-      keysToRemove.push(key);
-    }
+    if (key?.startsWith(MEDICORE_STORAGE_PREFIX)) keysToRemove.push(key);
   }
 
   keysToRemove.forEach((key) => localStorage.removeItem(key));
@@ -125,7 +118,6 @@ function storeAuth(response: AuthResponse): AuthUser {
 
   localStorage.setItem(ACCESS_TOKEN_KEY, response.access_token);
   localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(response.user));
-
   return response.user;
 }
 
@@ -139,7 +131,6 @@ export function clearAccessToken(): void {
 
 export function getCurrentUser(): AuthUser | null {
   const raw = localStorage.getItem(CURRENT_USER_KEY);
-
   if (!raw) return null;
 
   try {
@@ -154,11 +145,6 @@ export function getStoredUser(): AuthUser | null {
   return getCurrentUser();
 }
 
-/**
- * Read the authenticated role from the signed JWT payload first. This keeps the
- * admin/clinical workspace stable across a hard refresh even if the cached user
- * object is unavailable during the first render.
- */
 export function getAuthenticatedRole(): UserRole | null {
   const token = getAccessToken();
   if (!token || isJwtExpiredOrInvalid(token)) return null;
@@ -194,9 +180,7 @@ export async function login(
 ): Promise<AuthUser> {
   const response = await fetch(`${API_BASE_URL}/auth/login`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       nickname,
       password,
@@ -224,9 +208,7 @@ export async function register(
 ): Promise<AuthUser> {
   const response = await fetch(`${API_BASE_URL}/auth/register`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
 
