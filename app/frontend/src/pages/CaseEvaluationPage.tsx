@@ -70,6 +70,19 @@ function isCompactEvaluation(
   );
 }
 
+function keepOnlyNewestCompactEvaluation(
+  hypotheses: Array<ClinicalHypothesis | ClaudeEvaluationHypothesis>,
+) {
+  let compactSeen = false;
+
+  return hypotheses.filter((hypothesis) => {
+    if (!isCompactEvaluation(hypothesis)) return true;
+    if (compactSeen) return false;
+    compactSeen = true;
+    return true;
+  });
+}
+
 function SourceStatus({
   title,
   ready,
@@ -183,13 +196,13 @@ export default function CaseEvaluationPage() {
   const findings = useMemo<
     Array<ClinicalHypothesis | ClaudeEvaluationHypothesis>
   >(() => {
-    if (result) {
-      return result.created_hypotheses?.length
+    const hypotheses = result
+      ? result.created_hypotheses?.length
         ? result.created_hypotheses
-        : result.hypotheses ?? [];
-    }
+        : result.hypotheses ?? []
+      : storedHypotheses;
 
-    return storedHypotheses;
+    return keepOnlyNewestCompactEvaluation(hypotheses);
   }, [result, storedHypotheses]);
 
   async function handleEvaluate() {
