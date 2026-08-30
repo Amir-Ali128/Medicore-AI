@@ -111,7 +111,7 @@ class ClinicalHypothesisGenerationRequest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="ignore")
 
     patient_id: uuid.UUID | None = None
-    max_hypotheses: int = Field(default=5, ge=1, le=10)
+    max_hypotheses: int = Field(default=3, ge=1, le=10)
     include_normal_results: bool = False
     include_needs_review_only: bool = False
     min_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
