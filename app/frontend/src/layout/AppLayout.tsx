@@ -5,7 +5,7 @@ import FrontendTurkishLocalizer from '../components/FrontendTurkishLocalizer';
 import PatientPersistenceBridge from '../components/PatientPersistenceBridge';
 import RadiologyTerminologyLocalizer from '../components/RadiologyTerminologyLocalizer';
 import WorkflowViewSimplifier from '../components/WorkflowViewSimplifier';
-import { getStoredUser } from '../services/authClient';
+import { getAuthenticatedRole } from '../services/authClient';
 import AdminMobileNavigation from './AdminMobileNavigation';
 import AdminSidebar from './AdminSidebar';
 import MobileNavigation from './MobileNavigation';
@@ -13,7 +13,7 @@ import Sidebar from './Sidebar';
 import Topbar from './Topbar';
 
 export default function AppLayout() {
-  const isAdmin = getStoredUser()?.role === 'admin';
+  const isAdmin = getAuthenticatedRole() === 'admin';
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-950">
