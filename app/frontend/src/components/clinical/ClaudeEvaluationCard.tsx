@@ -127,7 +127,7 @@ export default function ClaudeEvaluationCard({
           </p>
           {compactMode ? (
             <p className="mt-2 text-xs text-slate-500">
-              Backend rule gate · {aiCalled ? 'kompakt AI özeti' : 'deterministik fallback'}
+              Sistem rule gate · {aiCalled ? 'kompakt AI özeti' : 'deterministik fallback'}
             </p>
           ) : null}
         </div>
@@ -167,7 +167,7 @@ export default function ClaudeEvaluationCard({
             ))}
           </ul>
           <p className="mt-3 text-xs leading-5 text-rose-800">
-            Bu liste yalnızca backend tarafından deterministik olarak yüksek/düşük
+            Bu liste yalnızca Sistem tarafından deterministik olarak yüksek/düşük
             sınıflandırılan bulgulardan oluşturulur. Belirsiz veya eşlenemeyen sonuçlar
             patolojik kabul edilmez.
           </p>
@@ -176,7 +176,7 @@ export default function ClaudeEvaluationCard({
 
       {pathologicalFindings.length === 0 && flags.length > 0 ? (
         <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
-          <h4 className="text-sm font-semibold text-slate-950">Backend inceleme flag'leri</h4>
+          <h4 className="text-sm font-semibold text-slate-950">Sistem inceleme flag'leri</h4>
           <div className="mt-3 flex flex-wrap gap-2">
             {flags.map((flag) => (
               <span
@@ -228,8 +228,8 @@ export default function ClaudeEvaluationCard({
       ) : null}
 
       <p className="mt-4 text-xs leading-5 text-slate-500">
-        Laboratuvar ve vital sınıflandırması backend kurallarıyla yapılır. Patolojik
-        bulgular AI tarafından seçilmez; AI yalnızca backend flag ürettiğinde kısa bir
+        Laboratuvar ve vital sınıflandırması Sistem kurallarıyla yapılır. Patolojik
+        bulgular AI tarafından seçilmez; AI yalnızca Sistem flag ürettiğinde kısa bir
         hekim-review özeti oluşturur. Bu çıktı tanı veya tedavi kararı değildir.
       </p>
     </article>
