@@ -34,6 +34,13 @@ function priorityLabel(priority: ClaudeSuggestedTest['priority']) {
   return null;
 }
 
+function riskLabel(value: unknown) {
+  if (value === 3) return 'Risk 3 / yüksek';
+  if (value === 2) return 'Risk 2 / orta';
+  if (value === 1) return 'Risk 1 / düşük';
+  return null;
+}
+
 function SuggestedTestList({
   title,
   tests,
@@ -82,16 +89,15 @@ export default function ClaudeEvaluationCard({
 }: {
   hypothesis: ClaudeEvaluationHypothesis;
 }) {
-  const possibleConditions = readStringList(
-    hypothesis.metadata_json?.possible_conditions,
-  );
-  const laboratoryTests = readSuggestedTests(
-    hypothesis.metadata_json?.recommended_laboratory_tests,
-  );
-  const imagingTests = readSuggestedTests(
-    hypothesis.metadata_json?.recommended_imaging_tests,
-  );
-  const limitations = readStringList(hypothesis.metadata_json?.limitations);
+  const metadata = hypothesis.metadata_json ?? {};
+  const possibleConditions = readStringList(metadata.possible_conditions);
+  const laboratoryTests = readSuggestedTests(metadata.recommended_laboratory_tests);
+  const imagingTests = readSuggestedTests(metadata.recommended_imaging_tests);
+  const limitations = readStringList(metadata.limitations);
+  const flags = readStringList(metadata.flags);
+  const compactRisk = riskLabel(metadata.risk);
+  const compactMode = metadata.compact_mode === true;
+  const aiCalled = metadata.ai_called === true;
 
   return (
     <article className="rounded-xl border border-violet-200 bg-white p-5">
@@ -101,11 +107,39 @@ export default function ClaudeEvaluationCard({
           <p className="mt-2 text-sm leading-6 text-slate-600">
             {hypothesis.summary}
           </p>
+          {compactMode ? (
+            <p className="mt-2 text-xs text-slate-500">
+              Backend rule gate · {aiCalled ? 'kompakt AI özeti' : 'deterministik fallback'}
+            </p>
+          ) : null}
         </div>
-        <span className="whitespace-nowrap rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-700">
-          HEKİM KONTROLÜ GEREKİR
-        </span>
+        <div className="flex flex-wrap gap-2">
+          {compactRisk ? (
+            <span className="whitespace-nowrap rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700">
+              {compactRisk}
+            </span>
+          ) : null}
+          <span className="whitespace-nowrap rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-700">
+            HEKİM KONTROLÜ GEREKİR
+          </span>
+        </div>
       </div>
+
+      {flags.length > 0 ? (
+        <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
+          <h4 className="text-sm font-semibold text-slate-950">Backend bulgu flag'leri</h4>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {flags.map((flag) => (
+              <span
+                key={flag}
+                className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700"
+              >
+                {flag}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       <div className="mt-5 grid gap-4 lg:grid-cols-3">
         {possibleConditions.length > 0 ? (
@@ -145,9 +179,9 @@ export default function ClaudeEvaluationCard({
       ) : null}
 
       <p className="mt-4 text-xs leading-5 text-slate-500">
-        Bu değerlendirme tanı veya tedavi kararı değildir. Klinik bilgiler,
-        laboratuvar sonuçları ve görüntüleme raporlarıyla birlikte hekim tarafından
-        doğrulanmalıdır.
+        Laboratuvar ve vital sınıflandırması backend kurallarıyla yapılır. AI yalnızca
+        backend flag ürettiğinde kısa bir hekim-review özeti oluşturur; bu çıktı tanı
+        veya tedavi kararı değildir.
       </p>
     </article>
   );

@@ -16,9 +16,10 @@ from app.api.routes import lab_derived_parameters as _lab_derived_parameters  # 
 from app.api.routes import lab_common_parameters as _lab_common_parameters  # noqa: F401
 from app.api.routes import lab_parser_safety as _lab_parser_safety  # noqa: F401
 from app.api.routes import lab_globulin_fix as _lab_globulin_fix  # noqa: F401
+from app.api.routes import lab_case01_safety as _lab_case01_safety  # noqa: F401
 from app.infrastructure.admin_bootstrap import ensure_bootstrap_admin
 from app.infrastructure.database.feedback_migrations import ensure_user_feedback
-from app.infrastructure.database.session import engine
+from app.infrastructure.database.session import AsyncSessionFactory, engine
 from app.infrastructure.database.startup_migrations import (
     ensure_analytics_presence,
     ensure_patient_protocol_numbers,
@@ -45,6 +46,10 @@ async def lifespan(_: FastAPI):
 
     await ensure_analytics_presence(engine)
     await ensure_user_feedback(engine)
+
+    async with AsyncSessionFactory() as session:
+        await _lab_case01_safety._ensure_case01_parameters(session)
+        await session.commit()
 
     admin_bootstrap = await ensure_bootstrap_admin()
     if admin_bootstrap == "created":
