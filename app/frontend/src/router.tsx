@@ -2,6 +2,7 @@ import { createHashRouter } from 'react-router-dom';
 
 import ProtectedRoute from './components/ProtectedRoute';
 import AppLayout from './layout/AppLayout';
+import AdminAiCostsPage from './pages/AdminAiCostsPage';
 import AdminAnalyticsPage from './pages/AdminAnalyticsPage';
 import AdminFeedbackPage from './pages/AdminFeedbackPage';
 import AdminLoginPage from './pages/AdminLoginPage';
@@ -44,6 +45,7 @@ export const router = createHashRouter([
         children: [
           { path: '/', element: <HomePage /> },
           { path: '/admin/analytics', element: <AdminAnalyticsPage /> },
+          { path: '/admin/ai-costs', element: <AdminAiCostsPage /> },
           { path: '/admin/feedback', element: <AdminFeedbackPage /> },
           { path: '/feedback', element: <UserFeedbackPage /> },
           { path: '/patients/demo', element: <PatientRecordPage /> },
