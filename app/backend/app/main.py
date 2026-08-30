@@ -21,6 +21,7 @@ from app.api.routes import lab_case01_sql_hotfix as _lab_case01_sql_hotfix  # no
 from app.domain import claude_compact_runtime_fix as _claude_compact_runtime_fix  # noqa: F401
 from app.domain import pathological_findings_runtime as _pathological_findings_runtime  # noqa: F401
 from app.domain import multisource_summary_runtime as _multisource_summary_runtime  # noqa: F401
+from app.domain import claude_sonnet5_compat_runtime as _claude_sonnet5_compat_runtime  # noqa: F401
 from app.domain import claude_usage_runtime as _claude_usage_runtime  # noqa: F401
 from app.domain import compact_hypothesis_dedup_runtime as _compact_hypothesis_dedup_runtime  # noqa: F401
 from app.infrastructure.admin_bootstrap import ensure_bootstrap_admin
