@@ -94,15 +94,19 @@ export function buildLaboratoryAiSummary(results: LabAnalysisResult[]) {
 }
 
 function normalizedModality(report: RadiologyReport) {
-  return `${report.modality ?? ''} ${report.metadata_json?.modality ?? ''}`.toUpperCase();
+  return `${report.modality ?? ''} ${report.metadata_json?.modality ?? ''}`
+    .toUpperCase()
+    .trim();
 }
 
 export function isUltrasoundReport(report: RadiologyReport) {
   const modality = normalizedModality(report);
+  const tokens = modality.split(/\s+/);
   return (
     modality.includes('ULTRASOUND') ||
     modality.includes('ULTRASON') ||
-    modality.includes('USG')
+    modality.includes('USG') ||
+    tokens.includes('US')
   );
 }
 
