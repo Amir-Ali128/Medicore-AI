@@ -1,13 +1,22 @@
-import { FormEvent, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { FormEvent, useEffect, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 
 import {
+  getStoredUser,
+  isAuthenticated,
   login,
   register,
   type AccountType,
+  type AuthUser,
 } from '../services/authClient';
 
 type AuthMode = 'login' | 'register';
+
+function destinationForUser(user: AuthUser) {
+  if (user.role === 'admin') return '/admin/analytics';
+  if (user.role === 'patient') return '/patients/demo';
+  return '/analysis/mock';
+}
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -22,6 +31,12 @@ export default function LoginPage() {
 
   const isIndividual = accountType === 'individual';
   const isRegister = isIndividual && mode === 'register';
+
+  useEffect(() => {
+    if (!isAuthenticated()) return;
+    const user = getStoredUser();
+    if (user) navigate(destinationForUser(user), { replace: true });
+  }, [navigate]);
 
   function changeAccountType(nextType: AccountType) {
     setAccountType(nextType);
@@ -45,12 +60,12 @@ export default function LoginPage() {
         }
 
         const user = await register({ nickname, password });
-        navigate(user.role === 'patient' ? '/patients/demo' : '/analysis/mock');
+        navigate(destinationForUser(user), { replace: true });
         return;
       }
 
       const user = await login(nickname, password, accountType);
-      navigate(user.role === 'patient' ? '/patients/demo' : '/analysis/mock');
+      navigate(destinationForUser(user), { replace: true });
     } catch (submitError) {
       setError(
         submitError instanceof Error
@@ -183,7 +198,7 @@ export default function LoginPage() {
                   ? 'Sadece bir rumuz ve şifre belirle. Gerçek ad veya e-posta istenmez.'
                   : isIndividual
                     ? 'Rumuzun ve şifren ile hesabına giriş yap.'
-                    : 'Doktor ve laboratuvar hesapları kurum tarafından tanımlanır. Şimdilik kurumsal giriş de rumuz ve şifre ile yapılır.'}
+                    : 'Doktor ve laboratuvar hesapları kurum tarafından tanımlanır. Yönetici hesabı için ayrı yönetici girişini de kullanabilirsin.'}
               </p>
             </div>
 
@@ -276,6 +291,15 @@ export default function LoginPage() {
                 </button>
               ) : null}
             </form>
+
+            <div className="mt-6 border-t border-slate-100 pt-5 text-center">
+              <Link
+                to="/admin/login"
+                className="text-sm font-semibold text-cyan-700 hover:text-cyan-800"
+              >
+                Yönetici girişi →
+              </Link>
+            </div>
           </section>
         </div>
       </div>
