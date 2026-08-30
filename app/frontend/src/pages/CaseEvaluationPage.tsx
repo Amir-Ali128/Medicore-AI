@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 
+import ClaudeEvaluationCard from '../components/clinical/ClaudeEvaluationCard';
 import {
   evaluateClaudeAbnormalResults,
+  type ClaudeEvaluationHypothesis,
   type ClaudeReviewGenerationResult,
 } from '../services/claudeReviewClient';
 import { clearAccessToken } from '../services/authClient';
@@ -59,6 +61,15 @@ function isAuthSessionError(value: unknown): boolean {
   );
 }
 
+function isCompactEvaluation(
+  hypothesis: ClinicalHypothesis | ClaudeEvaluationHypothesis,
+) {
+  return (
+    hypothesis.hypothesis_type === 'compact_risk_summary' ||
+    hypothesis.metadata_json?.compact_mode === true
+  );
+}
+
 function SourceStatus({
   title,
   ready,
@@ -102,9 +113,7 @@ export default function CaseEvaluationPage() {
   const [loading, setLoading] = useState(true);
   const [evaluating, setEvaluating] = useState(false);
   const [result, setResult] = useState<ClaudeReviewGenerationResult | null>(null);
-  const [storedHypotheses, setStoredHypotheses] = useState<
-    ClinicalHypothesis[]
-  >([]);
+  const [storedHypotheses, setStoredHypotheses] = useState<ClinicalHypothesis[]>([]);
   const [error, setError] = useState('');
 
   const analysisRunId = localStorage.getItem(LAST_ANALYSIS_RUN_ID_KEY);
@@ -120,8 +129,6 @@ export default function CaseEvaluationPage() {
 
       const intake = readClinicalIntake();
       if (!cancelled) {
-        // Local patient data should not be marked "Eksik" only because another
-        // source request failed. Each source is evaluated independently below.
         setClinicalIntake(intake);
       }
 
@@ -155,8 +162,6 @@ export default function CaseEvaluationPage() {
         .map((entry) => entry.reason);
 
       if (failures.some(isAuthSessionError)) {
-        // Keep the current user's local clinical workspace, remove only the stale
-        // token and require a fresh login instead of exposing the raw backend 401.
         clearAccessToken();
         navigate('/login', { replace: true });
         return;
@@ -175,18 +180,16 @@ export default function CaseEvaluationPage() {
     };
   }, [analysisRunId, navigate]);
 
-  const findings = useMemo(() => {
-    const hypotheses = result
-      ? result.created_hypotheses?.length
+  const findings = useMemo<
+    Array<ClinicalHypothesis | ClaudeEvaluationHypothesis>
+  >(() => {
+    if (result) {
+      return result.created_hypotheses?.length
         ? result.created_hypotheses
-        : result.hypotheses ?? []
-      : storedHypotheses;
+        : result.hypotheses ?? [];
+    }
 
-    return hypotheses.map((item) => ({
-      id: item.id,
-      title: item.title,
-      summary: item.summary,
-    }));
+    return storedHypotheses;
   }, [result, storedHypotheses]);
 
   async function handleEvaluate() {
@@ -203,7 +206,7 @@ export default function CaseEvaluationPage() {
       );
       setResult(nextResult);
       setStoredHypotheses(
-        nextResult.created_hypotheses ?? nextResult.hypotheses ?? [],
+        (nextResult.created_hypotheses ?? nextResult.hypotheses ?? []) as ClinicalHypothesis[],
       );
     } catch (evaluationError) {
       if (isAuthSessionError(evaluationError)) {
@@ -263,13 +266,22 @@ export default function CaseEvaluationPage() {
           <h2 className="text-lg font-bold text-slate-950">Değerlendirme</h2>
 
           {findings.length > 0 ? (
-            <div className="mt-4 space-y-3">
-              {findings.map((finding) => (
-                <div key={finding.id} className="rounded-xl bg-slate-50 p-4">
-                  <p className="font-semibold text-slate-900">{finding.title}</p>
-                  <p className="mt-1 text-sm leading-6 text-slate-600">{finding.summary}</p>
-                </div>
-              ))}
+            <div className="mt-4 space-y-4">
+              {findings.map((finding) =>
+                isCompactEvaluation(finding) ? (
+                  <ClaudeEvaluationCard
+                    key={finding.id}
+                    hypothesis={finding as ClaudeEvaluationHypothesis}
+                  />
+                ) : (
+                  <div key={finding.id} className="rounded-xl bg-slate-50 p-4">
+                    <p className="font-semibold text-slate-900">{finding.title}</p>
+                    <p className="mt-1 text-sm leading-6 text-slate-600">
+                      {finding.summary}
+                    </p>
+                  </div>
+                ),
+              )}
             </div>
           ) : (
             <p className="mt-4 text-sm leading-6 text-slate-600">
