@@ -44,6 +44,21 @@ export function buildClinicalSummary(context: ClinicalIntakeInput | null) {
   return parts.join(' | ') || 'Klinik bilgi girilmiş ancak kısa özet oluşturulamadı.';
 }
 
+export function buildClinicalAiSummary(context: ClinicalIntakeInput | null) {
+  if (!context) return 'Klinik bilgi bulunamadı.';
+
+  const complaint = context.presenting_complaint;
+  const exam = context.physical_exam;
+  const parts = [
+    clean(complaint.chief_complaint),
+    clean(complaint.complaint_duration, 80),
+    clean(complaint.associated_symptoms),
+    clean(exam.examination_findings),
+  ].filter((value): value is string => Boolean(value));
+
+  return parts.join(' | ').slice(0, 320) || 'Kısa klinik özet yok.';
+}
+
 function abnormalLabs(results: LabAnalysisResult[]) {
   return results.filter(
     (result) => result.result_status === 'high' || result.result_status === 'low',
