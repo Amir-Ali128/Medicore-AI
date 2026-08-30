@@ -1,8 +1,12 @@
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000';
 
-const ACCESS_TOKEN_KEY = 'medicore:accessToken';
-const CURRENT_USER_KEY = 'medicore:currentUser';
+const LEGACY_ACCESS_TOKEN_KEY = 'medicore:accessToken';
+const LEGACY_CURRENT_USER_KEY = 'medicore:currentUser';
+const ADMIN_ACCESS_TOKEN_KEY = 'medicore:adminAccessToken';
+const ADMIN_CURRENT_USER_KEY = 'medicore:adminCurrentUser';
+const CLINICAL_ACCESS_TOKEN_KEY = 'medicore:clinicalAccessToken';
+const CLINICAL_CURRENT_USER_KEY = 'medicore:clinicalCurrentUser';
 const MEDICORE_STORAGE_PREFIX = 'medicore:';
 
 export type UserRole =
@@ -13,6 +17,7 @@ export type UserRole =
   | 'viewer'
   | 'system';
 export type AccountType = 'individual' | 'institutional';
+export type SessionWorkspace = 'admin' | 'clinical';
 
 export type AuthUser = {
   id: string;
@@ -57,13 +62,26 @@ async function readErrorMessage(response: Response): Promise<string> {
   return response.text();
 }
 
-function readStoredUserUnsafe(): AuthUser | null {
-  const raw = localStorage.getItem(CURRENT_USER_KEY);
+function workspaceFromLocation(): SessionWorkspace {
+  return window.location.hash.startsWith('#/admin') ? 'admin' : 'clinical';
+}
+
+function tokenKey(workspace: SessionWorkspace) {
+  return workspace === 'admin' ? ADMIN_ACCESS_TOKEN_KEY : CLINICAL_ACCESS_TOKEN_KEY;
+}
+
+function userKey(workspace: SessionWorkspace) {
+  return workspace === 'admin' ? ADMIN_CURRENT_USER_KEY : CLINICAL_CURRENT_USER_KEY;
+}
+
+function readUserAtKey(key: string): AuthUser | null {
+  const raw = localStorage.getItem(key);
   if (!raw) return null;
 
   try {
     return JSON.parse(raw) as AuthUser;
   } catch {
+    localStorage.removeItem(key);
     return null;
   }
 }
@@ -98,78 +116,127 @@ function isJwtExpiredOrInvalid(token: string): boolean {
   return payload.exp * 1000 <= Date.now();
 }
 
-function clearMediCoreLocalState(): void {
+function isRoleForWorkspace(role: UserRole, workspace: SessionWorkspace) {
+  return workspace === 'admin' ? role === 'admin' : role !== 'admin';
+}
+
+function removeLegacyAuth() {
+  localStorage.removeItem(LEGACY_ACCESS_TOKEN_KEY);
+  localStorage.removeItem(LEGACY_CURRENT_USER_KEY);
+}
+
+function migrateLegacySession(workspace: SessionWorkspace): void {
+  if (localStorage.getItem(tokenKey(workspace))) return;
+
+  const legacyToken = localStorage.getItem(LEGACY_ACCESS_TOKEN_KEY);
+  const legacyUser = readUserAtKey(LEGACY_CURRENT_USER_KEY);
+  if (!legacyToken || !legacyUser || isJwtExpiredOrInvalid(legacyToken)) return;
+  if (!isRoleForWorkspace(legacyUser.role, workspace)) return;
+
+  localStorage.setItem(tokenKey(workspace), legacyToken);
+  localStorage.setItem(userKey(workspace), JSON.stringify(legacyUser));
+  removeLegacyAuth();
+}
+
+function clearAdminSession(): void {
+  localStorage.removeItem(ADMIN_ACCESS_TOKEN_KEY);
+  localStorage.removeItem(ADMIN_CURRENT_USER_KEY);
+}
+
+function clearClinicalWorkspace(): void {
   const keysToRemove: string[] = [];
 
   for (let index = 0; index < localStorage.length; index += 1) {
     const key = localStorage.key(index);
-    if (key?.startsWith(MEDICORE_STORAGE_PREFIX)) keysToRemove.push(key);
+    if (!key?.startsWith(MEDICORE_STORAGE_PREFIX)) continue;
+    if (key === ADMIN_ACCESS_TOKEN_KEY || key === ADMIN_CURRENT_USER_KEY) continue;
+    keysToRemove.push(key);
   }
 
   keysToRemove.forEach((key) => localStorage.removeItem(key));
 }
 
+function clearWorkspace(workspace: SessionWorkspace): void {
+  if (workspace === 'admin') {
+    clearAdminSession();
+    return;
+  }
+  clearClinicalWorkspace();
+}
+
 function storeAuth(response: AuthResponse): AuthUser {
-  const previousUser = readStoredUserUnsafe();
+  const workspace: SessionWorkspace = response.user.role === 'admin' ? 'admin' : 'clinical';
+  const previousUser = readUserAtKey(userKey(workspace));
 
   if (!previousUser || previousUser.id !== response.user.id) {
-    clearMediCoreLocalState();
+    clearWorkspace(workspace);
   }
 
-  localStorage.setItem(ACCESS_TOKEN_KEY, response.access_token);
-  localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(response.user));
+  localStorage.setItem(tokenKey(workspace), response.access_token);
+  localStorage.setItem(userKey(workspace), JSON.stringify(response.user));
+  removeLegacyAuth();
   return response.user;
 }
 
-export function getAccessToken(): string | null {
-  return localStorage.getItem(ACCESS_TOKEN_KEY);
+export function getAccessToken(
+  workspace: SessionWorkspace = workspaceFromLocation(),
+): string | null {
+  migrateLegacySession(workspace);
+  return localStorage.getItem(tokenKey(workspace));
 }
 
-export function clearAccessToken(): void {
-  localStorage.removeItem(ACCESS_TOKEN_KEY);
+export function clearAccessToken(
+  workspace: SessionWorkspace = workspaceFromLocation(),
+): void {
+  localStorage.removeItem(tokenKey(workspace));
 }
 
-export function getCurrentUser(): AuthUser | null {
-  const raw = localStorage.getItem(CURRENT_USER_KEY);
-  if (!raw) return null;
-
-  try {
-    return JSON.parse(raw) as AuthUser;
-  } catch {
-    localStorage.removeItem(CURRENT_USER_KEY);
-    return null;
-  }
+export function getCurrentUser(
+  workspace: SessionWorkspace = workspaceFromLocation(),
+): AuthUser | null {
+  migrateLegacySession(workspace);
+  return readUserAtKey(userKey(workspace));
 }
 
-export function getStoredUser(): AuthUser | null {
-  return getCurrentUser();
+export function getStoredUser(
+  workspace: SessionWorkspace = workspaceFromLocation(),
+): AuthUser | null {
+  return getCurrentUser(workspace);
 }
 
-export function getAuthenticatedRole(): UserRole | null {
-  const token = getAccessToken();
+export function getAuthenticatedRole(
+  workspace: SessionWorkspace = workspaceFromLocation(),
+): UserRole | null {
+  const token = getAccessToken(workspace);
   if (!token || isJwtExpiredOrInvalid(token)) return null;
 
   const role = readJwtPayload(token)?.role;
-  if (isKnownRole(role)) return role;
+  if (isKnownRole(role) && isRoleForWorkspace(role, workspace)) return role;
 
-  const storedRole = getStoredUser()?.role;
-  return isKnownRole(storedRole) ? storedRole : null;
+  const storedRole = getStoredUser(workspace)?.role;
+  return isKnownRole(storedRole) && isRoleForWorkspace(storedRole, workspace)
+    ? storedRole
+    : null;
 }
 
-export function isAuthenticated(): boolean {
-  const token = getAccessToken();
+export function isAuthenticated(
+  workspace: SessionWorkspace = workspaceFromLocation(),
+): boolean {
+  const token = getAccessToken(workspace);
   if (!token) return false;
 
   if (isJwtExpiredOrInvalid(token)) {
-    clearAccessToken();
+    clearWorkspace(workspace);
     return false;
   }
 
-  return getAuthenticatedRole() !== null;
+  return getAuthenticatedRole(workspace) !== null;
 }
 
-export function logout(): void {
-  clearMediCoreLocalState();
+export function logout(
+  workspace: SessionWorkspace = workspaceFromLocation(),
+): void {
+  clearWorkspace(workspace);
 }
 
 export async function login(
@@ -196,7 +263,6 @@ export async function login(
   const auth = (await response.json()) as AuthResponse;
 
   if (auth.user.role === 'admin' && options.allowAdmin !== true) {
-    clearMediCoreLocalState();
     throw new Error('Bu hesap yönetici hesabıdır. Yönetici girişini kullanın.');
   }
 
