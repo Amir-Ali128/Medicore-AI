@@ -19,6 +19,9 @@ from app.schemas.clinical_hypothesis import (
 
 router = APIRouter(tags=["clinical-hypotheses"])
 
+_COMPACT_TYPE = "compact_risk_summary"
+_COMPACT_SOURCE = "claude_compact_risk_summary"
+
 
 @router.post(
     "/clinical-hypotheses",
@@ -101,3 +104,37 @@ async def list_clinical_hypotheses_for_analysis_run(
     repository: ClinicalHypothesisRepositoryDep,
 ) -> list[ClinicalHypothesisResponse]:
     return list(await repository.list_for_analysis_run(analysis_run_id))
+
+
+@router.delete(
+    "/analysis-runs/{analysis_run_id}/clinical-hypotheses/compact",
+)
+async def delete_compact_clinical_hypotheses_for_analysis_run(
+    analysis_run_id: uuid.UUID,
+    session: SessionDep,
+    repository: ClinicalHypothesisRepositoryDep,
+) -> dict[str, int]:
+    """Delete every compact AI evaluation for one analysis run.
+
+    Older builds could create duplicate compact evaluations. Deleting the current
+    AI output therefore removes all compact snapshots for this run so a hidden old
+    duplicate cannot reappear after refresh.
+    """
+
+    hypotheses = list(await repository.list_for_analysis_run(analysis_run_id))
+    compact = [
+        hypothesis
+        for hypothesis in hypotheses
+        if hypothesis.hypothesis_type == _COMPACT_TYPE
+        or hypothesis.source == _COMPACT_SOURCE
+    ]
+
+    try:
+        for hypothesis in compact:
+            await session.delete(hypothesis)
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+
+    return {"deleted_count": len(compact)}

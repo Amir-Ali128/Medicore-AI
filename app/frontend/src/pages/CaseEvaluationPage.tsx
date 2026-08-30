@@ -2,18 +2,33 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 
 import ClaudeEvaluationCard from '../components/clinical/ClaudeEvaluationCard';
-import {
-  evaluateClaudeAbnormalResults,
-  type ClaudeEvaluationHypothesis,
-  type ClaudeReviewGenerationResult,
+import type {
+  ClaudeEvaluationHypothesis,
+  ClaudeReviewGenerationResult,
 } from '../services/claudeReviewClient';
 import { clearAccessToken } from '../services/authClient';
+import {
+  buildClinicalAiSummary,
+  buildClinicalSummary,
+  buildLaboratoryAiSummary,
+  buildLaboratorySummary,
+  buildUltrasoundContextFlags,
+  buildUltrasoundSummary,
+  getLatestUltrasoundReport,
+  type CaseSourceSummaries,
+} from '../services/caseEvaluationSummary';
+import { deleteCompactEvaluation } from '../services/evaluationDeleteClient';
 import {
   getAnalysisRunResults,
   LAST_ANALYSIS_RUN_ID_KEY,
   type ClinicalIntakeInput,
+  type LabAnalysisResult,
 } from '../services/labAnalysisClient';
-import { listPatientRadiologyReports } from '../services/radiologyClient';
+import { evaluateMultisourceCase } from '../services/multisourceEvaluationClient';
+import {
+  listPatientRadiologyReports,
+  type RadiologyReport,
+} from '../services/radiologyClient';
 import {
   getClinicalHypothesesForAnalysisRun,
   type ClinicalHypothesis,
@@ -119,20 +134,32 @@ function SourceStatus({
   );
 }
 
+function SummaryCard({ title, text }: { title: string; text: string }) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+      <p className="text-xs font-bold uppercase tracking-wide text-slate-500">{title}</p>
+      <p className="mt-2 text-sm leading-6 text-slate-700">{text}</p>
+    </div>
+  );
+}
+
 export default function CaseEvaluationPage() {
   const navigate = useNavigate();
   const [clinicalIntake, setClinicalIntake] = useState<ClinicalIntakeInput | null>(null);
+  const [labResults, setLabResults] = useState<LabAnalysisResult[]>([]);
+  const [radiologyReports, setRadiologyReports] = useState<RadiologyReport[]>([]);
   const [labReady, setLabReady] = useState(false);
-  const [radiologyReady, setRadiologyReady] = useState(false);
+  const [ultrasoundReady, setUltrasoundReady] = useState(false);
   const [loading, setLoading] = useState(true);
   const [evaluating, setEvaluating] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [result, setResult] = useState<ClaudeReviewGenerationResult | null>(null);
   const [storedHypotheses, setStoredHypotheses] = useState<ClinicalHypothesis[]>([]);
   const [error, setError] = useState('');
 
   const analysisRunId = localStorage.getItem(LAST_ANALYSIS_RUN_ID_KEY);
   const clinicalReady = hasClinicalData(clinicalIntake);
-  const allReady = clinicalReady && labReady && radiologyReady;
+  const allReady = clinicalReady && labReady && ultrasoundReady;
 
   useEffect(() => {
     let cancelled = false;
@@ -142,9 +169,7 @@ export default function CaseEvaluationPage() {
       setError('');
 
       const intake = readClinicalIntake();
-      if (!cancelled) {
-        setClinicalIntake(intake);
-      }
+      if (!cancelled) setClinicalIntake(intake);
 
       const [labsResult, reportsResult, hypothesesResult] =
         await Promise.allSettled([
@@ -159,12 +184,12 @@ export default function CaseEvaluationPage() {
 
       if (cancelled) return;
 
-      setLabReady(
-        labsResult.status === 'fulfilled' && labsResult.value.length > 0,
-      );
-      setRadiologyReady(
-        reportsResult.status === 'fulfilled' && reportsResult.value.length > 0,
-      );
+      const labs = labsResult.status === 'fulfilled' ? labsResult.value : [];
+      const reports = reportsResult.status === 'fulfilled' ? reportsResult.value : [];
+      setLabResults(labs);
+      setRadiologyReports(reports);
+      setLabReady(labs.length > 0);
+      setUltrasoundReady(Boolean(getLatestUltrasoundReport(reports)));
       setStoredHypotheses(
         hypothesesResult.status === 'fulfilled' ? hypothesesResult.value : [],
       );
@@ -194,6 +219,20 @@ export default function CaseEvaluationPage() {
     };
   }, [analysisRunId, navigate]);
 
+  const latestUltrasound = useMemo(
+    () => getLatestUltrasoundReport(radiologyReports),
+    [radiologyReports],
+  );
+
+  const sourceSummaries = useMemo<CaseSourceSummaries>(
+    () => ({
+      clinical: buildClinicalSummary(clinicalIntake),
+      laboratory: buildLaboratorySummary(labResults),
+      ultrasound: buildUltrasoundSummary(latestUltrasound),
+    }),
+    [clinicalIntake, labResults, latestUltrasound],
+  );
+
   const findings = useMemo<
     Array<ClinicalHypothesis | ClaudeEvaluationHypothesis>
   >(() => {
@@ -213,10 +252,17 @@ export default function CaseEvaluationPage() {
       setEvaluating(true);
       setError('');
       setResult(null);
-      const nextResult = await evaluateClaudeAbnormalResults(
+
+      const aiSummaries: CaseSourceSummaries = {
+        clinical: buildClinicalAiSummary(clinicalIntake),
+        laboratory: buildLaboratoryAiSummary(labResults),
+        ultrasound: sourceSummaries.ultrasound,
+      };
+      const nextResult = await evaluateMultisourceCase(
         analysisRunId,
-        6,
         clinicalIntake,
+        aiSummaries,
+        buildUltrasoundContextFlags(latestUltrasound),
       );
       setResult(nextResult);
       setStoredHypotheses(
@@ -240,20 +286,54 @@ export default function CaseEvaluationPage() {
     }
   }
 
+  async function handleDeleteEvaluation() {
+    if (!analysisRunId || deleting) return;
+    if (!window.confirm('AI tarafından oluşturulan değerlendirme silinsin mi?')) return;
+
+    try {
+      setDeleting(true);
+      setError('');
+      await deleteCompactEvaluation(analysisRunId);
+      setResult(null);
+      setStoredHypotheses((current) =>
+        current.filter((hypothesis) => !isCompactEvaluation(hypothesis)),
+      );
+      window.dispatchEvent(new Event(CASE_SUMMARY_UPDATED_EVENT));
+    } catch (deleteError) {
+      setError(errorMessage(deleteError) || 'AI değerlendirmesi silinemedi.');
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   return (
     <div className="mx-auto max-w-4xl space-y-5">
       <header>
         <h1 className="text-2xl font-bold text-slate-950">Bulguları Değerlendir</h1>
         <p className="mt-2 text-sm leading-6 text-slate-500">
-          Hasta bilgileri, laboratuvar sonuçları ve radyoloji/diğer tetkik raporları birlikte değerlendirilir.
+          Önce klinik, laboratuvar ve ultrason verileri kısa bir vaka özetine dönüştürülür; yalnızca gerekirse kompakt AI değerlendirmesi çalışır.
         </p>
       </header>
 
       <div className="grid gap-3 md:grid-cols-3">
         <SourceStatus title="Hasta bilgileri" ready={clinicalReady} link="/patients/demo" />
         <SourceStatus title="Laboratuvar" ready={labReady} link="/analysis/mock" />
-        <SourceStatus title="Radyoloji / diğer tetkikler" ready={radiologyReady} link="/radiology" />
+        <SourceStatus title="Ultrason" ready={ultrasoundReady} link="/radiology" />
       </div>
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div>
+          <h2 className="text-lg font-bold text-slate-950">Vaka Özeti</h2>
+          <p className="mt-1 text-xs leading-5 text-slate-500">
+            Bu üç özet deterministic olarak hazırlanır. Tam dosya AI'ya gönderilmez.
+          </p>
+        </div>
+        <div className="mt-4 grid gap-3">
+          <SummaryCard title="Klinik özet" text={sourceSummaries.clinical} />
+          <SummaryCard title="Laboratuvar özeti" text={sourceSummaries.laboratory} />
+          <SummaryCard title="Ultrason özeti" text={sourceSummaries.ultrasound} />
+        </div>
+      </section>
 
       {error ? (
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
@@ -267,18 +347,30 @@ export default function CaseEvaluationPage() {
         disabled={!allReady || loading || evaluating}
         className="w-full rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
       >
-        {loading ? 'Kontrol ediliyor...' : evaluating ? 'Değerlendiriliyor...' : 'Değerlendir'}
+        {loading ? 'Kontrol ediliyor...' : evaluating ? 'Değerlendiriliyor...' : 'Gerekirse AI ile değerlendir'}
       </button>
 
       {!loading && !allReady ? (
         <p className="text-sm text-slate-500">
-          Değerlendirme için üç bölümün de hazır olması gerekiyor.
+          Değerlendirme için klinik, laboratuvar ve ultrason bölümlerinin hazır olması gerekiyor.
         </p>
       ) : null}
 
       {result || storedHypotheses.length > 0 ? (
         <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="text-lg font-bold text-slate-950">Değerlendirme</h2>
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-lg font-bold text-slate-950">AI Değerlendirmesi</h2>
+            {findings.some(isCompactEvaluation) ? (
+              <button
+                type="button"
+                onClick={() => void handleDeleteEvaluation()}
+                disabled={deleting}
+                className="rounded-lg border border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-700 transition hover:bg-red-50 disabled:opacity-50"
+              >
+                {deleting ? 'Siliniyor...' : 'AI çıktısını sil'}
+              </button>
+            ) : null}
+          </div>
 
           {findings.length > 0 ? (
             <div className="mt-4 space-y-4">
@@ -300,7 +392,7 @@ export default function CaseEvaluationPage() {
             </div>
           ) : (
             <p className="mt-4 text-sm leading-6 text-slate-600">
-              Değerlendirmeye uygun bir bulgu oluşturulmadı.
+              Kaynak özetleri hazır. Deterministik gate AI değerlendirmesi gerektirmediyse burada yeni AI çıktısı oluşmaz.
             </p>
           )}
 
