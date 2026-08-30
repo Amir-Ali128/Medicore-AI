@@ -174,7 +174,9 @@ export async function evaluateClaudeAbnormalResults(
     throw new Error(`Claude değerlendirmesi başarısız: ${response.status} ${detail}`);
   }
 
-  return response.json();
+  const result = (await response.json()) as ClaudeReviewGenerationResult;
+  window.dispatchEvent(new Event('medicore:case-summary-updated'));
+  return result;
 }
 
 /** Backward-compatible alias for older callers. */
