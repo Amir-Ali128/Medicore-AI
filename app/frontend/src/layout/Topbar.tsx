@@ -21,6 +21,7 @@ export default function Topbar() {
   const navigate = useNavigate();
   const user = getStoredUser();
   const isAdmin = user?.role === 'admin';
+  const homePath = isAdmin ? '/admin/analytics' : '/';
 
   function handleLogout() {
     logout();
@@ -32,8 +33,8 @@ export default function Topbar() {
       <div className="flex items-center justify-between gap-3 lg:items-center">
         <div className="min-w-0">
           <Link
-            to="/"
-            aria-label="MediCore AI ana sayfa"
+            to={homePath}
+            aria-label={isAdmin ? 'MediCore AI yönetici ana sayfa' : 'MediCore AI ana sayfa'}
             className="flex min-w-0 items-center gap-2 rounded-xl outline-none transition hover:opacity-80 focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
           >
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-blue-600 text-sm font-bold text-white lg:hidden">
@@ -41,7 +42,9 @@ export default function Topbar() {
             </div>
             <div className="min-w-0">
               <h1 className="truncate text-base font-semibold text-slate-950 sm:text-xl">MediCore AI</h1>
-              <p className="hidden text-sm text-slate-500 sm:block">Klinik değerlendirme sistemi</p>
+              <p className="hidden text-sm text-slate-500 sm:block">
+                {isAdmin ? 'Yönetici paneli' : 'Klinik değerlendirme sistemi'}
+              </p>
             </div>
           </Link>
         </div>
