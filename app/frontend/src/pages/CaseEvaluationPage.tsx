@@ -8,6 +8,7 @@ import type {
 } from '../services/claudeReviewClient';
 import { clearAccessToken } from '../services/authClient';
 import {
+  buildClinicalAiSummary,
   buildClinicalSummary,
   buildLaboratoryAiSummary,
   buildLaboratorySummary,
@@ -253,8 +254,9 @@ export default function CaseEvaluationPage() {
       setResult(null);
 
       const aiSummaries: CaseSourceSummaries = {
-        ...sourceSummaries,
+        clinical: buildClinicalAiSummary(clinicalIntake),
         laboratory: buildLaboratoryAiSummary(labResults),
+        ultrasound: sourceSummaries.ultrasound,
       };
       const nextResult = await evaluateMultisourceCase(
         analysisRunId,
