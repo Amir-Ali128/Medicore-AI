@@ -1,8 +1,9 @@
 import { FormEvent, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 
 import {
   getStoredUser,
+  isAuthenticated,
   login,
   logout,
 } from '../services/authClient';
@@ -15,7 +16,9 @@ export default function AdminLoginPage() {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    if (getStoredUser()?.role === 'admin') {
+    // Do not redirect from a stale localStorage user record. A valid JWT is
+    // required; otherwise the old behavior could bounce between login/routes.
+    if (isAuthenticated() && getStoredUser()?.role === 'admin') {
       navigate('/admin/analytics', { replace: true });
     }
   }, [navigate]);
@@ -61,7 +64,7 @@ export default function AdminLoginPage() {
         </div>
 
         <p className="mt-5 text-sm leading-6 text-slate-500">
-          Canlı trafik, IP, yaklaşık konum ve cihaz telemetrisi yalnızca yönetici hesabıyla görüntülenebilir.
+          Canlı trafik, AI kullanım maliyeti ve yönetim ekranları yalnızca geçerli yönetici oturumuyla görüntülenebilir.
         </p>
 
         <form onSubmit={handleSubmit} className="mt-8 space-y-5">
@@ -72,6 +75,8 @@ export default function AdminLoginPage() {
               value={nickname}
               onChange={(event) => setNickname(event.target.value)}
               required
+              minLength={3}
+              maxLength={32}
               autoCapitalize="none"
               autoComplete="username"
               spellCheck={false}
@@ -108,9 +113,14 @@ export default function AdminLoginPage() {
           </button>
         </form>
 
-        <p className="mt-6 text-center text-xs leading-5 text-slate-400">
-          Bu sayfa ayrı bir giriş ekranıdır; yönetici yetkisi yine backend tarafından doğrulanır.
-        </p>
+        <div className="mt-6 border-t border-slate-100 pt-5 text-center">
+          <Link
+            to="/login"
+            className="text-sm font-semibold text-cyan-700 hover:text-cyan-800"
+          >
+            ← Bireysel / kurumsal giriş
+          </Link>
+        </div>
       </div>
     </main>
   );
