@@ -20,6 +20,7 @@ from app.api.routes import lab_case01_safety as _lab_case01_safety  # noqa: F401
 from app.api.routes import lab_case01_sql_hotfix as _lab_case01_sql_hotfix  # noqa: F401
 from app.domain import claude_compact_runtime_fix as _claude_compact_runtime_fix  # noqa: F401
 from app.domain import pathological_findings_runtime as _pathological_findings_runtime  # noqa: F401
+from app.domain import claude_usage_runtime as _claude_usage_runtime  # noqa: F401
 from app.domain import compact_hypothesis_dedup_runtime as _compact_hypothesis_dedup_runtime  # noqa: F401
 from app.infrastructure.admin_bootstrap import ensure_bootstrap_admin
 from app.infrastructure.database.feedback_migrations import ensure_user_feedback
