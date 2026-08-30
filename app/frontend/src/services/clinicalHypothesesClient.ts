@@ -32,6 +32,7 @@ export type ClinicalHypothesis = {
   status: string;
   source: string;
   evidence_json: ClinicalEvidenceItem[];
+  metadata_json: Record<string, unknown>;
   needs_doctor_review: boolean;
   reviewed_at: string | null;
   reviewed_by_user_id: string | null;
