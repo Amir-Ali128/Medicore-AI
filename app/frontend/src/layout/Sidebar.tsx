@@ -30,6 +30,7 @@ type CaseSummary = {
   complaint: string | null;
   risk: number | null;
   pathologicalCount: number | null;
+  pathologicalPreview: string[];
   requiresReview: boolean;
 };
 
@@ -74,6 +75,36 @@ function getNewestCompactHypothesis(hypotheses: ClinicalHypothesis[]) {
 function metadataNumber(metadata: Record<string, unknown> | undefined, key: string) {
   const value = metadata?.[key];
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function buildPathologicalPreview(metadata: Record<string, unknown> | undefined) {
+  const raw = metadata?.pathological_findings;
+  if (!Array.isArray(raw)) return [];
+
+  return raw
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null;
+      const finding = item as Record<string, unknown>;
+      if (typeof finding.display === 'string' && finding.display.trim()) {
+        return finding.display.trim();
+      }
+
+      const name = typeof finding.name === 'string' ? finding.name.trim() : '';
+      const value =
+        typeof finding.value === 'string' || typeof finding.value === 'number'
+          ? String(finding.value)
+          : '';
+      const unit = typeof finding.unit === 'string' ? finding.unit.trim() : '';
+      const status =
+        typeof finding.status_label === 'string' ? finding.status_label.trim() : '';
+
+      if (!name) return null;
+      return [name, value, unit, status ? `(${status})` : '']
+        .filter(Boolean)
+        .join(' ');
+    })
+    .filter((value): value is string => Boolean(value))
+    .slice(0, 3);
 }
 
 function buildComplaint(intake: ClinicalIntakeInput | null) {
@@ -154,6 +185,7 @@ export default function Sidebar() {
         complaint: buildComplaint(intake),
         risk: metadataNumber(metadata, 'risk'),
         pathologicalCount,
+        pathologicalPreview: buildPathologicalPreview(metadata),
         requiresReview:
           compact?.needs_doctor_review === true ||
           metadata?.requires_physician_review === true,
@@ -234,6 +266,26 @@ export default function Sidebar() {
             <p className="mt-2 text-xs leading-5 text-slate-600">
               {caseSummary.complaint}
             </p>
+          ) : null}
+
+          {caseSummary.pathologicalPreview.length > 0 ? (
+            <div className="mt-3 rounded-lg bg-white p-2.5 ring-1 ring-slate-200">
+              <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                Öne çıkan bulgular
+              </p>
+              <ul className="mt-1.5 space-y-1">
+                {caseSummary.pathologicalPreview.map((finding) => (
+                  <li key={finding} className="truncate text-[11px] leading-4 text-slate-700">
+                    • {finding}
+                  </li>
+                ))}
+              </ul>
+              {(caseSummary.pathologicalCount ?? 0) > caseSummary.pathologicalPreview.length ? (
+                <p className="mt-1 text-[10px] font-medium text-slate-400">
+                  +{(caseSummary.pathologicalCount ?? 0) - caseSummary.pathologicalPreview.length} bulgu daha
+                </p>
+              ) : null}
+            </div>
           ) : null}
 
           <div className="mt-3 grid grid-cols-2 gap-2">
