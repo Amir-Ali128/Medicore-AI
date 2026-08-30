@@ -1,10 +1,6 @@
 import { getAccessToken } from './authClient';
 import type { ClinicalHypothesis } from './clinicalHypothesesClient';
 import type { ClinicalIntakeInput } from './labAnalysisClient';
-import {
-  listPatientRadiologyReports,
-  type RadiologyReport,
-} from './radiologyClient';
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000';
@@ -20,6 +16,12 @@ export type ClaudeSuggestedTest = {
 };
 
 export type ClaudeEvaluationMetadata = Record<string, unknown> & {
+  risk?: number;
+  flags?: string[];
+  symptoms?: string[];
+  ai_called?: boolean;
+  compact_mode?: boolean;
+  max_output_tokens?: number;
   possible_conditions?: string[];
   recommended_laboratory_tests?: ClaudeSuggestedTest[];
   recommended_imaging_tests?: ClaudeSuggestedTest[];
@@ -82,166 +84,42 @@ function readStoredClinicalContext(): ClaudeClinicalContext | undefined {
   }
 }
 
-function fold(value: string | null | undefined) {
-  return (value ?? '')
-    .toLocaleLowerCase('tr-TR')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/ı/g, 'i')
-    .replace(/[^a-z0-9]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+function cleanText(value: string | null | undefined) {
+  const cleaned = value?.replace(/\s+/g, ' ').trim();
+  return cleaned ? cleaned.slice(0, 240) : null;
 }
 
-function reportFingerprint(report: RadiologyReport) {
-  const original = fold(report.original_text);
-  if (original) return `${report.modality}:${report.body_part}:${original}`;
-  return fold([report.summary, report.impression].filter(Boolean).join(' ')) || report.id;
+function buildCompactSymptoms(
+  context: ClaudeClinicalContext | undefined,
+): string[] {
+  const complaint = context?.presenting_complaint;
+  if (!complaint) return [];
+
+  const chief = cleanText(complaint.chief_complaint);
+  const duration = cleanText(complaint.complaint_duration);
+  const values = [
+    chief && duration ? `${chief} (${duration})`.slice(0, 240) : chief,
+    cleanText(complaint.associated_symptoms),
+    cleanText(complaint.reason_for_visit),
+  ].filter((value): value is string => Boolean(value));
+
+  return [...new Set(values)].slice(0, 4);
 }
 
-function uniqueLatestReports(reports: RadiologyReport[]) {
-  const seen = new Set<string>();
-  return [...reports]
-    .sort((left, right) => {
-      const leftDate = Date.parse(left.created_at ?? left.report_date ?? '') || 0;
-      const rightDate = Date.parse(right.created_at ?? right.report_date ?? '') || 0;
-      return rightDate - leftDate;
-    })
-    .filter((report) => {
-      const key = reportFingerprint(report);
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    })
-    .slice(0, 2);
-}
-
-function compactReport(report: RadiologyReport) {
-  const measurements = report.measurements
-    .slice(0, 20)
-    .map((item) => `${item.value} ${item.unit}: ${item.context}`)
-    .join('\n');
-  const dexaMetrics = report.dexa_metrics
-    .slice(0, 20)
-    .map(
-      (item) =>
-        `${item.site}: BMD ${item.bmd ?? '-'} ${item.bmd_unit ?? ''}, T-score ${
-          item.t_score ?? '-'
-        }, Z-score ${item.z_score ?? '-'}`,
-    )
-    .join('\n');
-
-  return [
-    `Tarih: ${report.report_date ?? 'belirtilmedi'}`,
-    `Modalite: ${report.modality}`,
-    `Bölge: ${report.body_part}`,
-    report.impression ? `Sonuç/izlenim: ${report.impression}` : null,
-    report.critical_findings.length
-      ? `Kritik ifadeler: ${report.critical_findings.join(', ')}`
-      : null,
-    measurements ? `Ölçümler:\n${measurements}` : null,
-    dexaMetrics ? `DEXA ölçümleri:\n${dexaMetrics}` : null,
-    `Orijinal rapor metni:\n${report.original_text.slice(0, 12000)}`,
-  ]
-    .filter(Boolean)
-    .join('\n');
-}
-
-function mergeRadiologyIntoContext(
-  context: ClaudeClinicalContext,
-  reports: RadiologyReport[],
-): ClaudeClinicalContext {
-  const grouped: Record<keyof ClaudeClinicalContext['imaging_results'], string[]> = {
-    xray: [],
-    ultrasound: [],
-    ct: [],
-    mri: [],
-    pet_ct: [],
-    pathology: [],
-  };
-
-  for (const report of reports) {
-    const text = compactReport(report);
-    switch (report.modality) {
-      case 'XRAY':
-        grouped.xray.push(text);
-        break;
-      case 'ULTRASOUND':
-        grouped.ultrasound.push(text);
-        break;
-      case 'CT':
-      case 'CT_WITH_CONTRAST':
-      case 'CT_WITHOUT_CONTRAST':
-        grouped.ct.push(text);
-        break;
-      case 'MRI':
-        grouped.mri.push(text);
-        break;
-      case 'PET_CT':
-        grouped.pet_ct.push(text);
-        break;
-      case 'DEXA':
-        grouped.pathology.push(`DEXA RAPORU\n${text}`);
-        break;
-      default:
-        grouped.pathology.push(`DİĞER GÖRÜNTÜLEME RAPORU\n${text}`);
-    }
-  }
-
-  const existing = context.imaging_results;
-  const combine = (current: string | null, values: string[]) => {
-    const seen = new Set<string>();
-    return [current, ...values]
-      .filter((value): value is string => Boolean(value?.trim()))
-      .filter((value) => {
-        const key = fold(value);
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      })
-      .join('\n\n---\n\n') || null;
-  };
+function buildCompactVitals(
+  context: ClaudeClinicalContext | undefined,
+): Record<string, number | string | null> {
+  const exam = context?.physical_exam;
+  if (!exam) return {};
 
   return {
-    ...context,
-    imaging_results: {
-      xray: combine(existing.xray, grouped.xray),
-      ultrasound: combine(existing.ultrasound, grouped.ultrasound),
-      ct: combine(existing.ct, grouped.ct),
-      mri: combine(existing.mri, grouped.mri),
-      pet_ct: combine(existing.pet_ct, grouped.pet_ct),
-      pathology: combine(existing.pathology, grouped.pathology),
-    },
+    blood_pressure_systolic: exam.blood_pressure_systolic ?? null,
+    blood_pressure_diastolic: exam.blood_pressure_diastolic ?? null,
+    pulse_bpm: exam.pulse_bpm ?? null,
+    temperature_c: exam.temperature_c ?? null,
+    respiratory_rate: exam.respiratory_rate ?? null,
+    oxygen_saturation_percent: exam.oxygen_saturation_percent ?? null,
   };
-}
-
-async function buildUnifiedClinicalContext(
-  suppliedContext?: ClaudeClinicalContext,
-): Promise<{ context: ClaudeClinicalContext | undefined; radiologyCount: number }> {
-  const baseContext = readStoredClinicalContext() ?? suppliedContext;
-  if (!baseContext) return { context: undefined, radiologyCount: 0 };
-
-  try {
-    const reports = uniqueLatestReports(await listPatientRadiologyReports());
-    return {
-      context: mergeRadiologyIntoContext(baseContext, reports),
-      radiologyCount: reports.length,
-    };
-  } catch {
-    return { context: baseContext, radiologyCount: 0 };
-  }
-}
-
-function compactClinicalContext(
-  clinicalContext: ClaudeClinicalContext | undefined,
-): string | null {
-  if (!clinicalContext) return null;
-
-  try {
-    return JSON.stringify(clinicalContext);
-  } catch {
-    return null;
-  }
 }
 
 export async function evaluateClaudeAbnormalResults(
@@ -249,8 +127,13 @@ export async function evaluateClaudeAbnormalResults(
   maxHypotheses: number,
   clinicalContext?: ClaudeClinicalContext,
 ): Promise<ClaudeReviewGenerationResult> {
-  const unified = await buildUnifiedClinicalContext(clinicalContext);
-  const context = unified.context;
+  // Kept in the public function signature for older callers. Compact mode always
+  // returns at most one short risk summary.
+  void maxHypotheses;
+
+  const context = readStoredClinicalContext() ?? clinicalContext;
+  const symptoms = buildCompactSymptoms(context);
+  const vitals = buildCompactVitals(context);
 
   const response = await fetch(
     `${API_BASE_URL}/analysis-runs/${analysisRunId}/clinical-hypotheses/generate`,
@@ -258,31 +141,16 @@ export async function evaluateClaudeAbnormalResults(
       method: 'POST',
       headers: authHeaders(),
       body: JSON.stringify({
-        max_hypotheses: Math.max(1, Math.min(maxHypotheses, 10)),
+        max_hypotheses: 1,
         include_normal_results: false,
         include_needs_review_only: false,
         min_confidence: null,
         language: 'tr',
         metadata_json: {
-          source: 'unified_patient_clinical_evaluation',
+          source: 'compact_rule_gated_evaluation',
           normal_results_excluded: true,
-          chief_complaint:
-            context?.presenting_complaint.chief_complaint ?? null,
-          clinical_history: compactClinicalContext(context),
-          clinical_context: context ?? null,
-          included_data_sources: {
-            patient_information: Boolean(context?.patient_information),
-            complaint_and_symptoms: Boolean(context?.presenting_complaint),
-            medical_history: Boolean(context?.clinical_history_details),
-            physical_exam_and_vitals: Boolean(context?.physical_exam),
-            laboratory_results: true,
-            radiology_and_dexa_reports: unified.radiologyCount,
-          },
-          requested_output: {
-            possible_conditions: true,
-            recommended_laboratory_tests: true,
-            recommended_imaging_tests: true,
-          },
+          symptoms,
+          vitals,
         },
       }),
     },
