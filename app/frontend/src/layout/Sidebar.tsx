@@ -37,6 +37,7 @@ type CaseSummary = {
 const items: NavItem[] = [
   { label: '🏠 Ana Sayfa', to: '/' },
   { label: '📡 Canlı Trafik', to: '/admin/analytics', adminOnly: true },
+  { label: '🤖 AI Kullanımı', to: '/admin/ai-costs', adminOnly: true },
   { label: '💬 Geri Bildirimler', to: '/admin/feedback', adminOnly: true },
   { label: '👤 Hasta Bilgileri', to: '/patients/demo' },
   { label: '🩸 Laboratuvar Sonuçları', to: '/analysis/mock' },
