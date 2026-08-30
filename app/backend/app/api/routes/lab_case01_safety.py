@@ -10,6 +10,7 @@ remain backend-only.
 
 from __future__ import annotations
 
+import json
 import uuid
 from typing import Any
 
@@ -77,6 +78,15 @@ _PARAMETER_SPECS: tuple[tuple[str, str, str, float, float], ...] = (
     ("BUN", "BUN", "mg/dL", 7.0, 20.0),
     ("HCO3", "HCO3 (Bikarbonat)", "mEq/L", 22.0, 26.0),
     ("ANION_GAP", "Anyon Açığı", "mEq/L", 8.0, 16.0),
+)
+
+_REFERENCE_METADATA = json.dumps(
+    {
+        "scope": "phase1_synthetic_case",
+        "lab_specific_range_preferred": True,
+    },
+    ensure_ascii=False,
+    separators=(",", ":"),
 )
 
 _original_ensure_parameters = lab_analysis._ensure_render_demo_clinical_parameters
@@ -187,7 +197,7 @@ async def _ensure_case01_parameters(session: Any) -> None:
                         :id, :parameter_id, 'any'::sex, NULL, NULL,
                         NULL, :lower, :upper, :unit,
                         'MediCore synthetic-card deterministic fallback',
-                        '{"scope":"phase1_synthetic_case","lab_specific_range_preferred":true}'::jsonb,
+                        CAST(:metadata_json AS jsonb),
                         NOW(), NOW()
                     )
                     """
@@ -198,6 +208,7 @@ async def _ensure_case01_parameters(session: Any) -> None:
                     "lower": lower,
                     "upper": upper,
                     "unit": unit,
+                    "metadata_json": _REFERENCE_METADATA,
                 },
             )
 
