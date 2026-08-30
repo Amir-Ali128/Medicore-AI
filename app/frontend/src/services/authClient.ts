@@ -26,6 +26,10 @@ export type RegisterPayload = {
   password: string;
 };
 
+type LoginOptions = {
+  allowAdmin?: boolean;
+};
+
 async function readErrorMessage(response: Response): Promise<string> {
   const contentType = response.headers.get('content-type') ?? '';
 
@@ -131,7 +135,6 @@ export function getCurrentUser(): AuthUser | null {
     return JSON.parse(raw) as AuthUser;
   } catch {
     localStorage.removeItem(CURRENT_USER_KEY);
-
     return null;
   }
 }
@@ -163,6 +166,7 @@ export async function login(
   nickname: string,
   password: string,
   accountType: AccountType,
+  options: LoginOptions = {},
 ): Promise<AuthUser> {
   const response = await fetch(`${API_BASE_URL}/auth/login`, {
     method: 'POST',
@@ -181,7 +185,16 @@ export async function login(
     throw new Error(message || 'Giriş yapılamadı.');
   }
 
-  return storeAuth((await response.json()) as AuthResponse);
+  const auth = (await response.json()) as AuthResponse;
+
+  // Admin authentication has a dedicated entry point. The regular individual /
+  // institutional login must never silently turn into an admin session.
+  if (auth.user.role === 'admin' && options.allowAdmin !== true) {
+    clearMediCoreLocalState();
+    throw new Error('Bu hesap yönetici hesabıdır. Yönetici girişini kullanın.');
+  }
+
+  return storeAuth(auth);
 }
 
 export async function register(
