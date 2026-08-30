@@ -30,6 +30,11 @@ type LoginOptions = {
   allowAdmin?: boolean;
 };
 
+type JwtPayload = {
+  exp?: number;
+  role?: string;
+};
+
 async function readErrorMessage(response: Response): Promise<string> {
   const contentType = response.headers.get('content-type') ?? '';
 
@@ -61,20 +66,33 @@ function readStoredUserUnsafe(): AuthUser | null {
   }
 }
 
-function isJwtExpiredOrInvalid(token: string): boolean {
+function readJwtPayload(token: string): JwtPayload | null {
   try {
     const parts = token.split('.');
-    if (parts.length !== 3 || !parts[1]) return true;
+    if (parts.length !== 3 || !parts[1]) return null;
 
     const normalized = parts[1].replace(/-/g, '+').replace(/_/g, '/');
     const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
-    const payload = JSON.parse(atob(padded)) as { exp?: number };
-
-    if (typeof payload.exp !== 'number') return true;
-    return payload.exp * 1000 <= Date.now();
+    return JSON.parse(atob(padded)) as JwtPayload;
   } catch {
-    return true;
+    return null;
   }
+}
+
+function isKnownRole(value: unknown): value is UserRole {
+  return (
+    value === 'admin' ||
+    value === 'doctor' ||
+    value === 'patient' ||
+    value === 'lab_staff' ||
+    value === 'system'
+  );
+}
+
+function isJwtExpiredOrInvalid(token: string): boolean {
+  const payload = readJwtPayload(token);
+  if (!payload || typeof payload.exp !== 'number') return true;
+  return payload.exp * 1000 <= Date.now();
 }
 
 /**
@@ -101,8 +119,6 @@ function clearMediCoreLocalState(): void {
 function storeAuth(response: AuthResponse): AuthUser {
   const previousUser = readStoredUserUnsafe();
 
-  // A fresh login with no valid stored user may still have stale patient data
-  // from an older build/session. A different account must always start clean.
   if (!previousUser || previousUser.id !== response.user.id) {
     clearMediCoreLocalState();
   }
@@ -118,18 +134,13 @@ export function getAccessToken(): string | null {
 }
 
 export function clearAccessToken(): void {
-  // Preserve the current user's local clinical workspace so the same user can
-  // sign in again without losing unsaved browser-side context. A different user
-  // is still protected by storeAuth(), which clears the full MediCore state.
   localStorage.removeItem(ACCESS_TOKEN_KEY);
 }
 
 export function getCurrentUser(): AuthUser | null {
   const raw = localStorage.getItem(CURRENT_USER_KEY);
 
-  if (!raw) {
-    return null;
-  }
+  if (!raw) return null;
 
   try {
     return JSON.parse(raw) as AuthUser;
@@ -139,9 +150,24 @@ export function getCurrentUser(): AuthUser | null {
   }
 }
 
-// Backward-compatible alias for existing components such as Topbar.tsx
 export function getStoredUser(): AuthUser | null {
   return getCurrentUser();
+}
+
+/**
+ * Read the authenticated role from the signed JWT payload first. This keeps the
+ * admin/clinical workspace stable across a hard refresh even if the cached user
+ * object is unavailable during the first render.
+ */
+export function getAuthenticatedRole(): UserRole | null {
+  const token = getAccessToken();
+  if (!token || isJwtExpiredOrInvalid(token)) return null;
+
+  const role = readJwtPayload(token)?.role;
+  if (isKnownRole(role)) return role;
+
+  const storedRole = getStoredUser()?.role;
+  return isKnownRole(storedRole) ? storedRole : null;
 }
 
 export function isAuthenticated(): boolean {
@@ -153,12 +179,10 @@ export function isAuthenticated(): boolean {
     return false;
   }
 
-  return true;
+  return getAuthenticatedRole() !== null;
 }
 
 export function logout(): void {
-  // Health/clinical data must not survive into the next account on a shared
-  // browser. This also clears the token and current-user values.
   clearMediCoreLocalState();
 }
 
@@ -187,8 +211,6 @@ export async function login(
 
   const auth = (await response.json()) as AuthResponse;
 
-  // Admin authentication has a dedicated entry point. The regular individual /
-  // institutional login must never silently turn into an admin session.
   if (auth.user.role === 'admin' && options.allowAdmin !== true) {
     clearMediCoreLocalState();
     throw new Error('Bu hesap yönetici hesabıdır. Yönetici girişini kullanın.');
