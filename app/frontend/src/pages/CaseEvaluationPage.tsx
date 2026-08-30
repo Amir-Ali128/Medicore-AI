@@ -20,6 +20,7 @@ import {
 } from '../services/clinicalHypothesesClient';
 
 const ACTIVE_CLINICAL_INTAKE_KEY = 'medicore:activeClinicalIntake';
+const CASE_SUMMARY_UPDATED_EVENT = 'medicore:case-summary-updated';
 
 function readClinicalIntake(): ClinicalIntakeInput | null {
   try {
@@ -221,6 +222,7 @@ export default function CaseEvaluationPage() {
       setStoredHypotheses(
         (nextResult.created_hypotheses ?? nextResult.hypotheses ?? []) as ClinicalHypothesis[],
       );
+      window.dispatchEvent(new Event(CASE_SUMMARY_UPDATED_EVENT));
     } catch (evaluationError) {
       if (isAuthSessionError(evaluationError)) {
         clearAccessToken();
