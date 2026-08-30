@@ -1,11 +1,28 @@
 import type {
   ClaudeEvaluationHypothesis,
+  ClaudePathologicalFinding,
   ClaudeSuggestedTest,
 } from '../../services/claudeReviewClient';
 
 function readStringList(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.filter((item): item is string => typeof item === 'string');
+}
+
+function readPathologicalFindings(value: unknown): ClaudePathologicalFinding[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.filter((item): item is ClaudePathologicalFinding => {
+    return (
+      typeof item === 'object' &&
+      item !== null &&
+      typeof item.name === 'string' &&
+      typeof item.status === 'string' &&
+      typeof item.status_label === 'string' &&
+      typeof item.display === 'string' &&
+      (item.source === 'laboratory' || item.source === 'vital')
+    );
+  });
 }
 
 function readSuggestedTests(value: unknown): ClaudeSuggestedTest[] {
@@ -95,6 +112,7 @@ export default function ClaudeEvaluationCard({
   const imagingTests = readSuggestedTests(metadata.recommended_imaging_tests);
   const limitations = readStringList(metadata.limitations);
   const flags = readStringList(metadata.flags);
+  const pathologicalFindings = readPathologicalFindings(metadata.pathological_findings);
   const compactRisk = riskLabel(metadata.risk);
   const compactMode = metadata.compact_mode === true;
   const aiCalled = metadata.ai_called === true;
@@ -125,9 +143,40 @@ export default function ClaudeEvaluationCard({
         </div>
       </div>
 
-      {flags.length > 0 ? (
+      {pathologicalFindings.length > 0 ? (
+        <div className="mt-4 rounded-lg border border-rose-200 bg-rose-50/60 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h4 className="text-sm font-semibold text-rose-950">Patolojik Bulgular</h4>
+            <span className="rounded-full border border-rose-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-rose-700">
+              {pathologicalFindings.length} bulgu
+            </span>
+          </div>
+          <ul className="mt-3 space-y-2">
+            {pathologicalFindings.map((finding, index) => (
+              <li
+                key={`${finding.source}-${finding.name}-${finding.status}-${index}`}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-rose-100 bg-white px-3 py-2"
+              >
+                <span className="text-sm font-medium text-slate-900">
+                  {finding.display}
+                </span>
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-rose-700">
+                  {finding.source === 'laboratory' ? 'Laboratuvar' : 'Vital'}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-3 text-xs leading-5 text-rose-800">
+            Bu liste yalnızca backend tarafından deterministik olarak yüksek/düşük
+            sınıflandırılan bulgulardan oluşturulur. Belirsiz veya eşlenemeyen sonuçlar
+            patolojik kabul edilmez.
+          </p>
+        </div>
+      ) : null}
+
+      {pathologicalFindings.length === 0 && flags.length > 0 ? (
         <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
-          <h4 className="text-sm font-semibold text-slate-950">Backend bulgu flag'leri</h4>
+          <h4 className="text-sm font-semibold text-slate-950">Backend inceleme flag'leri</h4>
           <div className="mt-3 flex flex-wrap gap-2">
             {flags.map((flag) => (
               <span
@@ -179,9 +228,9 @@ export default function ClaudeEvaluationCard({
       ) : null}
 
       <p className="mt-4 text-xs leading-5 text-slate-500">
-        Laboratuvar ve vital sınıflandırması backend kurallarıyla yapılır. AI yalnızca
-        backend flag ürettiğinde kısa bir hekim-review özeti oluşturur; bu çıktı tanı
-        veya tedavi kararı değildir.
+        Laboratuvar ve vital sınıflandırması backend kurallarıyla yapılır. Patolojik
+        bulgular AI tarafından seçilmez; AI yalnızca backend flag ürettiğinde kısa bir
+        hekim-review özeti oluşturur. Bu çıktı tanı veya tedavi kararı değildir.
       </p>
     </article>
   );
