@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.api.routes import (
+    ai_cost_analytics,
     analysis_runs,
     analytics,
     auth,
@@ -54,6 +55,7 @@ api_router = APIRouter()
 
 api_router.include_router(auth.router)
 api_router.include_router(analytics.router)
+api_router.include_router(ai_cost_analytics.router)
 api_router.include_router(feedback.router)
 api_router.include_router(patients.router)
 api_router.include_router(lab_analysis.router)
