@@ -43,7 +43,7 @@ async def lifespan(_: FastAPI):
     patient_backfilled = await ensure_patient_protocol_numbers(engine)
     if patient_backfilled:
         print(
-            "Patient protocol number startup migration completed: "
+            "Patient protocol numbers startup migration completed: "
             f"backfilled {patient_backfilled} patient(s)."
         )
 
