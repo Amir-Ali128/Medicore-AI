@@ -53,7 +53,7 @@ class SuggestedDiagnosticTestDraft(BaseModel):
 
 
 class ClinicalHypothesisDraft(BaseModel):
-    """Validated Claude draft before it is persisted for physician review."""
+    """Legacy detailed draft schema kept for backward compatibility."""
 
     model_config = ConfigDict(frozen=True, extra="ignore", populate_by_name=True)
 
@@ -111,7 +111,9 @@ class ClinicalHypothesisGenerationRequest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="ignore")
 
     patient_id: uuid.UUID | None = None
-    max_hypotheses: int = Field(default=3, ge=1, le=10)
+    # Compact mode produces a single risk summary. Keep the broader range accepted
+    # for older clients, but default to one and ignore extra requested hypotheses.
+    max_hypotheses: int = Field(default=1, ge=1, le=10)
     include_normal_results: bool = False
     include_needs_review_only: bool = False
     min_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
