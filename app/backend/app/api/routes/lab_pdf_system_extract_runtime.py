@@ -1,21 +1,24 @@
 """Runtime corrections for full PDF blood-row extraction.
 
-Keeps absolute (#) and percentage (%) CBC rows distinct, prevents rows without a
-printed reference interval from crashing the upload flow, filters page/footer
-numbers, and batches dynamic parameter creation to avoid excessive DB round trips.
+The PDF upload path must not depend on dynamically inserting every previously
+unknown test into ``clinical_parameters``. Any numeric blood-test row that has a
+reference interval printed in the PDF can be classified deterministically from
+that source range even when MediCore does not yet know the parameter name.
+
+This runtime layer also keeps CBC absolute (#) and percentage (%) names distinct,
+filters footer phone numbers, and preserves rows without a printed reference for
+human review instead of crashing the upload.
 """
 
 from __future__ import annotations
 
 import re
-import uuid
 from datetime import date
 from typing import Any
 
-from sqlalchemy import text as sql_text
-
 from app.api.routes import lab_analysis, lab_pdf_system_extract
-from app.infrastructure.database.session import AsyncSessionFactory
+from app.domain.analysis_pipeline import AnalysisPipeline
+from app.domain.enums import ResultStatus
 
 
 def _name_key(value: str) -> str:
@@ -25,6 +28,7 @@ def _name_key(value: str) -> str:
 
 
 _original_numeric_row = lab_pdf_system_extract._row_from_numeric_match
+_original_process_value = AnalysisPipeline._process_value
 
 
 def _row_from_numeric_match(
@@ -34,10 +38,8 @@ def _row_from_numeric_match(
     groups = match.groupdict()
 
     # _NUMERIC_NO_REFERENCE_RE intentionally has no ``unit`` or ``reference``
-    # group. The base parser used to pass such rows into a helper that expected
-    # both groups, causing IndexError and surfacing as "Failed to fetch" in the
-    # browser. Preserve the test with an empty unit/range so MediCore can fall
-    # back to a stored reference if one exists; otherwise it remains reviewable.
+    # group. Preserve such rows so a known MediCore parameter can still fall
+    # back to a stored reference; otherwise the row remains reviewable.
     if "unit" not in groups:
         raw_name = str(groups.get("name") or "").strip(" :-")
         if not raw_name or lab_pdf_system_extract._is_non_blood_test(raw_name):
@@ -68,51 +70,107 @@ def _row_from_numeric_match(
 
 
 async def _ensure_dynamic_parameters(rows: list[dict[str, Any]]) -> None:
-    """Create unseen PDF parameters in one DB batch instead of row by row."""
-    dynamic_rows = [row for row in rows if row.get("dynamic") is True]
-    if not dynamic_rows:
-        return
+    """Deliberately do nothing.
 
-    payloads: list[dict[str, Any]] = []
-    seen_codes: set[str] = set()
-    for row in dynamic_rows:
-        code = str(row.get("parameter_code") or "").strip()
-        if not code or code in seen_codes:
-            continue
-        seen_codes.add(code)
-        payloads.append(
+    Unknown PDF tests do not need a permanent clinical-parameter row merely to
+    classify a value against the reference interval printed in the report.
+    """
+    return None
+
+
+def _to_pipeline_values(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    values: list[dict[str, Any]] = []
+    for row in rows:
+        # Known catalog parameters still use their stable code. Unknown rows use
+        # the report's display name so the result remains understandable and the
+        # pipeline's extracted-reference fallback can classify it directly.
+        raw_name = (
+            str(row.get("parameter_code") or "")
+            if row.get("dynamic") is not True
+            else str(row.get("display_name") or "")
+        )
+        values.append(
             {
-                "id": str(uuid.uuid5(uuid.NAMESPACE_DNS, f"medicore-pdf:{code}")),
-                "code": code,
-                "canonical": str(row.get("display_name") or code)[:255],
-                "default_unit": str(row.get("unit") or "")[:64],
+                "raw_parameter_name": raw_name,
+                "raw_value": row.get("raw_value"),
+                "normalized_value": row.get("normalized_value"),
+                "unit": row.get("unit") or None,
+                "extracted_reference_min": row.get("extracted_reference_min"),
+                "extracted_reference_max": row.get("extracted_reference_max"),
+                "extracted_unit": row.get("unit") or None,
+                "measured_at": row.get("measured_at"),
             }
         )
+    return values
 
-    if not payloads:
-        return
 
-    statement = sql_text(
-        """
-        INSERT INTO clinical_parameters (
-            id, parameter_code, canonical_name, default_unit, category,
-            active_phase1, analysis_level, metadata_json, created_at, updated_at
-        )
-        VALUES (
-            :id, :code, :canonical, :default_unit, 'pdf_import', true,
-            'L4'::analysis_level,
-            '{"source":"pdf_report_dynamic_parameter","report_reference_preferred":true}'::jsonb,
-            NOW(), NOW()
-        )
-        ON CONFLICT (parameter_code) DO NOTHING
-        """
+async def _process_value_with_pdf_reference_fallback(
+    self: AnalysisPipeline,
+    raw: Any,
+    *,
+    report: Any,
+    run: Any,
+    patient: Any,
+) -> Any:
+    result = await _original_process_value(
+        self,
+        raw,
+        report=report,
+        run=run,
+        patient=patient,
     )
 
-    async with AsyncSessionFactory() as session:
-        await session.execute(statement, payloads)
-        await session.commit()
+    # Only intervene when the normal alias path could not map the parameter.
+    # Known parameters continue through the existing ReferenceResolver/RuleEngine.
+    if result.result_status != ResultStatus.UNKNOWN:
+        return result
+    if raw.normalized_value is None:
+        return result
+
+    low = raw.extracted_reference_min
+    high = raw.extracted_reference_max
+    if low is None or high is None:
+        return result
+
+    value = raw.normalized_value
+    if value < low:
+        status = ResultStatus.LOW
+        rule = "pdf_unmapped_value_below_min"
+        reason = f"Değer {value}, PDF referans alt sınırı {low} değerinin altındadır."
+    elif value > high:
+        status = ResultStatus.HIGH
+        rule = "pdf_unmapped_value_above_max"
+        reason = f"Değer {value}, PDF referans üst sınırı {high} değerinin üzerindedir."
+    else:
+        status = ResultStatus.NORMAL
+        rule = "pdf_unmapped_value_within_range"
+        reason = f"Değer {value}, PDF referans aralığı [{low}, {high}] içindedir."
+
+    # Mutate the passive result before it is persisted by AnalysisPipeline.
+    result.canonical_name = raw.raw_parameter_name
+    result.reference_min = low
+    result.reference_max = high
+    result.reference_source = "extracted_report"
+    result.unit = raw.unit or raw.extracted_unit
+    result.result_status = status
+    result.needs_review = False
+    result.reason = reason
+    result.rule_applied = rule
+    result.reference_confidence = 0.98
+    result.classification_confidence = 1.0
+    metadata = dict(result.metadata_json or {})
+    metadata.update(
+        {
+            "pdf_unmapped_reference_classification": True,
+            "reference_strategy": "extracted_report",
+        }
+    )
+    result.metadata_json = metadata
+    return result
 
 
 lab_pdf_system_extract._name_key = _name_key
 lab_pdf_system_extract._row_from_numeric_match = _row_from_numeric_match
 lab_pdf_system_extract._ensure_dynamic_parameters = _ensure_dynamic_parameters
+lab_pdf_system_extract._to_pipeline_values = _to_pipeline_values
+AnalysisPipeline._process_value = _process_value_with_pdf_reference_fallback
