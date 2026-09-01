@@ -98,14 +98,12 @@ function labStatusPresentation(status: string) {
       label: 'YÜKSEK',
       badge: 'border-rose-200 bg-rose-50 text-rose-700',
       card: 'border-rose-100',
-      question: 'Neden yüksek?',
     };
   }
   return {
     label: 'DÜŞÜK',
     badge: 'border-sky-200 bg-sky-50 text-sky-700',
     card: 'border-sky-100',
-    question: 'Neden düşük?',
   };
 }
 
@@ -165,13 +163,21 @@ export default function ClaudeEvaluationCard({
   const flags = readStringList(metadata.flags);
   const pathologicalFindings = readPathologicalFindings(metadata.pathological_findings);
   const labFindings = pathologicalFindings.filter(
-    (finding) => finding.source === 'laboratory' && (finding.status === 'high' || finding.status === 'low'),
+    (finding) =>
+      finding.source === 'laboratory' &&
+      (finding.status === 'high' || finding.status === 'low'),
   );
-  const vitalFindings = pathologicalFindings.filter((finding) => finding.source === 'vital');
+  const vitalFindings = pathologicalFindings.filter(
+    (finding) => finding.source === 'vital',
+  );
   const compactMode = metadata.compact_mode === true;
   const aiCalled = metadata.ai_called === true;
   const risk = riskPresentation(metadata.risk);
   const displayTitle = compactMode ? 'Klinik risk özeti' : hypothesis.title;
+  const hasEndSection =
+    possibleConditions.length > 0 ||
+    laboratoryTests.length > 0 ||
+    imagingTests.length > 0;
 
   return (
     <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -202,17 +208,21 @@ export default function ClaudeEvaluationCard({
         </div>
       </div>
 
-      <div className={`mt-5 grid gap-3 ${risk ? 'lg:grid-cols-[minmax(0,1.7fr)_minmax(260px,1fr)]' : ''}`}>
+      <div
+        className={`mt-5 grid gap-3 ${
+          risk ? 'lg:grid-cols-[minmax(0,1.7fr)_minmax(260px,1fr)]' : ''
+        }`}
+      >
         <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
             Değerlendirme
           </p>
-          <p className="mt-2 text-sm leading-6 text-slate-700">
+          <p className="mt-2 whitespace-normal break-words text-sm leading-6 text-slate-700">
             {hypothesis.summary}
           </p>
           <p className="mt-3 text-xs text-slate-500">
             {aiCalled
-              ? 'AI destekli kısa klinik yorum'
+              ? 'AI destekli klinik sentez'
               : 'Kurallı klinik değerlendirme'}
           </p>
         </div>
@@ -232,10 +242,10 @@ export default function ClaudeEvaluationCard({
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <h4 className="text-sm font-semibold text-slate-950">
-                Yüksek / Düşük Laboratuvar Raporu
+                Yüksek / Düşük Laboratuvar Bulguları
               </h4>
               <p className="mt-1 text-xs text-slate-500">
-                Referans dışı değer, sayısal sınıflandırma nedeni ve klinik olarak ilişkili olabilecek durumlar birlikte gösterilir.
+                Yalnızca referans dışı parametreler ve klinik olarak ne ifade edebilecekleri gösterilir.
               </p>
             </div>
             <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700">
@@ -246,9 +256,6 @@ export default function ClaudeEvaluationCard({
           <div className="mt-3 grid gap-3 lg:grid-cols-2">
             {labFindings.map((finding, index) => {
               const tone = labStatusPresentation(finding.status);
-              const possibleCauses = Array.isArray(finding.possible_causes)
-                ? finding.possible_causes.filter((cause): cause is string => typeof cause === 'string')
-                : [];
               return (
                 <div
                   key={`${finding.name}-${finding.status}-${index}`}
@@ -261,65 +268,36 @@ export default function ClaudeEvaluationCard({
                         {finding.value ?? '—'} {finding.unit ?? ''}
                       </p>
                     </div>
-                    <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${tone.badge}`}>
+                    <span
+                      className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${tone.badge}`}
+                    >
                       {tone.label}
                     </span>
                   </div>
 
-                  {finding.reference_text ? (
-                    <p className="mt-3 text-xs text-slate-500">
-                      Referans: <span className="font-medium text-slate-700">{finding.reference_text}</span>
-                    </p>
-                  ) : null}
-
-                  <div className="mt-3 rounded-lg bg-slate-50 px-3 py-2.5">
-                    <p className="text-xs font-semibold text-slate-700">{tone.question}</p>
-                    <p className="mt-1 text-xs leading-5 text-slate-600">
-                      {finding.classification_reason ?? finding.backend_reason ?? finding.display}
-                    </p>
-                    {typeof finding.deviation_percent === 'number' ? (
-                      <p className="mt-1 text-[11px] text-slate-500">
-                        Referans sınırından sapma: %{finding.deviation_percent.toFixed(1)}
-                      </p>
-                    ) : null}
-                  </div>
-
-                  {finding.clinical_interpretation || possibleCauses.length > 0 ? (
+                  {finding.clinical_interpretation ? (
                     <div className="mt-3 rounded-lg border border-violet-100 bg-violet-50/50 px-3 py-3">
                       <p className="text-xs font-semibold text-violet-900">
-                        Klinik olarak ne anlama gelebilir?
+                        Klinik anlam
                       </p>
-                      {finding.clinical_interpretation ? (
-                        <p className="mt-1 text-xs leading-5 text-slate-700">
-                          {finding.clinical_interpretation}
-                        </p>
-                      ) : null}
-                      {possibleCauses.length > 0 ? (
-                        <div className="mt-2">
-                          <p className="text-[11px] font-semibold uppercase tracking-wide text-violet-800">
-                            İlişkili olabilecek durumlar
-                          </p>
-                          <ul className="mt-1.5 space-y-1 text-xs leading-5 text-slate-700">
-                            {possibleCauses.map((cause) => (
-                              <li key={cause}>• {cause}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      ) : null}
-                      {finding.clinical_note ? (
-                        <p className="mt-2 border-t border-violet-100 pt-2 text-[11px] leading-4 text-slate-500">
-                          {finding.clinical_note}
-                        </p>
-                      ) : null}
+                      <p className="mt-1 text-xs leading-5 text-slate-700">
+                        {finding.clinical_interpretation}
+                      </p>
                     </div>
-                  ) : null}
+                  ) : (
+                    <div className="mt-3 rounded-lg bg-slate-50 px-3 py-3">
+                      <p className="text-xs leading-5 text-slate-600">
+                        Bu parametre için güvenilir genel klinik ilişki metni tanımlı değil; hekim değerlendirmesi gerekir.
+                      </p>
+                    </div>
+                  )}
                 </div>
               );
             })}
           </div>
 
           <p className="mt-3 text-xs leading-5 text-slate-500">
-            Referans karşılaştırması deterministiktir. Klinik ilişkiler olasılık düzeyindedir; tek bir laboratuvar sonucu hastalık tanısı koydurmaz.
+            Yüksek/düşük sınıflandırması PDF referansına göre yapılır. Klinik anlam tek başına tanı koydurmaz.
           </p>
         </div>
       ) : null}
@@ -356,30 +334,6 @@ export default function ClaudeEvaluationCard({
         </div>
       ) : null}
 
-      <div className="mt-4 grid gap-4 lg:grid-cols-3">
-        {possibleConditions.length > 0 ? (
-          <div className="rounded-xl border border-violet-200 bg-violet-50/60 p-4">
-            <h4 className="text-sm font-semibold text-violet-950">
-              Olası klinik durumlar
-            </h4>
-            <ul className="mt-3 space-y-2 text-sm leading-5 text-slate-700">
-              {possibleConditions.map((condition) => (
-                <li key={condition}>• {condition}</li>
-              ))}
-            </ul>
-          </div>
-        ) : null}
-
-        <SuggestedTestList
-          title="Değerlendirilebilecek laboratuvar tetkikleri"
-          tests={laboratoryTests}
-        />
-        <SuggestedTestList
-          title="Değerlendirilebilecek görüntüleme tetkikleri"
-          tests={imagingTests}
-        />
-      </div>
-
       {limitations.length > 0 ? (
         <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
           <h4 className="text-sm font-semibold text-amber-950">
@@ -391,6 +345,43 @@ export default function ClaudeEvaluationCard({
             ))}
           </ul>
         </div>
+      ) : null}
+
+      {hasEndSection ? (
+        <section className="mt-5 border-t border-slate-200 pt-5">
+          <div className="mb-4">
+            <h4 className="text-base font-semibold text-slate-950">
+              Olası hastalıklar ve ileri tetkikler
+            </h4>
+            <p className="mt-1 text-xs leading-5 text-slate-500">
+              Bu bölüm en sonda gösterilir. Bulgular tanı değildir; hangi tetkiklerin gerçekten gerekli olduğuna hekim klinik bağlama göre karar verir.
+            </p>
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-3">
+            {possibleConditions.length > 0 ? (
+              <div className="rounded-xl border border-violet-200 bg-violet-50/60 p-4">
+                <h5 className="text-sm font-semibold text-violet-950">
+                  İlişkili olabilecek hastalıklar / durumlar
+                </h5>
+                <ul className="mt-3 space-y-2 text-sm leading-5 text-slate-700">
+                  {possibleConditions.map((condition) => (
+                    <li key={condition}>• {condition}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
+            <SuggestedTestList
+              title="İleri laboratuvar tetkikleri"
+              tests={laboratoryTests}
+            />
+            <SuggestedTestList
+              title="İleri görüntüleme tetkikleri"
+              tests={imagingTests}
+            />
+          </div>
+        </section>
       ) : null}
 
       <p className="mt-5 border-t border-slate-100 pt-4 text-xs leading-5 text-slate-500">
