@@ -1,8 +1,9 @@
-"""Enrich compact clinical evidence with deterministic lab reference bounds.
+"""Build physician-facing abnormal-lab evidence with exact reference bounds.
 
-This does not increase what is required to classify a laboratory result. It only
-preserves the already-resolved reference limits, source test name and backend rule
-reason so the UI can explain exactly why a HIGH/LOW result was classified that way.
+The compact model still receives only symptoms/source summaries and bounded backend
+flags. This evidence is created after the model call and is stored only as structured
+metadata for the UI, so every HIGH/LOW laboratory row can be explained without
+increasing LLM prompt size.
 """
 
 from __future__ import annotations
@@ -10,8 +11,6 @@ from __future__ import annotations
 from typing import Any
 
 from app.domain.claude_clinical_hypothesis_service import ClaudeClinicalHypothesisService
-
-_original_build_evidence = ClaudeClinicalHypothesisService._build_evidence
 
 
 def _as_text(value: object) -> str | None:
@@ -21,31 +20,41 @@ def _as_text(value: object) -> str | None:
     return text or None
 
 
+def _status_value(result: Any) -> str:
+    status = getattr(result, "result_status", None)
+    return str(getattr(status, "value", status) or "unknown").lower()
+
+
 def _build_evidence_with_reference_bounds(results: list[Any]) -> list[dict[str, Any]]:
-    evidence = list(_original_build_evidence(results))
-    by_id = {
-        str(getattr(result, "id", "")): result
-        for result in results
-        if getattr(result, "id", None) is not None
-    }
+    evidence: list[dict[str, Any]] = []
 
-    for item in evidence:
-        result = by_id.get(str(item.get("lab_result_id") or ""))
-        if result is None:
-            continue
-
-        # Prefer the exact PDF/source test name so an imperfect alias can never
-        # rename HDL as Total Kolesterol, T.Protein as Tau Protein, etc. in the
-        # physician-facing abnormal report.
-        source_name = _as_text(getattr(result, "raw_parameter_name", None))
-        if source_name:
-            item["parameter_name"] = source_name
-
-        item["reference_min"] = _as_text(getattr(result, "reference_min", None))
-        item["reference_max"] = _as_text(getattr(result, "reference_max", None))
-        item["reference_source"] = _as_text(getattr(result, "reference_source", None))
-        item["classification_reason"] = _as_text(getattr(result, "reason", None))
-        item["rule_applied"] = _as_text(getattr(result, "rule_applied", None))
+    # review_results already excludes normal values in compact mode. Keep all of
+    # them (bounded defensively) so a report with 18 abnormal parameters displays
+    # all 18 rather than silently stopping at the legacy first 10.
+    for result in results[:100]:
+        value = getattr(result, "normalized_value", None)
+        trend = getattr(result, "trend_status", None)
+        source_name = (
+            _as_text(getattr(result, "raw_parameter_name", None))
+            or _as_text(getattr(result, "canonical_name", None))
+            or "Laboratuvar parametresi"
+        )
+        evidence.append(
+            {
+                "lab_result_id": str(getattr(result, "id", "")) or None,
+                "parameter_code": _as_text(getattr(result, "parameter_code", None)),
+                "parameter_name": source_name,
+                "value": str(value) if value is not None else None,
+                "unit": _as_text(getattr(result, "unit", None)),
+                "result_status": _status_value(result),
+                "trend_status": getattr(trend, "value", trend),
+                "reference_min": _as_text(getattr(result, "reference_min", None)),
+                "reference_max": _as_text(getattr(result, "reference_max", None)),
+                "reference_source": _as_text(getattr(result, "reference_source", None)),
+                "classification_reason": _as_text(getattr(result, "reason", None)),
+                "rule_applied": _as_text(getattr(result, "rule_applied", None)),
+            }
+        )
 
     return evidence
 
