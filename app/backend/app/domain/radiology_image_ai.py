@@ -7,6 +7,7 @@ the result explicitly marked for physician review.
 
 from __future__ import annotations
 
+import ast
 import base64
 import json
 from dataclasses import dataclass
@@ -23,6 +24,21 @@ SUPPORTED_IMAGE_MEDIA_TYPES = {
 }
 SUPPORTED_MODALITIES = {"XRAY", "ULTRASOUND", "AUTO"}
 _DETECTED_MODALITIES = {"XRAY", "ULTRASOUND", "UNKNOWN"}
+_DETECTED_BODY_PARTS = {
+    "ABDOMEN",
+    "CHEST",
+    "HEAD",
+    "NECK",
+    "PELVIS",
+    "SPINE",
+    "UPPER_EXTREMITY",
+    "LOWER_EXTREMITY",
+    "BREAST",
+    "THYROID",
+    "URINARY",
+    "OBSTETRIC",
+    "OTHER",
+}
 
 
 @dataclass(frozen=True)
@@ -33,6 +49,7 @@ class RadiologyImageReview:
     visible_text: str
     model: str
     detected_modality: str
+    detected_body_part: str
 
 
 def normalize_image_modality(value: str | None) -> str | None:
@@ -56,7 +73,58 @@ def normalize_image_modality(value: str | None) -> str | None:
     return aliases.get(normalized, normalized or None)
 
 
+def normalize_body_part(value: str | None) -> str | None:
+    normalized = (value or "").strip().upper().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "BATIN": "ABDOMEN",
+        "KARIN": "ABDOMEN",
+        "ABDOMINAL": "ABDOMEN",
+        "THORAX": "CHEST",
+        "TORAKS": "CHEST",
+        "GOGUS": "CHEST",
+        "GÖĞÜS": "CHEST",
+        "BRAIN": "HEAD",
+        "BEYIN": "HEAD",
+        "BEYİN": "HEAD",
+        "KAFA": "HEAD",
+        "CERVICAL": "NECK",
+        "BOYUN": "NECK",
+        "OMURGA": "SPINE",
+        "LOMBER": "SPINE",
+        "LUMBAR": "SPINE",
+        "PELVIC": "PELVIS",
+        "UST_EKSTREMITE": "UPPER_EXTREMITY",
+        "ÜST_EKSTREMİTE": "UPPER_EXTREMITY",
+        "KOL": "UPPER_EXTREMITY",
+        "EL": "UPPER_EXTREMITY",
+        "ALT_EKSTREMITE": "LOWER_EXTREMITY",
+        "ALT_EKSTREMİTE": "LOWER_EXTREMITY",
+        "BACAK": "LOWER_EXTREMITY",
+        "AYAK": "LOWER_EXTREMITY",
+        "MEME": "BREAST",
+        "TIROID": "THYROID",
+        "TİROİD": "THYROID",
+        "URINER": "URINARY",
+        "ÜRİNER": "URINARY",
+        "BOBREK": "URINARY",
+        "BÖBREK": "URINARY",
+        "GEBELIK": "OBSTETRIC",
+        "GEBELİK": "OBSTETRIC",
+        "OBSTETRIK": "OBSTETRIC",
+        "OBSTETRİK": "OBSTETRIC",
+    }
+    candidate = aliases.get(normalized, normalized or None)
+    return candidate if candidate in _DETECTED_BODY_PARTS else None
+
+
 def _extract_json(text: str) -> dict[str, Any]:
+    """Best-effort structured parsing without failing the whole upload.
+
+    Vision models occasionally wrap JSON in prose/code fences or return a
+    Python-style dictionary. We recover those forms and, as a final fallback,
+    keep the free-text answer as a non-diagnostic summary instead of raising a
+    502 that would prevent the image from being saved.
+    """
     cleaned = text.strip()
     if cleaned.startswith("```"):
         first_newline = cleaned.find("\n")
@@ -66,18 +134,35 @@ def _extract_json(text: str) -> dict[str, Any]:
             cleaned = cleaned[:-3]
         cleaned = cleaned.strip()
 
-    try:
-        value = json.loads(cleaned)
-    except json.JSONDecodeError:
-        start = cleaned.find("{")
-        end = cleaned.rfind("}")
-        if start < 0 or end <= start:
-            raise ValueError("Görüntü modeli yapılandırılmış JSON döndürmedi.")
-        value = json.loads(cleaned[start : end + 1])
+    candidates = [cleaned]
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start >= 0 and end > start:
+        candidates.append(cleaned[start : end + 1])
 
-    if not isinstance(value, dict):
-        raise ValueError("Görüntü modeli beklenen nesne biçimini döndürmedi.")
-    return value
+    for candidate in candidates:
+        try:
+            value = json.loads(candidate)
+        except json.JSONDecodeError:
+            try:
+                value = ast.literal_eval(candidate)
+            except (ValueError, SyntaxError):
+                continue
+        if isinstance(value, dict):
+            return value
+
+    compact = " ".join(cleaned.split()).strip()
+    return {
+        "detected_modality": "UNKNOWN",
+        "detected_body_part": "OTHER",
+        "summary": compact[:1800]
+        or "Görüntü modeli yapılandırılmış çıktı üretmedi; dosya hekim incelemesi için kaydedildi.",
+        "observations": [],
+        "limitations": [
+            "Model yapılandırılmış JSON üretmedi; yalnızca serbest metin yanıtı güvenli özet olarak saklandı."
+        ],
+        "visible_text": "",
+    }
 
 
 def _string_list(value: Any, *, limit: int) -> list[str]:
@@ -100,10 +185,12 @@ async def review_radiology_image(
     content: bytes,
     media_type: str,
     modality: str,
+    body_part: str | None = None,
 ) -> RadiologyImageReview | None:
     """Return an assistive visual review, or ``None`` when AI is not configured."""
     normalized_media_type = media_type.lower().strip()
     normalized_modality = normalize_image_modality(modality)
+    requested_body_part = normalize_body_part(body_part)
     if normalized_media_type not in SUPPORTED_IMAGE_MEDIA_TYPES:
         return None
     if normalized_modality not in SUPPORTED_MODALITIES:
@@ -128,9 +215,18 @@ async def review_radiology_image(
         modality_label = "röntgen" if normalized_modality == "XRAY" else "ultrason"
         modality_context = f"Bu görüntü kullanıcı tarafından {modality_label} olarak işaretlenmiştir."
 
+    if requested_body_part:
+        region_context = f"Kullanıcının belirttiği vücut bölgesi: {requested_body_part}."
+    else:
+        region_context = (
+            "Vücut bölgesini yalnızca görüntüden güvenle ayırt edebiliyorsan sınıflandır; "
+            "emin değilsen OTHER kullan."
+        )
+
     prompt = f"""
-{modality_context} Görüntü bir PACS ekran görüntüsü, cihaz ekranı veya rapor ekran
-görüntüsü olabilir.
+{modality_context}
+{region_context}
+Görüntü bir PACS ekran görüntüsü, cihaz ekranı veya rapor ekran görüntüsü olabilir.
 
 Amaç: hekime yardımcı olacak, TANISAL OLMAYAN bir ön inceleme üretmek.
 - Kesin tanı koyma, hastalık olasılığı yüzdesi verme veya tedavi önerme.
@@ -143,10 +239,13 @@ Amaç: hekime yardımcı olacak, TANISAL OLMAYAN bir ön inceleme üretmek.
 - Bulguları aşırı yorumlama; şüpheli görünen şeyi "hekim tarafından doğrulanmalı"
   şeklinde ifade et.
 - detected_modality alanı yalnızca XRAY, ULTRASOUND veya UNKNOWN olmalıdır.
+- detected_body_part alanı yalnızca ABDOMEN, CHEST, HEAD, NECK, PELVIS, SPINE,
+  UPPER_EXTREMITY, LOWER_EXTREMITY, BREAST, THYROID, URINARY, OBSTETRIC veya OTHER olmalıdır.
 
 Yalnızca aşağıdaki JSON biçimini döndür:
 {{
   "detected_modality": "XRAY | ULTRASOUND | UNKNOWN",
+  "detected_body_part": "ABDOMEN | CHEST | HEAD | NECK | PELVIS | SPINE | UPPER_EXTREMITY | LOWER_EXTREMITY | BREAST | THYROID | URINARY | OBSTETRIC | OTHER",
   "summary": "1-3 cümlelik tanısal olmayan genel özet",
   "observations": ["en fazla 6 doğrudan görsel gözlem"],
   "limitations": ["en fazla 5 sınırlama"],
@@ -157,7 +256,7 @@ Yalnızca aşağıdaki JSON biçimini döndür:
     client = AsyncAnthropic(api_key=settings.anthropic_api_key)
     message = await client.messages.create(
         model=model,
-        max_tokens=1100,
+        max_tokens=1200,
         system=(
             "You are a cautious medical imaging support component. Your output is "
             "assistive only, never a diagnosis, and always requires physician review."
@@ -207,6 +306,10 @@ Yalnızca aşağıdaki JSON biçimini döndür:
         if detected_modality not in _DETECTED_MODALITIES:
             detected_modality = "UNKNOWN"
 
+    detected_body_part = requested_body_part or normalize_body_part(
+        str(payload.get("detected_body_part") or "OTHER")
+    ) or "OTHER"
+
     if not summary:
         summary = "Görüntü için tanısal olmayan AI ön incelemesi oluşturuldu; hekim doğrulaması gereklidir."
 
@@ -217,4 +320,5 @@ Yalnızca aşağıdaki JSON biçimini döndür:
         visible_text=visible_text[:5000],
         model=model,
         detected_modality=detected_modality,
+        detected_body_part=detected_body_part,
     )
