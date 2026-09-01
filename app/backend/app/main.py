@@ -21,6 +21,7 @@ from app.api.routes import lab_case01_sql_hotfix as _lab_case01_sql_hotfix  # no
 from app.domain import claude_compact_runtime_fix as _claude_compact_runtime_fix  # noqa: F401
 from app.domain import abnormal_lab_explanation_runtime as _abnormal_lab_explanation_runtime  # noqa: F401
 from app.domain import pathological_findings_runtime as _pathological_findings_runtime  # noqa: F401
+from app.domain import lab_clinical_interpretation_runtime as _lab_clinical_interpretation_runtime  # noqa: F401
 from app.domain import multisource_summary_runtime as _multisource_summary_runtime  # noqa: F401
 from app.domain import ultrasound_result_only_runtime as _ultrasound_result_only_runtime  # noqa: F401
 from app.domain import claude_sonnet5_compat_runtime as _claude_sonnet5_compat_runtime  # noqa: F401
