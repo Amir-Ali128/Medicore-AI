@@ -2,7 +2,7 @@
 
 For ultrasound, MediCore intentionally ignores technique, indication and detailed
 findings when building the structured report surface used by case evaluation. The
-radiologist's explicit SONUÇ/İZLENİM/DEĞERLENDİRME/IMPRESSION section is the only
+radiologist's explicit SONUÇ/İZLENİM/DEĞERLENDİRME/KANAAT section is the only
 clinical text retained. Other modalities continue to use the existing conservative
 radiology safety parser.
 """
@@ -20,8 +20,13 @@ _original_analyze = radiology_reports.analyze_radiology_report
 
 _RESULT_HEADINGS = {
     "sonuc",
+    "sonuc ve oneri",
+    "sonuc ve oneriler",
+    "sonuc onerileri",
     "izlenim",
     "degerlendirme",
+    "kanaat",
+    "yorum",
     "impression",
     "conclusion",
 }
@@ -45,7 +50,6 @@ _OTHER_SECTION_HEADINGS = {
     "hasta hikayesi",
     "sikayet",
     "oneriler",
-    "öneriler",
 }
 _ALL_HEADINGS = _RESULT_HEADINGS | _OTHER_SECTION_HEADINGS
 
