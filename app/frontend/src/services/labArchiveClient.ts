@@ -4,6 +4,7 @@ import type {
   LabReportSummary,
   PatientMetadata,
 } from './labAnalysisClient';
+import { sanitizeClinicalContextForStorage } from './privacy';
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000';
@@ -48,7 +49,7 @@ export async function saveLabReportToPatient(
     {
       method: 'PATCH',
       headers: authHeaders(),
-      body: JSON.stringify(clinicalContext),
+      body: JSON.stringify(sanitizeClinicalContextForStorage(clinicalContext)),
     },
   );
 
