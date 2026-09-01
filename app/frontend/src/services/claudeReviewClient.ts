@@ -23,6 +23,12 @@ export type ClaudePathologicalFinding = {
   value: string | null;
   unit: string | null;
   display: string;
+  reference_min?: string | null;
+  reference_max?: string | null;
+  reference_text?: string | null;
+  classification_reason?: string | null;
+  deviation_percent?: number | null;
+  backend_reason?: string | null;
 };
 
 export type ClaudeEvaluationMetadata = Record<string, unknown> & {
