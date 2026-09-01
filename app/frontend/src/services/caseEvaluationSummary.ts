@@ -65,15 +65,36 @@ function abnormalLabs(results: LabAnalysisResult[]) {
   );
 }
 
+function meaningfulReference(value: string | null | undefined) {
+  if (value == null || value === '') return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || Math.abs(parsed) >= 999_999_999) return null;
+  return value;
+}
+
+function labReference(result: LabAnalysisResult) {
+  const low = meaningfulReference(result.reference_min);
+  const high = meaningfulReference(result.reference_max);
+  const unit = result.unit ? ` ${result.unit}` : '';
+  if (low != null && high != null) return `${low}-${high}${unit}`;
+  if (high != null) return `<${high}${unit}`;
+  if (low != null) return `>${low}${unit}`;
+  return null;
+}
+
+function labDisplayName(result: LabAnalysisResult) {
+  return result.raw_parameter_name || result.canonical_name || 'Laboratuvar parametresi';
+}
+
 export function buildLaboratorySummary(results: LabAnalysisResult[]) {
   if (results.length === 0) return 'Laboratuvar sonucu bulunamadı.';
   const abnormal = abnormalLabs(results);
   if (abnormal.length === 0) return 'Belirgin yüksek/düşük laboratuvar bulgusu yok.';
 
   const preview = abnormal.slice(0, 8).map((result) => {
-    const name = result.canonical_name ?? result.raw_parameter_name;
     const direction = result.result_status === 'high' ? 'yüksek' : 'düşük';
-    return `${name}: ${result.normalized_value} ${result.unit} (${direction})`;
+    const reference = labReference(result);
+    return `${labDisplayName(result)}: ${result.normalized_value} ${result.unit}${reference ? ` · ref ${reference}` : ''} (${direction})`;
   });
   const suffix = abnormal.length > preview.length ? ` +${abnormal.length - preview.length} bulgu` : '';
   return `${preview.join('; ')}${suffix}`;
@@ -84,10 +105,11 @@ export function buildLaboratoryAiSummary(results: LabAnalysisResult[]) {
   if (abnormal.length === 0) return 'Patolojik laboratuvar bulgusu yok.';
 
   return abnormal
-    .slice(0, 10)
+    .slice(0, 8)
     .map((result) => {
-      const name = result.canonical_name ?? result.raw_parameter_name;
-      return `${name} ${result.result_status === 'high' ? 'yüksek' : 'düşük'}`;
+      const direction = result.result_status === 'high' ? 'yüksek' : 'düşük';
+      const reference = labReference(result);
+      return `${labDisplayName(result)} ${result.normalized_value} ${result.unit}${reference ? ` (ref ${reference})` : ''}: ${direction}`;
     })
     .join('; ')
     .slice(0, 320);
@@ -117,53 +139,11 @@ export function getLatestUltrasoundReport(reports: RadiologyReport[]) {
 export function buildUltrasoundSummary(report: RadiologyReport | null) {
   if (!report) return 'Ultrason raporu bulunamadı.';
 
-  const findingTexts = report.findings
-    .map((finding) => clean(finding.text, 180))
-    .filter((value): value is string => Boolean(value));
-
-  const attentionFindings = report.findings.filter(
-    (finding) =>
-      finding.is_critical ||
-      finding.classification === 'critical' ||
-      finding.classification === 'abnormal',
-  );
-
-  const criticalFindingCount = Math.max(
-    report.critical_findings.length,
-    report.findings.filter(
-      (finding) => finding.is_critical || finding.classification === 'critical',
-    ).length,
-  );
-
-  const clinicalLead =
-    clean(report.impression, 280) ||
-    clean(findingTexts.slice(0, 2).join('; '), 280);
-
-  const parts: string[] = [];
-
-  if (clinicalLead) {
-    parts.push(clinicalLead);
-  } else {
-    parts.push('Ultrason raporu yapılandırılmış olarak kaydedildi.');
-  }
-
-  if (criticalFindingCount > 0) {
-    parts.push(
-      `${criticalFindingCount} kritik bulgu işaretlendi; öncelikli hekim doğrulaması gerekir.`,
-    );
-  } else if (attentionFindings.length > 0) {
-    parts.push(
-      `${attentionFindings.length} bulgu dikkat gerektiriyor; klinik bulgularla birlikte hekim değerlendirmesi önerilir.`,
-    );
-  } else {
-    parts.push('Doğrulanmış kritik uyarı saptanmadı.');
-  }
-
-  if (report.measurements.length > 0) {
-    parts.push(`${report.measurements.length} ölçüm kaydı mevcut.`);
-  }
-
-  return parts.join(' ');
+  // Backend stores the explicit SONUÇ/İZLENİM section in impression for
+  // ultrasound. Do not fall back to detailed findings: case evaluation should
+  // receive only the radiologist's result/conclusion text.
+  const resultText = clean(report.impression, 600);
+  return resultText || 'Ultrason raporunda Sonuç/İzlenim bölümü bulunamadı.';
 }
 
 export function buildUltrasoundContextFlags(report: RadiologyReport | null) {
