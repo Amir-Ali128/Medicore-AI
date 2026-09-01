@@ -59,7 +59,7 @@ export function buildClinicalAiSummary(context: ClinicalIntakeInput | null) {
   return parts.join(' | ').slice(0, 320) || 'Kısa klinik özet yok.';
 }
 
-function abnormalLabs(results: LabAnalysisResult[]) {
+export function abnormalLabs(results: LabAnalysisResult[]) {
   return results.filter(
     (result) => result.result_status === 'high' || result.result_status === 'low',
   );
@@ -89,36 +89,57 @@ function labDisplayName(result: LabAnalysisResult) {
 export function buildLaboratorySummary(results: LabAnalysisResult[]) {
   if (results.length === 0) return 'Laboratuvar sonucu bulunamadı.';
   const abnormal = abnormalLabs(results);
-  if (abnormal.length === 0) return 'Belirgin yüksek/düşük laboratuvar bulgusu yok.';
+  if (abnormal.length === 0) return 'Yüksek veya düşük laboratuvar bulgusu yok.';
 
   const preview = abnormal.slice(0, 8).map((result) => {
     const direction = result.result_status === 'high' ? 'yüksek' : 'düşük';
     const reference = labReference(result);
     return `${labDisplayName(result)}: ${result.normalized_value} ${result.unit}${reference ? ` · ref ${reference}` : ''} (${direction})`;
   });
-  const suffix = abnormal.length > preview.length ? ` +${abnormal.length - preview.length} bulgu` : '';
+  const suffix = abnormal.length > preview.length ? ` +${abnormal.length - preview.length} yüksek/düşük bulgu` : '';
   return `${preview.join('; ')}${suffix}`;
 }
 
 export function buildLaboratoryAiSummary(results: LabAnalysisResult[]) {
   const abnormal = abnormalLabs(results);
-  if (abnormal.length === 0) return 'Patolojik laboratuvar bulgusu yok.';
+  if (abnormal.length === 0) return 'Yüksek veya düşük laboratuvar bulgusu yok.';
 
   return abnormal
-    .slice(0, 8)
     .map((result) => {
       const direction = result.result_status === 'high' ? 'yüksek' : 'düşük';
       const reference = labReference(result);
       return `${labDisplayName(result)} ${result.normalized_value} ${result.unit}${reference ? ` (ref ${reference})` : ''}: ${direction}`;
     })
     .join('; ')
-    .slice(0, 320);
+    .slice(0, 900);
+}
+
+function metadataText(report: RadiologyReport, key: string) {
+  const value = report.metadata_json?.[key];
+  return typeof value === 'string' ? value : '';
 }
 
 function normalizedModality(report: RadiologyReport) {
-  return `${report.modality ?? ''} ${report.metadata_json?.modality ?? ''}`
+  return [
+    report.modality,
+    metadataText(report, 'modality'),
+    metadataText(report, 'requested_modality'),
+    metadataText(report, 'detected_modality'),
+    metadataText(report, 'supported_modality'),
+  ]
+    .filter(Boolean)
+    .join(' ')
     .toUpperCase()
     .trim();
+}
+
+function ultrasoundNameEvidence(report: RadiologyReport) {
+  const filename = (report.file_name ?? '').toLocaleLowerCase('tr-TR');
+  return (
+    filename.includes('ultrason') ||
+    filename.includes('ultrasound') ||
+    filename.includes('usg')
+  );
 }
 
 export function isUltrasoundReport(report: RadiologyReport) {
@@ -128,22 +149,60 @@ export function isUltrasoundReport(report: RadiologyReport) {
     modality.includes('ULTRASOUND') ||
     modality.includes('ULTRASON') ||
     modality.includes('USG') ||
-    tokens.includes('US')
+    tokens.includes('US') ||
+    ultrasoundNameEvidence(report)
   );
 }
 
+const RESULT_HEADING =
+  /(?:^|\s)(?:SONUÇ|SONUC|İZLENİM|IZLENIM|DEĞERLENDİRME|DEGERLENDIRME|KANAAT|IMPRESSION|CONCLUSION)\s*[:\-–—]?\s*/iu;
+const NEXT_SECTION_HEADING =
+  /\s(?:BULGU|BULGULAR|FINDINGS|TEKNİK|TEKNIK|TECHNIQUE|KLİNİK|KLINIK|ENDİKASYON|ENDIKASYON|ÖNERİLER|ONERILER)\s*[:\-–—]?\s*/iu;
+
+function extractUltrasoundResultText(report: RadiologyReport) {
+  const impression = clean(report.impression, 1200);
+  if (impression) return impression;
+
+  const original = report.original_text?.replace(/\s+/g, ' ').trim() ?? '';
+  if (!original) return null;
+
+  const heading = RESULT_HEADING.exec(original);
+  if (!heading || heading.index == null) return null;
+
+  const start = heading.index + heading[0].length;
+  const remainder = original.slice(start);
+  const next = NEXT_SECTION_HEADING.exec(remainder);
+  const resultText = next && next.index != null ? remainder.slice(0, next.index) : remainder;
+  return clean(resultText, 1200);
+}
+
+function reportTimestamp(report: RadiologyReport) {
+  const value = Date.parse(report.updated_at || report.created_at || report.report_date || '');
+  return Number.isFinite(value) ? value : 0;
+}
+
 export function getLatestUltrasoundReport(reports: RadiologyReport[]) {
-  return reports.find(isUltrasoundReport) ?? null;
+  const ultrasoundReports = reports.filter(isUltrasoundReport);
+  if (ultrasoundReports.length === 0) return null;
+
+  // Prefer a record that actually contains the radiologist's explicit result
+  // section. A newer image-only/fallback archive must not hide an older usable
+  // ultrasound report.
+  return [...ultrasoundReports].sort((a, b) => {
+    const aHasResult = Boolean(extractUltrasoundResultText(a));
+    const bHasResult = Boolean(extractUltrasoundResultText(b));
+    if (aHasResult !== bHasResult) return aHasResult ? -1 : 1;
+    return reportTimestamp(b) - reportTimestamp(a);
+  })[0];
 }
 
 export function buildUltrasoundSummary(report: RadiologyReport | null) {
   if (!report) return 'Ultrason raporu bulunamadı.';
 
-  // Backend stores the explicit SONUÇ/İZLENİM section in impression for
-  // ultrasound. Do not fall back to detailed findings: case evaluation should
-  // receive only the radiologist's result/conclusion text.
-  const resultText = clean(report.impression, 600);
-  return resultText || 'Ultrason raporunda Sonuç/İzlenim bölümü bulunamadı.';
+  const resultText = extractUltrasoundResultText(report);
+  if (resultText) return resultText;
+
+  return 'Ultrason kaydı bulundu ancak Sonuç/İzlenim metni çıkarılamadı.';
 }
 
 export function buildUltrasoundContextFlags(report: RadiologyReport | null) {
