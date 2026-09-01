@@ -176,7 +176,7 @@ export default function CaseEvaluationPage() {
           analysisRunId
             ? getAnalysisRunResults(analysisRunId)
             : Promise.resolve([]),
-          listPatientRadiologyReports(),
+          listPatientRadiologyReports(null, { includeUnanalyzed: true }),
           analysisRunId
             ? getClinicalHypothesesForAnalysisRun(analysisRunId)
             : Promise.resolve([]),
@@ -311,7 +311,7 @@ export default function CaseEvaluationPage() {
       <header>
         <h1 className="text-2xl font-bold text-slate-950">Bulguları Değerlendir</h1>
         <p className="mt-2 text-sm leading-6 text-slate-500">
-          Önce klinik, laboratuvar ve ultrason verileri kısa bir vaka özetine dönüştürülür; yalnızca gerekirse kompakt AI değerlendirmesi çalışır.
+          Önce klinik, yüksek/düşük laboratuvar bulguları ve ultrason sonucu kısa bir vaka özetine dönüştürülür; yalnızca gerekirse kompakt AI değerlendirmesi çalışır.
         </p>
       </header>
 
@@ -325,13 +325,13 @@ export default function CaseEvaluationPage() {
         <div>
           <h2 className="text-lg font-bold text-slate-950">Vaka Özeti</h2>
           <p className="mt-1 text-xs leading-5 text-slate-500">
-            Bu üç özet deterministic olarak hazırlanır. Tam dosya AI'ya gönderilmez.
+            Bu üç özet deterministik olarak hazırlanır. Tam dosya AI'ya gönderilmez; normal laboratuvar sonuçları bu özete dahil edilmez.
           </p>
         </div>
         <div className="mt-4 grid gap-3">
           <SummaryCard title="Klinik özet" text={sourceSummaries.clinical} />
-          <SummaryCard title="Laboratuvar özeti" text={sourceSummaries.laboratory} />
-          <SummaryCard title="Ultrason özeti" text={sourceSummaries.ultrasound} />
+          <SummaryCard title="Laboratuvar özeti · yalnızca yüksek/düşük" text={sourceSummaries.laboratory} />
+          <SummaryCard title="Ultrason sonucu" text={sourceSummaries.ultrasound} />
         </div>
       </section>
 
