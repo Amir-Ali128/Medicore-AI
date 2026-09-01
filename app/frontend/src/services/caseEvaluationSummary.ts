@@ -117,12 +117,53 @@ export function getLatestUltrasoundReport(reports: RadiologyReport[]) {
 export function buildUltrasoundSummary(report: RadiologyReport | null) {
   if (!report) return 'Ultrason raporu bulunamadı.';
 
-  const source =
-    clean(report.impression, 320) ||
-    clean(report.summary, 320) ||
-    clean(report.findings.map((finding) => finding.text).join('; '), 320);
+  const findingTexts = report.findings
+    .map((finding) => clean(finding.text, 180))
+    .filter((value): value is string => Boolean(value));
 
-  return source || 'Ultrason raporu mevcut ancak kısa özet oluşturulamadı.';
+  const attentionFindings = report.findings.filter(
+    (finding) =>
+      finding.is_critical ||
+      finding.classification === 'critical' ||
+      finding.classification === 'abnormal',
+  );
+
+  const criticalFindingCount = Math.max(
+    report.critical_findings.length,
+    report.findings.filter(
+      (finding) => finding.is_critical || finding.classification === 'critical',
+    ).length,
+  );
+
+  const clinicalLead =
+    clean(report.impression, 280) ||
+    clean(findingTexts.slice(0, 2).join('; '), 280);
+
+  const parts: string[] = [];
+
+  if (clinicalLead) {
+    parts.push(clinicalLead);
+  } else {
+    parts.push('Ultrason raporu yapılandırılmış olarak kaydedildi.');
+  }
+
+  if (criticalFindingCount > 0) {
+    parts.push(
+      `${criticalFindingCount} kritik bulgu işaretlendi; öncelikli hekim doğrulaması gerekir.`,
+    );
+  } else if (attentionFindings.length > 0) {
+    parts.push(
+      `${attentionFindings.length} bulgu dikkat gerektiriyor; klinik bulgularla birlikte hekim değerlendirmesi önerilir.`,
+    );
+  } else {
+    parts.push('Doğrulanmış kritik uyarı saptanmadı.');
+  }
+
+  if (report.measurements.length > 0) {
+    parts.push(`${report.measurements.length} ölçüm kaydı mevcut.`);
+  }
+
+  return parts.join(' ');
 }
 
 export function buildUltrasoundContextFlags(report: RadiologyReport | null) {
