@@ -26,6 +26,7 @@ import {
   type LabAnalysisResult,
 } from '../services/labAnalysisClient';
 import { evaluateMultisourceCase } from '../services/multisourceEvaluationClient';
+import { buildRadiologyComparisonSummary } from '../services/radiologyCaseContext';
 import {
   listPatientRadiologyReports,
   type RadiologyReport,
@@ -230,6 +231,11 @@ export default function CaseEvaluationPage() {
     [radiologyReports],
   );
 
+  const radiologyComparison = useMemo(
+    () => buildRadiologyComparisonSummary(radiologyReports),
+    [radiologyReports],
+  );
+
   const sourceSummaries = useMemo<CaseSourceSummaries>(
     () => ({
       clinical: buildClinicalSummary(clinicalIntake),
@@ -271,6 +277,7 @@ export default function CaseEvaluationPage() {
         clinicalIntake,
         aiSummaries,
         buildUltrasoundContextFlags(latestUltrasound),
+        radiologyComparison,
       );
       setResult(nextResult);
       setStoredHypotheses(
@@ -333,13 +340,16 @@ export default function CaseEvaluationPage() {
         <div>
           <h2 className="text-lg font-bold text-slate-950">Vaka Özeti</h2>
           <p className="mt-1 text-xs leading-5 text-slate-500">
-            Bu üç özet deterministik olarak hazırlanır. Tam dosya AI'ya gönderilmez; normal laboratuvar sonuçları bu özete dahil edilmez.
+            Kaynak tarihleri korunur. Tam dosya AI'ya gönderilmez; normal laboratuvar sonuçları bu özete dahil edilmez.
           </p>
         </div>
         <div className="mt-4 grid gap-3">
           <SummaryCard title="Klinik özet" text={sourceSummaries.clinical} />
           <SummaryCard title="Laboratuvar özeti · yalnızca yüksek/düşük" text={sourceSummaries.laboratory} />
           <SummaryCard title="Ultrason sonucu" text={sourceSummaries.ultrasound} />
+          {radiologyComparison ? (
+            <SummaryCard title="Radyoloji karşılaştırması" text={radiologyComparison} />
+          ) : null}
         </div>
         {performedStudies.length > 0 ? (
           <p className="mt-3 text-xs leading-5 text-slate-500">
