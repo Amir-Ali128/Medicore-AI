@@ -13,6 +13,43 @@ function clean(value: string | null | undefined, max = 240) {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
+function formatSourceDate(value: string | null | undefined) {
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return new Intl.DateTimeFormat('tr-TR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  }).format(parsed);
+}
+
+function labMeasuredAt(result: LabAnalysisResult) {
+  const value = (result as LabAnalysisResult & { measured_at?: string | null }).measured_at;
+  return typeof value === 'string' ? value : null;
+}
+
+function labRawValue(result: LabAnalysisResult) {
+  const value = (result as LabAnalysisResult & { raw_value?: string | null }).raw_value;
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function labValueText(result: LabAnalysisResult) {
+  const raw = labRawValue(result);
+  if (raw && (/\+/.test(raw) || /^(pozitif|negatif|eser|trace|positive|negative)$/iu.test(raw))) {
+    return raw;
+  }
+  return String(result.normalized_value ?? '—');
+}
+
+function labSourceDate(results: LabAnalysisResult[]) {
+  for (const result of results) {
+    const formatted = formatSourceDate(labMeasuredAt(result));
+    if (formatted) return formatted;
+  }
+  return null;
+}
+
 export function buildClinicalSummary(context: ClinicalIntakeInput | null) {
   if (!context) return 'Klinik bilgi bulunamadı.';
 
@@ -89,29 +126,34 @@ function labDisplayName(result: LabAnalysisResult) {
 export function buildLaboratorySummary(results: LabAnalysisResult[]) {
   if (results.length === 0) return 'Laboratuvar sonucu bulunamadı.';
   const abnormal = abnormalLabs(results);
-  if (abnormal.length === 0) return 'Yüksek veya düşük laboratuvar bulgusu yok.';
+  const sourceDate = labSourceDate(results);
+  const datePrefix = sourceDate ? `${sourceDate} · ` : '';
+  if (abnormal.length === 0) return `${datePrefix}Yüksek veya düşük laboratuvar bulgusu yok.`;
 
   const preview = abnormal.slice(0, 8).map((result) => {
     const direction = result.result_status === 'high' ? 'yüksek' : 'düşük';
     const reference = labReference(result);
-    return `${labDisplayName(result)}: ${result.normalized_value} ${result.unit}${reference ? ` · ref ${reference}` : ''} (${direction})`;
+    const unit = result.unit ? ` ${result.unit}` : '';
+    return `${labDisplayName(result)}: ${labValueText(result)}${unit}${reference ? ` · ref ${reference}` : ''} (${direction})`;
   });
   const suffix = abnormal.length > preview.length ? ` +${abnormal.length - preview.length} yüksek/düşük bulgu` : '';
-  return `${preview.join('; ')}${suffix}`;
+  return `${datePrefix}${preview.join('; ')}${suffix}`;
 }
 
 export function buildLaboratoryAiSummary(results: LabAnalysisResult[]) {
   const abnormal = abnormalLabs(results);
-  if (abnormal.length === 0) return 'Yüksek veya düşük laboratuvar bulgusu yok.';
+  const sourceDate = labSourceDate(results);
+  const datePrefix = sourceDate ? `${sourceDate} · ` : '';
+  if (abnormal.length === 0) return `${datePrefix}Yüksek veya düşük laboratuvar bulgusu yok.`;
 
-  return abnormal
+  return `${datePrefix}${abnormal
     .map((result) => {
       const direction = result.result_status === 'high' ? 'yüksek' : 'düşük';
       const reference = labReference(result);
-      return `${labDisplayName(result)} ${result.normalized_value} ${result.unit}${reference ? ` (ref ${reference})` : ''}: ${direction}`;
+      const unit = result.unit ? ` ${result.unit}` : '';
+      return `${labDisplayName(result)} ${labValueText(result)}${unit}${reference ? ` (ref ${reference})` : ''}: ${direction}`;
     })
-    .join('; ')
-    .slice(0, 900);
+    .join('; ')}`.slice(0, 900);
 }
 
 function metadataText(report: RadiologyReport, key: string) {
@@ -199,10 +241,12 @@ export function getLatestUltrasoundReport(reports: RadiologyReport[]) {
 export function buildUltrasoundSummary(report: RadiologyReport | null) {
   if (!report) return 'Ultrason raporu bulunamadı.';
 
+  const date = formatSourceDate(report.report_date);
+  const prefix = date ? `${date} · ` : '';
   const resultText = extractUltrasoundResultText(report);
-  if (resultText) return resultText;
+  if (resultText) return `${prefix}${resultText}`;
 
-  return 'Ultrason kaydı bulundu ancak Sonuç/İzlenim metni çıkarılamadı.';
+  return `${prefix}Ultrason kaydı bulundu ancak Sonuç/İzlenim metni çıkarılamadı.`;
 }
 
 export function buildUltrasoundContextFlags(report: RadiologyReport | null) {
