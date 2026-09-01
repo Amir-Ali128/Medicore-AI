@@ -1,10 +1,9 @@
 """Fast, PDF-first laboratory upload path.
 
 This endpoint intentionally avoids per-test dictionary/reference/trend database
-round trips during initial PDF ingestion. Every blood-test row readable from the
-PDF is preserved and classified directly against the reference interval printed
-in that report. The result set is persisted in one transaction and can later be
-attached to the selected patient/archive through the existing lab-report routes.
+round trips during initial PDF ingestion. Readable blood-test rows and supported
+urinalysis rows are preserved and classified directly against the reference interval
+printed in that report. Blood and urine counts remain separate in report metadata.
 """
 
 from __future__ import annotations
@@ -31,7 +30,7 @@ from app.schemas.lab_analysis import (
 
 router = APIRouter(prefix="/lab-analysis", tags=["lab-analysis"])
 
-_PARSER_SOURCE = "pdf_direct_upload_v1"
+_PARSER_SOURCE = "pdf_direct_upload_v2_panels"
 
 
 def _decimal(value: Any) -> Decimal | None:
@@ -143,8 +142,11 @@ async def analyze_uploaded_pdf_direct(
     if not rows:
         raise HTTPException(
             status_code=400,
-            detail="PDF içinde sınıflandırılabilir kan tahlili satırı bulunamadı.",
+            detail="PDF içinde sınıflandırılabilir laboratuvar veya idrar sonucu bulunamadı.",
         )
+
+    blood_count = sum(1 for row in rows if row.get("panel") != "urinalysis")
+    urinalysis_count = sum(1 for row in rows if row.get("panel") == "urinalysis")
 
     # The existing demo entities are used only as temporary ownership until the
     # user presses Kaydet and attaches the report to the active patient.
@@ -160,11 +162,15 @@ async def analyze_uploaded_pdf_direct(
         report_date=report_date,
         raw_payload={
             "source": _PARSER_SOURCE,
-            "parsed_blood_test_count": len(rows),
+            "parsed_blood_test_count": blood_count,
+            "parsed_urinalysis_count": urinalysis_count,
+            "parsed_total_result_count": len(rows),
         },
         metadata_json={
             "parser_source": _PARSER_SOURCE,
-            "parsed_blood_test_count": len(rows),
+            "parsed_blood_test_count": blood_count,
+            "parsed_urinalysis_count": urinalysis_count,
+            "parsed_total_result_count": len(rows),
             "reference_policy": "printed_pdf_reference_first",
         },
         status="analyzed",
@@ -222,6 +228,8 @@ async def analyze_uploaded_pdf_direct(
             measured_at=report_date,
             metadata_json={
                 "source": _PARSER_SOURCE,
+                "panel": str(row.get("panel") or "blood"),
+                "semiquantitative": bool(row.get("semiquantitative")),
                 "qualitative_normal": bool(row.get("qualitative_normal")),
             },
         )
