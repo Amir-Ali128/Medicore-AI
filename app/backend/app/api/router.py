@@ -14,6 +14,7 @@ from app.api.routes import (
     feedback,
     lab_analysis,
     lab_manual_entry,
+    lab_pdf_direct_alias,
     lab_pdf_direct_upload,
     lab_pdf_system_extract,
     lab_pdf_system_extract_runtime,
@@ -61,11 +62,10 @@ api_router.include_router(analytics.router)
 api_router.include_router(ai_cost_analytics.router)
 api_router.include_router(feedback.router)
 api_router.include_router(patients.router)
-# The direct PDF route must be registered first: FastAPI resolves duplicate
-# method/path pairs in registration order. It parses and persists all readable
-# blood-test rows in one transaction and avoids the legacy per-test DB pipeline.
+# Stable, unique endpoint used by the frontend for PDF-first parsing.
+api_router.include_router(lab_pdf_direct_alias.router)
+# Keep /lab-analysis/upload direct-first for backwards compatibility.
 api_router.include_router(lab_pdf_direct_upload.router)
-# Keep the older routes as compatibility fallbacks for other callers.
 api_router.include_router(lab_pdf_system_extract.router)
 api_router.include_router(lab_analysis.router)
 api_router.include_router(lab_manual_entry.router)
