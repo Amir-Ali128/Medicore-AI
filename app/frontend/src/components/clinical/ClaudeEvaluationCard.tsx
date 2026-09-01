@@ -235,7 +235,7 @@ export default function ClaudeEvaluationCard({
                 Yüksek / Düşük Laboratuvar Raporu
               </h4>
               <p className="mt-1 text-xs text-slate-500">
-                Sadece referans dışındaki laboratuvar parametreleri ve sınıflandırma nedeni gösterilir.
+                Referans dışı değer, sayısal sınıflandırma nedeni ve klinik olarak ilişkili olabilecek durumlar birlikte gösterilir.
               </p>
             </div>
             <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700">
@@ -246,6 +246,9 @@ export default function ClaudeEvaluationCard({
           <div className="mt-3 grid gap-3 lg:grid-cols-2">
             {labFindings.map((finding, index) => {
               const tone = labStatusPresentation(finding.status);
+              const possibleCauses = Array.isArray(finding.possible_causes)
+                ? finding.possible_causes.filter((cause): cause is string => typeof cause === 'string')
+                : [];
               return (
                 <div
                   key={`${finding.name}-${finding.status}-${index}`}
@@ -280,13 +283,43 @@ export default function ClaudeEvaluationCard({
                       </p>
                     ) : null}
                   </div>
+
+                  {finding.clinical_interpretation || possibleCauses.length > 0 ? (
+                    <div className="mt-3 rounded-lg border border-violet-100 bg-violet-50/50 px-3 py-3">
+                      <p className="text-xs font-semibold text-violet-900">
+                        Klinik olarak ne anlama gelebilir?
+                      </p>
+                      {finding.clinical_interpretation ? (
+                        <p className="mt-1 text-xs leading-5 text-slate-700">
+                          {finding.clinical_interpretation}
+                        </p>
+                      ) : null}
+                      {possibleCauses.length > 0 ? (
+                        <div className="mt-2">
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-violet-800">
+                            İlişkili olabilecek durumlar
+                          </p>
+                          <ul className="mt-1.5 space-y-1 text-xs leading-5 text-slate-700">
+                            {possibleCauses.map((cause) => (
+                              <li key={cause}>• {cause}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null}
+                      {finding.clinical_note ? (
+                        <p className="mt-2 border-t border-violet-100 pt-2 text-[11px] leading-4 text-slate-500">
+                          {finding.clinical_note}
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
               );
             })}
           </div>
 
           <p className="mt-3 text-xs leading-5 text-slate-500">
-            Bu açıklamalar PDF&apos;deki ölçüm ile referans sınırının deterministik karşılaştırmasına dayanır; tanı değildir.
+            Referans karşılaştırması deterministiktir. Klinik ilişkiler olasılık düzeyindedir; tek bir laboratuvar sonucu hastalık tanısı koydurmaz.
           </p>
         </div>
       ) : null}
