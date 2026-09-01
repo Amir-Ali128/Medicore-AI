@@ -15,6 +15,7 @@ from app.api.routes import (
     lab_analysis,
     lab_manual_entry,
     lab_pdf_system_extract,
+    lab_pdf_system_extract_runtime,
     lab_reports,
     lab_results,
     patient_timeline,
@@ -26,7 +27,7 @@ from app.domain.radiology_report_safety import analyze_radiology_report_safely
 from app.schemas.lab_analysis import PatientMetadataOutput
 
 # Keep the existing radiology routes intact while enforcing the conservative
-# second-pass evidence filter for every manual-text and PDF analysis request.
+# findings-only evidence filter for every manual-text and PDF analysis request.
 radiology_reports.analyze_radiology_report = analyze_radiology_report_safely
 
 
@@ -59,8 +60,8 @@ api_router.include_router(analytics.router)
 api_router.include_router(ai_cost_analytics.router)
 api_router.include_router(feedback.router)
 api_router.include_router(patients.router)
-# Register the system-backed PDF extractor first so /lab-analysis/upload pulls
-# every test it can match from MediCore's clinical parameter dictionary.
+# Register the system-backed PDF extractor first so /lab-analysis/upload reads
+# all blood-test rows before the legacy upload route.
 api_router.include_router(lab_pdf_system_extract.router)
 api_router.include_router(lab_analysis.router)
 api_router.include_router(lab_manual_entry.router)
