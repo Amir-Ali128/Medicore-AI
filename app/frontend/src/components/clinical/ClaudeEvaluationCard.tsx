@@ -84,12 +84,29 @@ function riskPresentation(value: unknown) {
 
 function flagLabel(flag: string) {
   if (flag === 'ULTRASOUND_CRITICAL_REVIEW') {
-    return 'Ultrason: kritik bulgu incelemesi';
+    return 'Ultrason: sonuç bölümünde kritik değerlendirme';
   }
   if (flag === 'ULTRASOUND_ABNORMAL_REVIEW') {
-    return 'Ultrason: dikkat gerektiren bulgu';
+    return 'Ultrason: sonuç bölümünde dikkat gerektiren ifade';
   }
   return flag.replace(/_/g, ' ').toLocaleLowerCase('tr-TR');
+}
+
+function labStatusPresentation(status: string) {
+  if (status === 'high') {
+    return {
+      label: 'YÜKSEK',
+      badge: 'border-rose-200 bg-rose-50 text-rose-700',
+      card: 'border-rose-100',
+      question: 'Neden yüksek?',
+    };
+  }
+  return {
+    label: 'DÜŞÜK',
+    badge: 'border-sky-200 bg-sky-50 text-sky-700',
+    card: 'border-sky-100',
+    question: 'Neden düşük?',
+  };
 }
 
 function SuggestedTestList({
@@ -147,6 +164,10 @@ export default function ClaudeEvaluationCard({
   const limitations = readStringList(metadata.limitations);
   const flags = readStringList(metadata.flags);
   const pathologicalFindings = readPathologicalFindings(metadata.pathological_findings);
+  const labFindings = pathologicalFindings.filter(
+    (finding) => finding.source === 'laboratory' && (finding.status === 'high' || finding.status === 'low'),
+  );
+  const vitalFindings = pathologicalFindings.filter((finding) => finding.source === 'vital');
   const compactMode = metadata.compact_mode === true;
   const aiCalled = metadata.ai_called === true;
   const risk = riskPresentation(metadata.risk);
@@ -160,7 +181,7 @@ export default function ClaudeEvaluationCard({
             <span>AI destekli klinik değerlendirme</span>
             {compactMode ? (
               <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] normal-case tracking-normal text-slate-600">
-                Klinik + laboratuvar + ultrason
+                Klinik + laboratuvar + ultrason sonucu
               </span>
             ) : null}
           </div>
@@ -206,33 +227,83 @@ export default function ClaudeEvaluationCard({
         ) : null}
       </div>
 
-      {pathologicalFindings.length > 0 ? (
-        <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50/60 p-4">
+      {labFindings.length > 0 ? (
+        <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h4 className="text-sm font-semibold text-rose-950">Patolojik Bulgular</h4>
-            <span className="rounded-full border border-rose-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-rose-700">
-              {pathologicalFindings.length} bulgu
+            <div>
+              <h4 className="text-sm font-semibold text-slate-950">
+                Yüksek / Düşük Laboratuvar Raporu
+              </h4>
+              <p className="mt-1 text-xs text-slate-500">
+                Sadece referans dışındaki laboratuvar parametreleri ve sınıflandırma nedeni gösterilir.
+              </p>
+            </div>
+            <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700">
+              {labFindings.length} parametre
             </span>
           </div>
-          <ul className="mt-3 space-y-2">
-            {pathologicalFindings.map((finding, index) => (
-              <li
-                key={`${finding.source}-${finding.name}-${finding.status}-${index}`}
-                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-rose-100 bg-white px-3 py-2"
-              >
-                <span className="text-sm font-medium text-slate-900">
-                  {finding.display}
-                </span>
-                <span className="text-[11px] font-semibold uppercase tracking-wide text-rose-700">
-                  {finding.source === 'laboratory' ? 'Laboratuvar' : 'Vital'}
-                </span>
-              </li>
-            ))}
-          </ul>
-          <p className="mt-3 text-xs leading-5 text-rose-800">
-            Bu alan yalnızca sistem tarafından yüksek/düşük olarak sınıflandırılan
-            yapılandırılmış bulgulardan oluşturulur.
+
+          <div className="mt-3 grid gap-3 lg:grid-cols-2">
+            {labFindings.map((finding, index) => {
+              const tone = labStatusPresentation(finding.status);
+              return (
+                <div
+                  key={`${finding.name}-${finding.status}-${index}`}
+                  className={`rounded-xl border bg-white p-4 ${tone.card}`}
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-950">{finding.name}</p>
+                      <p className="mt-1 text-sm text-slate-700">
+                        {finding.value ?? '—'} {finding.unit ?? ''}
+                      </p>
+                    </div>
+                    <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${tone.badge}`}>
+                      {tone.label}
+                    </span>
+                  </div>
+
+                  {finding.reference_text ? (
+                    <p className="mt-3 text-xs text-slate-500">
+                      Referans: <span className="font-medium text-slate-700">{finding.reference_text}</span>
+                    </p>
+                  ) : null}
+
+                  <div className="mt-3 rounded-lg bg-slate-50 px-3 py-2.5">
+                    <p className="text-xs font-semibold text-slate-700">{tone.question}</p>
+                    <p className="mt-1 text-xs leading-5 text-slate-600">
+                      {finding.classification_reason ?? finding.backend_reason ?? finding.display}
+                    </p>
+                    {typeof finding.deviation_percent === 'number' ? (
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        Referans sınırından sapma: %{finding.deviation_percent.toFixed(1)}
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <p className="mt-3 text-xs leading-5 text-slate-500">
+            Bu açıklamalar PDF&apos;deki ölçüm ile referans sınırının deterministik karşılaştırmasına dayanır; tanı değildir.
           </p>
+        </div>
+      ) : null}
+
+      {vitalFindings.length > 0 ? (
+        <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50/60 p-4">
+          <h4 className="text-sm font-semibold text-amber-950">Vital dikkat sinyalleri</h4>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {vitalFindings.map((finding, index) => (
+              <span
+                key={`${finding.name}-${index}`}
+                className="rounded-full border border-amber-200 bg-white px-2.5 py-1 text-xs font-medium text-amber-800"
+              >
+                {finding.display}
+              </span>
+            ))}
+          </div>
         </div>
       ) : null}
 
