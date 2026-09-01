@@ -1,9 +1,9 @@
-"""Experimental X-ray / ultrasound image-review endpoint.
+"""Image upload endpoint for medical images and photographed report documents.
 
-The endpoint is intentionally assistive: it stores non-diagnostic visual
-observations next to the original image and always marks the record as requiring
-physician review. If the AI service cannot return a usable review, the original
-image is still archived instead of failing the whole upload.
+JPG/PNG/WEBP uploads are first classified as a written medical report page or a
+true medical image. Report documents are de-identified, their explicit result /
+impression section is stored separately, and additional source-derived findings
+are retained. True medical images remain assistive and non-diagnostic.
 """
 
 from __future__ import annotations
@@ -23,8 +23,8 @@ from app.domain.radiology_image_ai import (
     SUPPORTED_MODALITIES,
     normalize_body_part,
     normalize_image_modality,
-    review_radiology_image,
 )
+from app.domain.report_document_image_ai import review_radiology_media
 from app.infrastructure.database.models.radiology_report import RadiologyReport
 from app.infrastructure.database.models.user import User
 from app.infrastructure.database.repositories.radiology_report_repository import (
@@ -102,6 +102,15 @@ def _region_summary(body_part: str, summary: str) -> str:
     return f"Bölge: {label}. {clean_summary}" if clean_summary else f"Bölge: {label}."
 
 
+def _dedupe(values: list[str]) -> list[str]:
+    result: list[str] = []
+    for value in values:
+        clean = " ".join(value.split()).strip()
+        if clean and clean not in result:
+            result.append(clean)
+    return result
+
+
 async def _save_ai_fallback(
     *,
     patient_id: uuid.UUID,
@@ -115,7 +124,11 @@ async def _save_ai_fallback(
     current_user: User,
     reason: str,
 ) -> RadiologyReport:
-    inferred_body_part = normalize_body_part(body_part) or _infer_body_part_from_filename(filename) or "OTHER"
+    inferred_body_part = (
+        normalize_body_part(body_part)
+        or _infer_body_part_from_filename(filename)
+        or "OTHER"
+    )
     fallback_modality = None if normalized_modality == "AUTO" else normalized_modality
 
     report = await radiology_reports._persist_binary_file(
@@ -133,13 +146,14 @@ async def _save_ai_fallback(
     report.source_type = "image_ai_fallback"
     report.summary = _region_summary(
         inferred_body_part,
-        "AI ön değerlendirmesi tamamlanamadı; görüntü kaybedilmeden dosya olarak kaydedildi ve hekim incelemesi gerekir.",
+        "AI ön değerlendirmesi tamamlanamadı; dosya kaybedilmeden arşivlendi ve hekim incelemesi gerekir.",
     )
     metadata = dict(report.metadata_json or {})
     metadata.update(
         {
             "analysis_available": False,
             "visual_analysis_available": False,
+            "document_analysis_available": False,
             "visual_analysis_fallback": True,
             "visual_analysis_error": reason[:800],
             "requested_modality": normalized_modality,
@@ -174,14 +188,14 @@ async def create_radiology_image_review(
     if normalized_modality not in SUPPORTED_MODALITIES:
         raise HTTPException(
             status_code=400,
-            detail="AI görüntü ön değerlendirmesi röntgen, ultrason veya otomatik modalite algılama ile kullanılabilir.",
+            detail="Görüntü değerlendirmesi röntgen, ultrason veya otomatik içerik algılama ile kullanılabilir.",
         )
 
     media_type = _resolve_media_type(filename, file.content_type)
     if media_type is None:
         raise HTTPException(
             status_code=400,
-            detail="AI görüntü ön değerlendirmesi için JPG, PNG veya WEBP yükleyin. DICOM ve diğer formatlar normal dosya yükleme ile arşivlenebilir.",
+            detail="Görüntü/rapor incelemesi için JPG, PNG veya WEBP yükleyin. DICOM ve diğer formatlar normal dosya yükleme ile arşivlenebilir.",
         )
 
     content = await file.read(_MAX_IMAGE_BYTES + 1)
@@ -196,7 +210,7 @@ async def create_radiology_image_review(
     requested_body_part = normalize_body_part(body_part) or _infer_body_part_from_filename(filename)
 
     try:
-        review = await review_radiology_image(
+        review = await review_radiology_media(
             content=content,
             media_type=media_type,
             modality=normalized_modality,
@@ -227,17 +241,23 @@ async def create_radiology_image_review(
             content=content,
             session=session,
             current_user=current_user,
-            reason="AI görüntü modeli yapılandırılmamış veya geçici olarak kullanılamıyor.",
+            reason="AI görüntü/rapor modeli yapılandırılmamış veya geçici olarak kullanılamıyor.",
         )
 
+    is_document = review.document_kind == "REPORT_DOCUMENT"
+    finding_texts = _dedupe(
+        list(review.result_items) + list(review.key_findings)
+        if is_document
+        else list(review.observations)
+    )
     findings = [
         {
-            "text": observation,
+            "text": text,
             "classification": "observation",
             "is_critical": False,
-            "matched_terms": [],
+            "matched_terms": ["report_document"] if is_document else [],
         }
-        for observation in review.observations
+        for text in finding_texts[:40]
     ]
 
     stored_modality = (
@@ -245,12 +265,22 @@ async def create_radiology_image_review(
         if normalized_modality == "AUTO"
         else normalized_modality
     )
+    if not stored_modality or stored_modality == "UNKNOWN":
+        stored_modality = "UNKNOWN"
     stored_body_part = requested_body_part or review.detected_body_part or "OTHER"
+
+    result_summary = review.result_text if is_document and review.result_text else review.summary
+    source_type = "report_document_ai_review" if is_document else "image_ai_review"
+    analysis_mode = (
+        "multimodal_report_document_extraction"
+        if is_document
+        else "multimodal_dl_ml_assistive"
+    )
 
     report = RadiologyReport(
         patient_id=patient_id,
         uploaded_by_user_id=current_user.id,
-        source_type="image_ai_review",
+        source_type=source_type,
         file_name=filename,
         report_date=report_date,
         modality=stored_modality,
@@ -260,18 +290,27 @@ async def create_radiology_image_review(
         measurements_json=[],
         dexa_metrics_json=[],
         critical_findings_json=[],
-        impression=None,
-        summary=_region_summary(stored_body_part, review.summary),
+        impression=review.result_text or None if is_document else None,
+        summary=_region_summary(stored_body_part, result_summary),
         status="needs_review",
         metadata_json={
             "content_type": media_type,
             "upload_size_bytes": len(content),
             "original_file_stored": True,
             "analysis_available": True,
-            "visual_analysis_available": True,
-            "analysis_mode": "multimodal_dl_ml_assistive",
+            "visual_analysis_available": not is_document,
+            "document_analysis_available": is_document,
+            "document_kind": review.document_kind,
+            "report_type": review.report_type,
+            "analysis_mode": analysis_mode,
             "analysis_model": review.model,
             "analysis_limitations": review.limitations,
+            "result_text": review.result_text,
+            "result_items": list(review.result_items),
+            "key_findings": list(review.key_findings),
+            "recommendations": list(review.recommendations),
+            "comparison_text": review.comparison_text,
+            "deidentified_visible_text": bool(review.visible_text),
             "physician_review_required": True,
             "not_diagnostic": True,
             "requested_modality": normalized_modality,
