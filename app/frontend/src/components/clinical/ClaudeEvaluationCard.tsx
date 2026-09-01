@@ -3,6 +3,7 @@ import type {
   ClaudePathologicalFinding,
   ClaudeSuggestedTest,
 } from '../../services/claudeReviewClient';
+import ClinicalRuleDetails from './ClinicalRuleDetails';
 
 function readStringList(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
@@ -105,6 +106,12 @@ function labStatusPresentation(status: string) {
     badge: 'border-sky-200 bg-sky-50 text-sky-700',
     card: 'border-sky-100',
   };
+}
+
+function findingClinicalSource(finding: ClaudePathologicalFinding) {
+  const value = (finding as ClaudePathologicalFinding & { clinical_source?: unknown })
+    .clinical_source;
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
 function SuggestedTestList({
@@ -237,6 +244,8 @@ export default function ClaudeEvaluationCard({
         ) : null}
       </div>
 
+      <ClinicalRuleDetails metadata={metadata} />
+
       {labFindings.length > 0 ? (
         <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -256,6 +265,7 @@ export default function ClaudeEvaluationCard({
           <div className="mt-3 grid gap-3 lg:grid-cols-2">
             {labFindings.map((finding, index) => {
               const tone = labStatusPresentation(finding.status);
+              const clinicalSource = findingClinicalSource(finding);
               return (
                 <div
                   key={`${finding.name}-${finding.status}-${index}`}
@@ -286,6 +296,11 @@ export default function ClaudeEvaluationCard({
                       {finding.clinical_note ? (
                         <p className="mt-2 border-t border-violet-100 pt-2 text-[11px] leading-4 text-slate-500">
                           {finding.clinical_note}
+                        </p>
+                      ) : null}
+                      {clinicalSource ? (
+                        <p className="mt-2 text-[10px] leading-4 text-slate-400">
+                          Klinik sözlük kaynağı: {clinicalSource}
                         </p>
                       ) : null}
                     </div>
