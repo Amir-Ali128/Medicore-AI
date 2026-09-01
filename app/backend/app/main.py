@@ -33,6 +33,7 @@ from app.domain import claude_possibility_review_runtime as _claude_possibility_
 from app.domain import compact_summary_complete_runtime as _compact_summary_complete_runtime  # noqa: F401
 from app.domain import lab_urinalysis_runtime as _lab_urinalysis_runtime  # noqa: F401
 from app.domain import clinical_rule_extensions_runtime as _clinical_rule_extensions_runtime  # noqa: F401
+from app.domain import clinical_rule_extensions_fix_runtime as _clinical_rule_extensions_fix_runtime  # noqa: F401
 from app.infrastructure.admin_bootstrap import ensure_bootstrap_admin
 from app.infrastructure.database.feedback_migrations import ensure_user_feedback
 from app.infrastructure.database.session import AsyncSessionFactory, engine
