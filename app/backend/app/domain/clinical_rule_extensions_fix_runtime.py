@@ -1,4 +1,4 @@
-"""Compatibility refinements for performed-study canonicalization."""
+"""Compatibility refinements for performed-study and source canonicalization."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ from datetime import date
 from typing import Any
 
 from app.domain import clinical_rule_extensions_runtime as rules
+from app.domain import multisource_summary_runtime as multisource
 
 _original_canonical_study_codes = rules._canonical_study_codes
 _original_performed_studies = rules._performed_studies
@@ -81,3 +82,9 @@ def _performed_studies_with_inventory(metadata: dict[str, Any]) -> list[dict[str
 
 rules._canonical_study_codes = _canonical_study_codes_with_abdominal_context
 rules._performed_studies = _performed_studies_with_inventory
+
+# The comparison statement was already de-identified by the radiology document
+# extractor. Keep it separate from the ultrasound result while allowing the compact
+# synthesis to account for documented change from a prior study.
+if "radiology_comparison" not in multisource._SOURCE_KEYS:
+    multisource._SOURCE_KEYS = (*multisource._SOURCE_KEYS, "radiology_comparison")
