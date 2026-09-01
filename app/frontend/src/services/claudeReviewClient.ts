@@ -29,6 +29,9 @@ export type ClaudePathologicalFinding = {
   classification_reason?: string | null;
   deviation_percent?: number | null;
   backend_reason?: string | null;
+  clinical_interpretation?: string | null;
+  possible_causes?: string[];
+  clinical_note?: string | null;
 };
 
 export type ClaudeEvaluationMetadata = Record<string, unknown> & {
@@ -38,6 +41,8 @@ export type ClaudeEvaluationMetadata = Record<string, unknown> & {
   pathological_findings?: ClaudePathologicalFinding[];
   pathological_count?: number;
   pathological_findings_source?: string;
+  clinical_interpretation_count?: number;
+  clinical_interpretation_source?: string;
   ai_called?: boolean;
   compact_mode?: boolean;
   max_output_tokens?: number;
