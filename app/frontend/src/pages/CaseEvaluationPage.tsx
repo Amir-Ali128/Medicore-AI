@@ -12,6 +12,7 @@ import {
   buildClinicalSummary,
   buildLaboratoryAiSummary,
   buildLaboratorySummary,
+  buildPerformedStudyInventory,
   buildUltrasoundContextFlags,
   buildUltrasoundSummary,
   getLatestUltrasoundReport,
@@ -224,13 +225,19 @@ export default function CaseEvaluationPage() {
     [radiologyReports],
   );
 
+  const performedStudies = useMemo(
+    () => buildPerformedStudyInventory(radiologyReports),
+    [radiologyReports],
+  );
+
   const sourceSummaries = useMemo<CaseSourceSummaries>(
     () => ({
       clinical: buildClinicalSummary(clinicalIntake),
       laboratory: buildLaboratorySummary(labResults),
       ultrasound: buildUltrasoundSummary(latestUltrasound),
+      performed_studies: performedStudies,
     }),
-    [clinicalIntake, labResults, latestUltrasound],
+    [clinicalIntake, labResults, latestUltrasound, performedStudies],
   );
 
   const findings = useMemo<
@@ -257,6 +264,7 @@ export default function CaseEvaluationPage() {
         clinical: buildClinicalAiSummary(clinicalIntake),
         laboratory: buildLaboratoryAiSummary(labResults),
         ultrasound: sourceSummaries.ultrasound,
+        performed_studies: performedStudies,
       };
       const nextResult = await evaluateMultisourceCase(
         analysisRunId,
@@ -333,6 +341,11 @@ export default function CaseEvaluationPage() {
           <SummaryCard title="Laboratuvar özeti · yalnızca yüksek/düşük" text={sourceSummaries.laboratory} />
           <SummaryCard title="Ultrason sonucu" text={sourceSummaries.ultrasound} />
         </div>
+        {performedStudies.length > 0 ? (
+          <p className="mt-3 text-xs leading-5 text-slate-500">
+            {performedStudies.length} kanonik görüntüleme/tetkik kaydı mevcut; tekrar öneriler otomatik filtrelenir.
+          </p>
+        ) : null}
       </section>
 
       {error ? (
