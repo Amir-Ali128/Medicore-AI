@@ -1,10 +1,17 @@
 import type { ClinicalIntakeInput, LabAnalysisResult } from './labAnalysisClient';
 import type { RadiologyReport } from './radiologyClient';
 
+export type PerformedStudy = {
+  code: string;
+  name: string;
+  date: string | null;
+};
+
 export type CaseSourceSummaries = {
   clinical: string;
   laboratory: string;
   ultrasound: string;
+  performed_studies?: PerformedStudy[];
 };
 
 function clean(value: string | null | undefined, max = 240) {
@@ -173,6 +180,133 @@ function normalizedModality(report: RadiologyReport) {
     .join(' ')
     .toUpperCase()
     .trim();
+}
+
+function normalizedStudyText(report: RadiologyReport) {
+  const metadata = report.metadata_json ?? {};
+  const metadataValues = [
+    metadata.modality,
+    metadata.detected_modality,
+    metadata.requested_modality,
+    metadata.body_part,
+    metadata.body_region,
+    metadata.report_type,
+    metadata.study_type,
+    metadata.result_text,
+  ].filter((value): value is string => typeof value === 'string');
+
+  // File name is used only locally as a modality hint. It is never returned in the
+  // canonical inventory sent to the backend/LLM path, so names embedded in files do
+  // not become part of the compact AI payload.
+  return [
+    report.modality,
+    report.body_part,
+    report.impression,
+    report.summary,
+    report.file_name,
+    ...metadataValues,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLocaleLowerCase('tr-TR');
+}
+
+function addStudy(
+  studies: Map<string, PerformedStudy>,
+  code: string,
+  name: string,
+  date: string | null,
+) {
+  const existing = studies.get(code);
+  if (!existing || (!existing.date && date)) {
+    studies.set(code, { code, name, date });
+  }
+}
+
+function canonicalStudiesForReport(report: RadiologyReport) {
+  const text = normalizedStudyText(report);
+  const modality = normalizedModality(report);
+  const body = `${report.body_part ?? ''} ${metadataText(report, 'body_part')} ${metadataText(report, 'body_region')}`.toLocaleLowerCase('tr-TR');
+  const date = report.report_date || null;
+  const studies = new Map<string, PerformedStudy>();
+
+  const isUs =
+    modality.includes('ULTRASOUND') ||
+    modality.includes('ULTRASON') ||
+    modality.includes('USG') ||
+    /\bUS\b/.test(modality) ||
+    text.includes('ultrason') ||
+    text.includes('ultrasound') ||
+    text.includes('usg');
+  const isCt =
+    modality.includes('CT') ||
+    modality.includes('BT') ||
+    text.includes('bilgisayarlı tomografi') ||
+    text.includes('computed tomography');
+  const isMri =
+    modality.includes('MRI') ||
+    modality.includes('MR') ||
+    text.includes('manyetik rezonans') ||
+    text.includes('magnetic resonance');
+
+  if (
+    text.includes('elastografi') ||
+    text.includes('elastography') ||
+    text.includes('fibroscan') ||
+    text.includes('metavir')
+  ) {
+    addStudy(studies, 'LIVER_ELASTOGRAPHY', 'Karaciğer elastografisi', date);
+  }
+
+  const abdominal = /abdomen|abdominal|karaciğer|karaciger|hepat|safra|portal|mezenterik|dalak|splen|pankreas/.test(`${text} ${body}`);
+  const renal = /böbrek|bobrek|renal|üriner|uriner/.test(`${text} ${body}`);
+  const thyroid = /tiroid|thyroid/.test(`${text} ${body}`);
+  const breast = /meme|breast/.test(`${text} ${body}`);
+  const chest = /toraks|thorax|göğüs|gogus|chest|akciğer|akciger|lung/.test(`${text} ${body}`);
+  const brain = /beyin|brain|krani|cranial/.test(`${text} ${body}`);
+
+  if (isUs && abdominal) addStudy(studies, 'US_ABDOMEN', 'Abdominal / hepatobilier ultrasonografi', date);
+  if (isUs && renal) addStudy(studies, 'US_RENAL', 'Renal ultrasonografi', date);
+  if (isUs && thyroid) addStudy(studies, 'US_THYROID', 'Tiroid ultrasonografisi', date);
+  if (isUs && breast) addStudy(studies, 'US_BREAST', 'Meme ultrasonografisi', date);
+
+  if (isCt && abdominal) addStudy(studies, 'CT_ABDOMEN', 'Abdomen BT', date);
+  if (isCt && chest) addStudy(studies, 'CT_CHEST', 'Toraks BT', date);
+  if (isCt && brain) addStudy(studies, 'CT_BRAIN', 'Beyin BT', date);
+  if (isMri && abdominal) addStudy(studies, 'MRI_ABDOMEN', 'Abdomen MR', date);
+  if (isMri && brain) addStudy(studies, 'MRI_BRAIN', 'Beyin MR', date);
+
+  if (modality.includes('MAMMO') || text.includes('mamografi') || text.includes('mammography')) {
+    addStudy(studies, 'MAMMOGRAPHY', 'Mamografi', date);
+  }
+  if (modality.includes('DEXA') || text.includes('dexa') || text.includes('kemik mineral')) {
+    addStudy(studies, 'DEXA', 'DEXA / kemik mineral yoğunluğu', date);
+  }
+  if (modality.includes('PET') || text.includes('pet-ct') || text.includes('pet/bt')) {
+    addStudy(studies, 'PET_CT', 'PET-BT', date);
+  }
+  if ((modality.includes('XRAY') || modality.includes('X-RAY') || text.includes('röntgen') || text.includes('rontgen')) && chest) {
+    addStudy(studies, 'XRAY_CHEST', 'Akciğer grafisi', date);
+  }
+
+  return [...studies.values()];
+}
+
+export function buildPerformedStudyInventory(reports: RadiologyReport[]): PerformedStudy[] {
+  const inventory = new Map<string, PerformedStudy>();
+  for (const report of reports) {
+    for (const study of canonicalStudiesForReport(report)) {
+      const existing = inventory.get(study.code);
+      if (!existing) {
+        inventory.set(study.code, study);
+        continue;
+      }
+      const existingTime = existing.date ? Date.parse(existing.date) : 0;
+      const candidateTime = study.date ? Date.parse(study.date) : 0;
+      if (candidateTime > existingTime) inventory.set(study.code, study);
+    }
+  }
+  return [...inventory.values()].sort((a, b) => a.code.localeCompare(b.code));
 }
 
 function ultrasoundNameEvidence(report: RadiologyReport) {
