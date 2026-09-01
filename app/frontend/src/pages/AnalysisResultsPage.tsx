@@ -12,9 +12,11 @@ import {
 } from '../services/labAnalysisClient';
 
 const ACTIVE_CLINICAL_INTAKE_KEY = 'medicore:activeClinicalIntake';
+const OPEN_LOW_SENTINEL = -1_000_000_000;
+const OPEN_HIGH_SENTINEL = 1_000_000_000;
 
 type BadgeStatus = ComponentProps<typeof StatusBadge>['status'];
-type ResultTone = 'high' | 'low' | 'review';
+type ResultTone = 'normal' | 'high' | 'low' | 'review';
 
 type ClinicalSummaryItem = {
   label: string;
@@ -136,14 +138,25 @@ function buildClinicalSummary(
 }
 
 function toDisplayStatus(status: LabAnalysisResult['result_status']): BadgeStatus {
+  if (status === 'normal') return 'NORMAL' as BadgeStatus;
   if (status === 'low') return 'LOW' as BadgeStatus;
   if (status === 'high') return 'HIGH' as BadgeStatus;
   return 'PENDING' as BadgeStatus;
 }
 
 function formatReferenceRange(result: LabAnalysisResult) {
-  if (result.reference_min === null && result.reference_max === null) return '-';
-  return `${result.reference_min ?? '-'} - ${result.reference_max ?? '-'} ${result.unit ?? ''}`;
+  const min = result.reference_min === null ? null : Number(result.reference_min);
+  const max = result.reference_max === null ? null : Number(result.reference_max);
+  const unit = result.unit ? ` ${result.unit}` : '';
+
+  if (min === null && max === null) return '-';
+  if (min !== null && min <= OPEN_LOW_SENTINEL && max !== null) {
+    return `< ${result.reference_max}${unit}`;
+  }
+  if (max !== null && max >= OPEN_HIGH_SENTINEL && min !== null) {
+    return `> ${result.reference_min}${unit}`;
+  }
+  return `${result.reference_min ?? '-'} - ${result.reference_max ?? '-'}${unit}`;
 }
 
 function ResultTable({
@@ -158,11 +171,13 @@ function ResultTable({
   if (results.length === 0) return null;
 
   const headerClass =
-    tone === 'high'
-      ? 'bg-rose-50 text-rose-800'
-      : tone === 'low'
-        ? 'bg-amber-50 text-amber-800'
-        : 'bg-violet-50 text-violet-800';
+    tone === 'normal'
+      ? 'bg-emerald-50 text-emerald-800'
+      : tone === 'high'
+        ? 'bg-rose-50 text-rose-800'
+        : tone === 'low'
+          ? 'bg-amber-50 text-amber-800'
+          : 'bg-violet-50 text-violet-800';
 
   return (
     <section className="overflow-hidden rounded-xl border border-slate-200">
@@ -254,6 +269,7 @@ export default function AnalysisResultsPage() {
 
   const groupedResults = useMemo(
     () => ({
+      normal: results.filter((result) => result.result_status === 'normal'),
       high: results.filter((result) => result.result_status === 'high'),
       low: results.filter((result) => result.result_status === 'low'),
       review: results.filter(
@@ -269,6 +285,7 @@ export default function AnalysisResultsPage() {
     () => [
       ...groupedResults.high,
       ...groupedResults.low,
+      ...groupedResults.normal,
       ...groupedResults.review,
     ],
     [groupedResults],
@@ -300,6 +317,7 @@ export default function AnalysisResultsPage() {
 
   const summaryCards = [
     ['İşlenen sonuçlar', results.length],
+    ['Normal sonuçlar', groupedResults.normal.length],
     ['Yüksek sonuçlar', groupedResults.high.length],
     ['Düşük sonuçlar', groupedResults.low.length],
     ['Hekim kontrolü gerekenler', groupedResults.review.length],
@@ -315,7 +333,7 @@ export default function AnalysisResultsPage() {
           Klinik ve laboratuvar değerlendirmesi
         </h2>
         <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-500">
-          Klinik bilgiler ve laboratuvar sonuçları aynı raporda birlikte gösterilir.
+          PDF'deki kan testleri rapor referanslarına göre normal, düşük veya yüksek olarak sınıflandırılır; referansı güvenle çözülemeyen sonuçlar ayrıca hekim kontrolüne ayrılır.
         </p>
       </header>
 
@@ -346,7 +364,7 @@ export default function AnalysisResultsPage() {
         </div>
       )}
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         {summaryCards.map(([title, value]) => (
           <div
             key={title}
@@ -361,7 +379,7 @@ export default function AnalysisResultsPage() {
       <SectionCard title="Laboratuvar değerlendirmesi" description="">
         {visibleResults.length === 0 ? (
           <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-6 text-sm text-emerald-800">
-            Anormal veya hekim kontrolü gerektiren sonuç bulunmadı.
+            Sınıflandırılabilir laboratuvar sonucu bulunmadı.
           </div>
         ) : (
           <div className="space-y-5">
@@ -374,6 +392,11 @@ export default function AnalysisResultsPage() {
               title="Düşük sonuçlar"
               results={groupedResults.low}
               tone="low"
+            />
+            <ResultTable
+              title="Normal sonuçlar"
+              results={groupedResults.normal}
+              tone="normal"
             />
             <ResultTable
               title="Hekim kontrolü gerekenler"
