@@ -57,6 +57,7 @@ export async function evaluateMultisourceCase(
   clinicalContext: ClinicalIntakeInput,
   sourceSummaries: CaseSourceSummaries,
   contextFlags: string[],
+  radiologyComparison = '',
 ): Promise<ClaudeReviewGenerationResult> {
   const token = getAccessToken();
   const response = await fetch(
@@ -83,6 +84,7 @@ export async function evaluateMultisourceCase(
             clinical: sourceSummaries.clinical.slice(0, 320),
             laboratory: sourceSummaries.laboratory.slice(0, 320),
             ultrasound: sourceSummaries.ultrasound.slice(0, 320),
+            radiology_comparison: radiologyComparison.slice(0, 320),
           },
           performed_studies: (sourceSummaries.performed_studies ?? []).slice(0, 30).map((study) => ({
             code: study.code,
