@@ -1,5 +1,9 @@
 import { getAccessToken } from './authClient';
 import type { ClinicalIntakeInput } from './labAnalysisClient';
+import {
+  sanitizeClinicalContextForStorage,
+  shouldMaskPatientIdentifiers,
+} from './privacy';
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000';
@@ -45,15 +49,22 @@ function createInternalIndividualReference(): string {
   return `IND-${uuid.slice(0, 20)}`;
 }
 
+function privacyFilteredIntake(intake: ClinicalIntakeInput) {
+  return shouldMaskPatientIdentifiers()
+    ? sanitizeClinicalContextForStorage(intake)
+    : intake;
+}
+
 function payloadFromIntake(intake: ClinicalIntakeInput, protocolNo: string) {
-  const patient = intake.patient_information;
+  const safeIntake = privacyFilteredIntake(intake);
+  const patient = safeIntake.patient_information;
   return {
     protocol_no: protocolNo,
     age: patient.age,
     sex: patient.sex ?? 'unknown',
     height_cm: patient.height_cm,
     weight_kg: patient.weight_kg,
-    clinical_context: intake,
+    clinical_context: safeIntake,
   };
 }
 
@@ -80,7 +91,10 @@ export function activatePatientRecord(record: PatientRecord): void {
 
   const intake = record.metadata_json?.clinical_context;
   if (intake) {
-    localStorage.setItem(ACTIVE_CLINICAL_INTAKE_KEY, JSON.stringify(intake));
+    localStorage.setItem(
+      ACTIVE_CLINICAL_INTAKE_KEY,
+      JSON.stringify(privacyFilteredIntake(intake)),
+    );
   }
 
   const age = intake?.patient_information.age ?? record.metadata_json?.age ?? null;
@@ -91,6 +105,11 @@ export function activatePatientRecord(record: PatientRecord): void {
   const sex = intake?.patient_information.sex ?? record.sex ?? null;
   if (sex && sex !== 'unknown') {
     localStorage.setItem('medicore:lastPatientSex', String(sex));
+  }
+
+  if (shouldMaskPatientIdentifiers()) {
+    localStorage.removeItem('medicore:lastPatientDisplayName');
+    localStorage.removeItem('medicore:lastPatientBirthDate');
   }
 
   window.dispatchEvent(
