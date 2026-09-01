@@ -1,8 +1,8 @@
 """Enrich compact clinical evidence with deterministic lab reference bounds.
 
 This does not increase what is required to classify a laboratory result. It only
-preserves the already-resolved reference limits and backend rule reason so the UI
-can explain exactly why a HIGH/LOW result was classified that way.
+preserves the already-resolved reference limits, source test name and backend rule
+reason so the UI can explain exactly why a HIGH/LOW result was classified that way.
 """
 
 from __future__ import annotations
@@ -33,6 +33,13 @@ def _build_evidence_with_reference_bounds(results: list[Any]) -> list[dict[str, 
         result = by_id.get(str(item.get("lab_result_id") or ""))
         if result is None:
             continue
+
+        # Prefer the exact PDF/source test name so an imperfect alias can never
+        # rename HDL as Total Kolesterol, T.Protein as Tau Protein, etc. in the
+        # physician-facing abnormal report.
+        source_name = _as_text(getattr(result, "raw_parameter_name", None))
+        if source_name:
+            item["parameter_name"] = source_name
 
         item["reference_min"] = _as_text(getattr(result, "reference_min", None))
         item["reference_max"] = _as_text(getattr(result, "reference_max", None))
