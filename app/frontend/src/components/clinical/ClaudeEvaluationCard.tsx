@@ -278,11 +278,16 @@ export default function ClaudeEvaluationCard({
                   {finding.clinical_interpretation ? (
                     <div className="mt-3 rounded-lg border border-violet-100 bg-violet-50/50 px-3 py-3">
                       <p className="text-xs font-semibold text-violet-900">
-                        Klinik anlam
+                        Klinik olarak ne anlama gelebilir?
                       </p>
                       <p className="mt-1 text-xs leading-5 text-slate-700">
                         {finding.clinical_interpretation}
                       </p>
+                      {finding.clinical_note ? (
+                        <p className="mt-2 border-t border-violet-100 pt-2 text-[11px] leading-4 text-slate-500">
+                          {finding.clinical_note}
+                        </p>
+                      ) : null}
                     </div>
                   ) : (
                     <div className="mt-3 rounded-lg bg-slate-50 px-3 py-3">
