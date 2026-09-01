@@ -76,6 +76,7 @@ export async function evaluateMultisourceCase(
         metadata_json: {
           source: 'compact_multisource_rule_gated_evaluation',
           normal_results_excluded: true,
+          patient_age: clinicalContext.patient_information.age ?? null,
           symptoms: buildCompactSymptoms(clinicalContext),
           vitals: buildCompactVitals(clinicalContext),
           source_summaries: {
