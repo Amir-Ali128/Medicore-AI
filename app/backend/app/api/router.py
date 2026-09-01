@@ -14,6 +14,7 @@ from app.api.routes import (
     feedback,
     lab_analysis,
     lab_manual_entry,
+    lab_pdf_system_extract,
     lab_reports,
     lab_results,
     patient_timeline,
@@ -58,6 +59,9 @@ api_router.include_router(analytics.router)
 api_router.include_router(ai_cost_analytics.router)
 api_router.include_router(feedback.router)
 api_router.include_router(patients.router)
+# Register the system-backed PDF extractor first so /lab-analysis/upload pulls
+# every test it can match from MediCore's clinical parameter dictionary.
+api_router.include_router(lab_pdf_system_extract.router)
 api_router.include_router(lab_analysis.router)
 api_router.include_router(lab_manual_entry.router)
 api_router.include_router(combined_case_import.router)
