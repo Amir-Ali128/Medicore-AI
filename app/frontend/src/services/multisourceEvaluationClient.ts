@@ -84,6 +84,11 @@ export async function evaluateMultisourceCase(
             laboratory: sourceSummaries.laboratory.slice(0, 320),
             ultrasound: sourceSummaries.ultrasound.slice(0, 320),
           },
+          performed_studies: (sourceSummaries.performed_studies ?? []).slice(0, 30).map((study) => ({
+            code: study.code,
+            name: study.name,
+            date: study.date,
+          })),
           context_flags: contextFlags,
         },
       }),
