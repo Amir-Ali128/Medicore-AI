@@ -164,6 +164,7 @@ class StructuredLabResultOutput(BaseModel):
 
     lab_result_id: uuid.UUID | None = None
     raw_parameter_name: str
+    raw_value: str | None = None
     parameter_id: uuid.UUID | None = None
     parameter_code: str | None = None
     canonical_name: str | None = None
@@ -173,6 +174,11 @@ class StructuredLabResultOutput(BaseModel):
     reference_max: Decimal | None = None
     result_status: ResultStatus = ResultStatus.UNKNOWN
     trend_status: TrendStatus = TrendStatus.NO_PREVIOUS_RESULT
+    measured_at: date | None = None
+    previous_value: Decimal | None = None
+    absolute_difference: Decimal | None = None
+    percentage_difference: float | None = None
+    time_difference_days: int | None = None
     needs_review: bool = True
     reason: str | None = None
     alias_confidence: float = 0.0
