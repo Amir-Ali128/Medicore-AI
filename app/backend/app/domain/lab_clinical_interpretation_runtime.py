@@ -82,7 +82,7 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     "hematocrit": ("hematokrit", "hematocrit", "HCT"),
     "platelet": ("trombosit", "platelet", "PLT"),
     "ferritin": ("ferritin",),
-    "iron": ("serum demir", "iron", "Fe"),
+    "iron": ("serum demir", "demir", "iron", "Fe"),
     "b12": ("vitamin B12", "B12", "cobalamin"),
     "folate": ("folat", "folate", "folic acid"),
     "tsh": ("TSH", "thyroid stimulating hormone", "tiroid stimulan hormon"),
@@ -93,7 +93,7 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     "cholesterol": ("total kolesterol", "total cholesterol", "kolesterol"),
     "uric_acid": ("ürik asit", "uric acid"),
     "albumin": ("albumin",),
-    "total_protein": ("total protein", "toplam protein"),
+    "total_protein": ("total protein", "toplam protein", "t protein"),
     "ldh": ("LDH", "laktat dehidrogenaz", "lactate dehydrogenase"),
     "ck": ("CK", "kreatin kinaz", "creatine kinase", "CPK"),
 }
@@ -412,6 +412,11 @@ _KNOWLEDGE: dict[str, dict[str, tuple[str, tuple[str, ...]]]] = {
 
 def _lookup(name: str, status: str) -> tuple[str | None, list[str]]:
     normalized = _fold(name)
+    # "Demir" (serum iron) and "Doymamış Demir Bağlama Kapasitesi" (UIBC) are
+    # distinct measurements; the latter must not inherit the plain-iron
+    # interpretation just because "demir" appears as a word inside it.
+    if "demir" in normalized and ("baglama" in normalized or "kapasite" in normalized):
+        return None, []
     for key, aliases in _ALIASES.items():
         if not _matches(normalized, aliases):
             continue
