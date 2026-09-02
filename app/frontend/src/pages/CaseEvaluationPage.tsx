@@ -12,9 +12,12 @@ import {
   buildClinicalSummary,
   buildLaboratoryAiSummary,
   buildLaboratorySummary,
+  buildPerformedStudies,
+  buildSourceDates,
   buildUltrasoundContextFlags,
   buildUltrasoundSummary,
   getLatestUltrasoundReport,
+  temporalGapDays,
   type CaseSourceSummaries,
 } from '../services/caseEvaluationSummary';
 import { deleteCompactEvaluation } from '../services/evaluationDeleteClient';
@@ -134,10 +137,27 @@ function SourceStatus({
   );
 }
 
-function SummaryCard({ title, text }: { title: string; text: string }) {
+function SummaryCard({
+  title,
+  text,
+  date,
+}: {
+  title: string;
+  text: string;
+  date?: string | null;
+}) {
   return (
     <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-      <p className="text-xs font-bold uppercase tracking-wide text-slate-500">{title}</p>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs font-bold uppercase tracking-wide text-slate-500">
+          {title}
+        </p>
+        {date ? (
+          <span className="rounded-full bg-white px-2 py-1 text-[11px] font-semibold text-slate-500 ring-1 ring-slate-200">
+            {date}
+          </span>
+        ) : null}
+      </div>
       <p className="mt-2 text-sm leading-6 text-slate-700">{text}</p>
     </div>
   );
@@ -224,6 +244,16 @@ export default function CaseEvaluationPage() {
     [radiologyReports],
   );
 
+  const sourceDates = useMemo(
+    () => buildSourceDates(labResults, latestUltrasound),
+    [labResults, latestUltrasound],
+  );
+  const sourceGapDays = useMemo(() => temporalGapDays(sourceDates), [sourceDates]);
+  const performedStudies = useMemo(
+    () => buildPerformedStudies(radiologyReports),
+    [radiologyReports],
+  );
+
   const sourceSummaries = useMemo<CaseSourceSummaries>(
     () => ({
       clinical: buildClinicalSummary(clinicalIntake),
@@ -263,10 +293,16 @@ export default function CaseEvaluationPage() {
         clinicalIntake,
         aiSummaries,
         buildUltrasoundContextFlags(latestUltrasound),
+        {
+          performedStudies,
+          sourceDates,
+        },
       );
       setResult(nextResult);
       setStoredHypotheses(
-        (nextResult.created_hypotheses ?? nextResult.hypotheses ?? []) as ClinicalHypothesis[],
+        (nextResult.created_hypotheses ??
+          nextResult.hypotheses ??
+          []) as ClinicalHypothesis[],
       );
       window.dispatchEvent(new Event(CASE_SUMMARY_UPDATED_EVENT));
     } catch (evaluationError) {
@@ -311,7 +347,9 @@ export default function CaseEvaluationPage() {
       <header>
         <h1 className="text-2xl font-bold text-slate-950">Bulguları Değerlendir</h1>
         <p className="mt-2 text-sm leading-6 text-slate-500">
-          Önce klinik, yüksek/düşük laboratuvar bulguları ve ultrason sonucu kısa bir vaka özetine dönüştürülür; yalnızca gerekirse kompakt AI değerlendirmesi çalışır.
+          Önce klinik, yüksek/düşük laboratuvar bulguları ve ultrason sonucu kısa bir
+          vaka özetine dönüştürülür; yalnızca gerekirse kompakt AI değerlendirmesi
+          çalışır.
         </p>
       </header>
 
@@ -325,13 +363,31 @@ export default function CaseEvaluationPage() {
         <div>
           <h2 className="text-lg font-bold text-slate-950">Vaka Özeti</h2>
           <p className="mt-1 text-xs leading-5 text-slate-500">
-            Bu üç özet deterministik olarak hazırlanır. Tam dosya AI'ya gönderilmez; normal laboratuvar sonuçları bu özete dahil edilmez.
+            Bu üç özet deterministik olarak hazırlanır. Tam dosya AI'ya gönderilmez;
+            normal laboratuvar sonuçları bu özete dahil edilmez.
           </p>
         </div>
+
+        {sourceGapDays != null && sourceGapDays > 90 ? (
+          <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">
+            <span className="font-semibold">Zamansal uyumsuzluk:</span>{' '}
+            laboratuvar ve ultrason kaynakları arasında {sourceGapDays} gün var.
+            Birlikte yorumlanırken eşzamanlı veri kabul edilmemelidir.
+          </div>
+        ) : null}
+
         <div className="mt-4 grid gap-3">
           <SummaryCard title="Klinik özet" text={sourceSummaries.clinical} />
-          <SummaryCard title="Laboratuvar özeti · yalnızca yüksek/düşük" text={sourceSummaries.laboratory} />
-          <SummaryCard title="Ultrason sonucu" text={sourceSummaries.ultrasound} />
+          <SummaryCard
+            title="Laboratuvar özeti · yalnızca yüksek/düşük"
+            text={sourceSummaries.laboratory}
+            date={sourceDates.laboratory}
+          />
+          <SummaryCard
+            title="Ultrason sonucu"
+            text={sourceSummaries.ultrasound}
+            date={sourceDates.ultrasound}
+          />
         </div>
       </section>
 
@@ -347,12 +403,17 @@ export default function CaseEvaluationPage() {
         disabled={!allReady || loading || evaluating}
         className="w-full rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
       >
-        {loading ? 'Kontrol ediliyor...' : evaluating ? 'Değerlendiriliyor...' : 'Gerekirse AI ile değerlendir'}
+        {loading
+          ? 'Kontrol ediliyor...'
+          : evaluating
+            ? 'Değerlendiriliyor...'
+            : 'Gerekirse AI ile değerlendir'}
       </button>
 
       {!loading && !allReady ? (
         <p className="text-sm text-slate-500">
-          Değerlendirme için klinik, laboratuvar ve ultrason bölümlerinin hazır olması gerekiyor.
+          Değerlendirme için klinik, laboratuvar ve ultrason bölümlerinin hazır olması
+          gerekiyor.
         </p>
       ) : null}
 
@@ -392,7 +453,8 @@ export default function CaseEvaluationPage() {
             </div>
           ) : (
             <p className="mt-4 text-sm leading-6 text-slate-600">
-              Kaynak özetleri hazır. Deterministik gate AI değerlendirmesi gerektirmediyse burada yeni AI çıktısı oluşmaz.
+              Kaynak özetleri hazır. Deterministik gate AI değerlendirmesi
+              gerektirmediyse burada yeni AI çıktısı oluşmaz.
             </p>
           )}
 
@@ -403,7 +465,8 @@ export default function CaseEvaluationPage() {
           ) : null}
 
           <p className="mt-5 border-t border-slate-100 pt-4 text-xs leading-5 text-slate-500">
-            Bu çıktı klinik karar desteği içindir; kesin tanı veya tedavi kararı değildir ve hekim değerlendirmesi gerektirir.
+            Bu çıktı klinik karar desteği içindir; kesin tanı veya tedavi kararı
+            değildir ve hekim değerlendirmesi gerektirir.
           </p>
         </section>
       ) : null}
