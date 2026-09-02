@@ -110,6 +110,10 @@ def test_imaging_recommendation_is_moved_to_already_performed() -> None:
                 "source_report_id": "r1",
             }
         ],
+        "source_dates": {
+            "laboratory": "2025-12-17",
+            "ultrasound": "2026-09-01",
+        },
         "recommended_laboratory_tests": [],
         "recommended_imaging_tests": [
             {
