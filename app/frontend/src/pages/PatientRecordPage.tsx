@@ -4,6 +4,7 @@ import ClinicalIntakeForm, {
   createEmptyClinicalIntake,
 } from '../components/clinical/ClinicalIntakeForm';
 import SectionCard from '../components/ui/SectionCard';
+import { createAnonymizedClinicalFixture } from '../fixtures/anonymizedClinicalFixture';
 import { getStoredUser } from '../services/authClient';
 import type { ClinicalIntakeInput } from '../services/labAnalysisClient';
 import {
@@ -12,16 +13,44 @@ import {
   listPatientRecords,
   savePatientRecord,
 } from '../services/patientClient';
+import {
+  maskPatientName,
+  privacyModeLabel,
+  shouldMaskPatientIdentifiers,
+} from '../services/privacyMode';
 
 export { ACTIVE_CLINICAL_INTAKE_KEY };
+
+function isDemoMode() {
+  return import.meta.env.VITE_DEMO_MODE === 'true';
+}
+
+function privacySafeStoredIntake(
+  clinicalIntake: ClinicalIntakeInput,
+): ClinicalIntakeInput {
+  if (!shouldMaskPatientIdentifiers()) return clinicalIntake;
+
+  return {
+    ...clinicalIntake,
+    patient_information: {
+      ...clinicalIntake.patient_information,
+      full_name: clinicalIntake.patient_information.full_name
+        ? maskPatientName(clinicalIntake.patient_information.full_name)
+        : null,
+    },
+  };
+}
 
 function readStoredClinicalIntake(): ClinicalIntakeInput {
   try {
     const raw = localStorage.getItem(ACTIVE_CLINICAL_INTAKE_KEY);
-    if (!raw) return createEmptyClinicalIntake();
-    return JSON.parse(raw) as ClinicalIntakeInput;
-  } catch {
+    if (raw) return JSON.parse(raw) as ClinicalIntakeInput;
+    if (isDemoMode()) return createAnonymizedClinicalFixture();
     return createEmptyClinicalIntake();
+  } catch {
+    return isDemoMode()
+      ? createAnonymizedClinicalFixture()
+      : createEmptyClinicalIntake();
   }
 }
 
@@ -37,12 +66,20 @@ export default function PatientRecordPage() {
   const [restoreMessage, setRestoreMessage] = useState('');
   const [saveError, setSaveError] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const privacyLabel = privacyModeLabel();
 
   useEffect(() => {
     let cancelled = false;
 
     async function restoreLatestAccountRecord() {
-      if (user?.role !== 'patient' || hadStoredIntakeAtMount.current) return;
+      // Explicit demo mode must never hydrate a real account record into the UI.
+      if (
+        isDemoMode() ||
+        user?.role !== 'patient' ||
+        hadStoredIntakeAtMount.current
+      ) {
+        return;
+      }
 
       try {
         const records = await listPatientRecords();
@@ -70,9 +107,12 @@ export default function PatientRecordPage() {
   }, [user?.id, user?.role]);
 
   useEffect(() => {
+    // Real values may stay in React state for an explicit test/save operation, but
+    // development/demo localStorage is identifier-safe so other screens cannot
+    // accidentally reveal the patient name.
     localStorage.setItem(
       ACTIVE_CLINICAL_INTAKE_KEY,
-      JSON.stringify(clinicalIntake),
+      JSON.stringify(privacySafeStoredIntake(clinicalIntake)),
     );
 
     localStorage.removeItem('medicore:lastPatientDisplayName');
@@ -94,7 +134,7 @@ export default function PatientRecordPage() {
   async function handleSave() {
     localStorage.setItem(
       ACTIVE_CLINICAL_INTAKE_KEY,
-      JSON.stringify(clinicalIntake),
+      JSON.stringify(privacySafeStoredIntake(clinicalIntake)),
     );
     setSaveError('');
     setIsSaving(true);
@@ -120,6 +160,12 @@ export default function PatientRecordPage() {
         title="Hasta bilgileri"
         description="Klinik değerlendirmede kullanılacak temel bilgileri girin. Kaydettiğiniz bilgiler sonraki girişlerinizde hesabınızdan yeniden yüklenir."
       >
+        {privacyLabel ? (
+          <div className="mb-4 rounded-lg border border-violet-200 bg-violet-50 px-4 py-3 text-sm font-medium text-violet-800">
+            {privacyLabel}. Diğer geliştirme/demo ekranlarına yazılan hasta adı maskelenir.
+          </div>
+        ) : null}
+
         {restoreMessage ? (
           <div className="mb-4 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-medium text-blue-800">
             {restoreMessage}

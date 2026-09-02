@@ -18,6 +18,8 @@ from app.api.routes import lab_parser_safety as _lab_parser_safety  # noqa: F401
 from app.api.routes import lab_globulin_fix as _lab_globulin_fix  # noqa: F401
 from app.api.routes import lab_case01_safety as _lab_case01_safety  # noqa: F401
 from app.api.routes import lab_case01_sql_hotfix as _lab_case01_sql_hotfix  # noqa: F401
+from app.api.routes import urinalysis_runtime as _urinalysis_runtime  # noqa: F401
+from app.domain import analysis_output_runtime as _analysis_output_runtime  # noqa: F401
 from app.domain import claude_compact_runtime_fix as _claude_compact_runtime_fix  # noqa: F401
 from app.domain import abnormal_lab_explanation_runtime as _abnormal_lab_explanation_runtime  # noqa: F401
 from app.domain import pathological_findings_runtime as _pathological_findings_runtime  # noqa: F401
@@ -31,6 +33,13 @@ from app.domain import claude_usage_runtime as _claude_usage_runtime  # noqa: F4
 from app.domain import compact_hypothesis_dedup_runtime as _compact_hypothesis_dedup_runtime  # noqa: F401
 from app.domain import claude_possibility_review_runtime as _claude_possibility_review_runtime  # noqa: F401
 from app.domain import compact_summary_complete_runtime as _compact_summary_complete_runtime  # noqa: F401
+from app.domain import pathological_source_runtime as _pathological_source_runtime  # noqa: F401
+# Imported last so the quality wrapper sees the fully enriched hypothesis produced by
+# every earlier compact-runtime layer.
+from app.domain import clinical_quality_runtime as _clinical_quality_runtime  # noqa: F401
+# Tighten recommendation de-duplication after the quality layer is installed: only
+# studies belonging to the active multisource case may suppress a recommendation.
+from app.domain import clinical_quality_scope_runtime as _clinical_quality_scope_runtime  # noqa: F401
 from app.infrastructure.admin_bootstrap import ensure_bootstrap_admin
 from app.infrastructure.database.feedback_migrations import ensure_user_feedback
 from app.infrastructure.database.session import AsyncSessionFactory, engine

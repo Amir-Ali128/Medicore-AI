@@ -7,6 +7,27 @@ export type CaseSourceSummaries = {
   ultrasound: string;
 };
 
+export type PerformedStudy = {
+  canonical_code: string;
+  name: string;
+  date: string | null;
+  source_report_id: string;
+};
+
+export type CaseSourceDates = {
+  laboratory: string | null;
+  ultrasound: string | null;
+};
+
+type LabResultWithSource = LabAnalysisResult & {
+  raw_value?: string | null;
+  measured_at?: string | null;
+  previous_value?: string | null;
+  absolute_difference?: string | null;
+  percentage_difference?: number | null;
+  time_difference_days?: number | null;
+};
+
 function clean(value: string | null | undefined, max = 240) {
   const text = value?.replace(/\s+/g, ' ').trim();
   if (!text) return null;
@@ -86,17 +107,56 @@ function labDisplayName(result: LabAnalysisResult) {
   return result.raw_parameter_name || result.canonical_name || 'Laboratuvar parametresi';
 }
 
+function isSemiquantitativeRaw(value: string | null | undefined) {
+  const normalized = value?.trim().toLocaleLowerCase('tr-TR') ?? '';
+  return (
+    /^\+{1,4}$/.test(normalized) ||
+    ['negatif', 'negative', 'pozitif', 'positive', 'normal', 'eser', 'trace'].includes(
+      normalized,
+    )
+  );
+}
+
+function labDisplayValue(result: LabAnalysisResult) {
+  const raw = (result as LabResultWithSource).raw_value;
+  if (isSemiquantitativeRaw(raw)) return raw!.trim();
+  return result.normalized_value;
+}
+
+function resultDate(result: LabAnalysisResult) {
+  const measuredAt = (result as LabResultWithSource).measured_at;
+  if (!measuredAt) return null;
+  const parsed = Date.parse(measuredAt);
+  return Number.isFinite(parsed) ? measuredAt.slice(0, 10) : null;
+}
+
+export function getLaboratoryDate(results: LabAnalysisResult[]) {
+  const dates = results
+    .map(resultDate)
+    .filter((value): value is string => Boolean(value))
+    .sort();
+  return dates.length > 0 ? dates[dates.length - 1] : null;
+}
+
+function formatLabValue(result: LabAnalysisResult) {
+  const unit = result.unit ? ` ${result.unit}` : '';
+  return `${labDisplayValue(result)}${unit}`;
+}
+
 export function buildLaboratorySummary(results: LabAnalysisResult[]) {
   if (results.length === 0) return 'Laboratuvar sonucu bulunamadı.';
   const abnormal = abnormalLabs(results);
   if (abnormal.length === 0) return 'Yüksek veya düşük laboratuvar bulgusu yok.';
 
-  const preview = abnormal.slice(0, 8).map((result) => {
+  const preview = abnormal.slice(0, 10).map((result) => {
     const direction = result.result_status === 'high' ? 'yüksek' : 'düşük';
     const reference = labReference(result);
-    return `${labDisplayName(result)}: ${result.normalized_value} ${result.unit}${reference ? ` · ref ${reference}` : ''} (${direction})`;
+    return `${labDisplayName(result)}: ${formatLabValue(result)}${reference ? ` · ref ${reference}` : ''} (${direction})`;
   });
-  const suffix = abnormal.length > preview.length ? ` +${abnormal.length - preview.length} yüksek/düşük bulgu` : '';
+  const suffix =
+    abnormal.length > preview.length
+      ? ` +${abnormal.length - preview.length} yüksek/düşük bulgu`
+      : '';
   return `${preview.join('; ')}${suffix}`;
 }
 
@@ -108,10 +168,10 @@ export function buildLaboratoryAiSummary(results: LabAnalysisResult[]) {
     .map((result) => {
       const direction = result.result_status === 'high' ? 'yüksek' : 'düşük';
       const reference = labReference(result);
-      return `${labDisplayName(result)} ${result.normalized_value} ${result.unit}${reference ? ` (ref ${reference})` : ''}: ${direction}`;
+      return `${labDisplayName(result)} ${formatLabValue(result)}${reference ? ` (ref ${reference})` : ''}: ${direction}`;
     })
     .join('; ')
-    .slice(0, 900);
+    .slice(0, 1100);
 }
 
 function metadataText(report: RadiologyReport, key: string) {
@@ -219,4 +279,85 @@ export function buildUltrasoundContextFlags(report: RadiologyReport | null) {
     (finding) => finding.classification === 'abnormal',
   );
   return hasAbnormal ? ['ULTRASOUND_ABNORMAL_REVIEW'] : [];
+}
+
+function studyEvidence(report: RadiologyReport) {
+  return [
+    report.modality,
+    report.body_part,
+    report.file_name,
+    report.summary,
+    report.impression,
+    report.original_text,
+  ]
+    .filter((value): value is string => typeof value === 'string' && Boolean(value))
+    .join(' ')
+    .toLocaleLowerCase('tr-TR');
+}
+
+export function buildPerformedStudies(reports: RadiologyReport[]): PerformedStudy[] {
+  const studies: PerformedStudy[] = [];
+  const seen = new Set<string>();
+
+  function add(report: RadiologyReport, canonicalCode: string, name: string) {
+    const key = `${report.id}:${canonicalCode}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    studies.push({
+      canonical_code: canonicalCode,
+      name,
+      date: report.report_date,
+      source_report_id: report.id,
+    });
+  }
+
+  for (const report of reports) {
+    const evidence = studyEvidence(report);
+    const ultrasound = isUltrasoundReport(report);
+
+    if (evidence.includes('elastograf') || evidence.includes('fibroscan')) {
+      add(report, 'liver_elastography', 'Karaciğer elastografisi');
+    }
+
+    if (
+      ultrasound &&
+      (evidence.includes('hepatobilier') ||
+        evidence.includes('safra') ||
+        evidence.includes('portal ven') ||
+        evidence.includes('karaciğer'))
+    ) {
+      add(report, 'hepatobiliary_ultrasound', 'Hepatobilier ultrasonografi');
+    }
+
+    if (
+      ultrasound &&
+      (evidence.includes('üst abdomen') ||
+        evidence.includes('ust abdomen') ||
+        evidence.includes('upper abdomen') ||
+        evidence.includes('pankreas') ||
+        (evidence.includes('karaciğer') && evidence.includes('safra')))
+    ) {
+      add(report, 'upper_abdominal_ultrasound', 'Üst abdomen ultrasonografisi');
+    }
+  }
+
+  return studies;
+}
+
+export function buildSourceDates(
+  results: LabAnalysisResult[],
+  ultrasound: RadiologyReport | null,
+): CaseSourceDates {
+  return {
+    laboratory: getLaboratoryDate(results),
+    ultrasound: ultrasound?.report_date ?? null,
+  };
+}
+
+export function temporalGapDays(dates: CaseSourceDates) {
+  if (!dates.laboratory || !dates.ultrasound) return null;
+  const lab = Date.parse(dates.laboratory);
+  const ultrasound = Date.parse(dates.ultrasound);
+  if (!Number.isFinite(lab) || !Number.isFinite(ultrasound)) return null;
+  return Math.abs(Math.round((ultrasound - lab) / 86_400_000));
 }

@@ -1,4 +1,4 @@
-"""Build physician-facing abnormal-lab evidence with exact reference bounds.
+"""Build physician-facing abnormal-lab evidence with exact source fidelity.
 
 The compact model still receives only symptoms/source summaries and bounded backend
 flags. This evidence is created after the model call and is stored only as structured
@@ -44,10 +44,16 @@ def _build_evidence_with_reference_bounds(results: list[Any]) -> list[dict[str, 
                 "lab_result_id": str(getattr(result, "id", "")) or None,
                 "parameter_code": _as_text(getattr(result, "parameter_code", None)),
                 "parameter_name": source_name,
+                "raw_value": _as_text(getattr(result, "raw_value", None)),
                 "value": str(value) if value is not None else None,
                 "unit": _as_text(getattr(result, "unit", None)),
                 "result_status": _status_value(result),
                 "trend_status": getattr(trend, "value", trend),
+                "measured_at": _as_text(getattr(result, "measured_at", None)),
+                "previous_value": _as_text(getattr(result, "previous_value", None)),
+                "absolute_difference": _as_text(getattr(result, "absolute_difference", None)),
+                "percentage_difference": getattr(result, "percentage_difference", None),
+                "time_difference_days": getattr(result, "time_difference_days", None),
                 "reference_min": _as_text(getattr(result, "reference_min", None)),
                 "reference_max": _as_text(getattr(result, "reference_max", None)),
                 "reference_source": _as_text(getattr(result, "reference_source", None)),
