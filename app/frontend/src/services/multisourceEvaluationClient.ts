@@ -1,12 +1,19 @@
 import { getAccessToken } from './authClient';
+import type { ClaudeReviewGenerationResult } from './claudeReviewClient';
 import type {
-  ClaudeReviewGenerationResult,
-} from './claudeReviewClient';
-import type { CaseSourceSummaries } from './caseEvaluationSummary';
+  CaseSourceDates,
+  CaseSourceSummaries,
+  PerformedStudy,
+} from './caseEvaluationSummary';
 import type { ClinicalIntakeInput } from './labAnalysisClient';
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000';
+
+export type MultisourceQualityContext = {
+  performedStudies: PerformedStudy[];
+  sourceDates: CaseSourceDates;
+};
 
 function cleanText(value: string | null | undefined) {
   const cleaned = value?.replace(/\s+/g, ' ').trim();
@@ -57,6 +64,7 @@ export async function evaluateMultisourceCase(
   clinicalContext: ClinicalIntakeInput,
   sourceSummaries: CaseSourceSummaries,
   contextFlags: string[],
+  qualityContext: MultisourceQualityContext,
 ): Promise<ClaudeReviewGenerationResult> {
   const token = getAccessToken();
   const response = await fetch(
@@ -76,6 +84,7 @@ export async function evaluateMultisourceCase(
         metadata_json: {
           source: 'compact_multisource_rule_gated_evaluation',
           normal_results_excluded: true,
+          patient_age: clinicalContext.patient_information.age ?? null,
           symptoms: buildCompactSymptoms(clinicalContext),
           vitals: buildCompactVitals(clinicalContext),
           source_summaries: {
@@ -84,6 +93,8 @@ export async function evaluateMultisourceCase(
             ultrasound: sourceSummaries.ultrasound.slice(0, 320),
           },
           context_flags: contextFlags,
+          performed_studies: qualityContext.performedStudies.slice(0, 24),
+          source_dates: qualityContext.sourceDates,
         },
       }),
     },
