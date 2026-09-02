@@ -59,7 +59,11 @@ export function installPrivacyStorageGuard() {
     configurable: true,
   });
 
-  prototype.setItem = function setItemWithPrivacyGuard(key: string, value: string) {
+  prototype.setItem = function setItemWithPrivacyGuard(
+    this: Storage,
+    key: string,
+    value: string,
+  ) {
     const nextValue =
       this === window.localStorage ? sanitizeStorageValue(key, value) : value;
     currentSetItem.call(this, key, nextValue);
