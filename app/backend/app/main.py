@@ -31,6 +31,9 @@ from app.domain import claude_usage_runtime as _claude_usage_runtime  # noqa: F4
 from app.domain import compact_hypothesis_dedup_runtime as _compact_hypothesis_dedup_runtime  # noqa: F401
 from app.domain import claude_possibility_review_runtime as _claude_possibility_review_runtime  # noqa: F401
 from app.domain import compact_summary_complete_runtime as _compact_summary_complete_runtime  # noqa: F401
+# Imported last so the quality wrapper sees the fully enriched hypothesis produced by
+# every earlier compact-runtime layer.
+from app.domain import clinical_quality_runtime as _clinical_quality_runtime  # noqa: F401
 from app.infrastructure.admin_bootstrap import ensure_bootstrap_admin
 from app.infrastructure.database.feedback_migrations import ensure_user_feedback
 from app.infrastructure.database.session import AsyncSessionFactory, engine
