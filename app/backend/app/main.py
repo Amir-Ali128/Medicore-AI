@@ -37,6 +37,9 @@ from app.domain import pathological_source_runtime as _pathological_source_runti
 # Imported last so the quality wrapper sees the fully enriched hypothesis produced by
 # every earlier compact-runtime layer.
 from app.domain import clinical_quality_runtime as _clinical_quality_runtime  # noqa: F401
+# Tighten recommendation de-duplication after the quality layer is installed: only
+# studies belonging to the active multisource case may suppress a recommendation.
+from app.domain import clinical_quality_scope_runtime as _clinical_quality_scope_runtime  # noqa: F401
 from app.infrastructure.admin_bootstrap import ensure_bootstrap_admin
 from app.infrastructure.database.feedback_migrations import ensure_user_feedback
 from app.infrastructure.database.session import AsyncSessionFactory, engine
