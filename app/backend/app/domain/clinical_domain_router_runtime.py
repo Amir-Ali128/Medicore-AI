@@ -22,7 +22,7 @@ from app.domain import clinical_quality_runtime as quality_runtime
 from app.domain.claude_clinical_hypothesis_service import ClaudeClinicalHypothesisService
 
 
-ROUTER_VERSION = "clinical-domain-router-v1"
+ROUTER_VERSION = "clinical-domain-router-v1.1"
 
 DOMAIN_LABELS: dict[str, str] = {
     "liver": "Karaciğer / hepatobiliyer",
@@ -32,6 +32,12 @@ DOMAIN_LABELS: dict[str, str] = {
     "thyroid": "Tiroid",
     "inflammation_infection": "Enflamasyon / enfeksiyon",
     "pancreatic": "Pankreas",
+    "cardiovascular": "Kardiyovasküler",
+    "respiratory": "Solunum",
+    "neurologic": "Nörolojik",
+    "gastrointestinal": "Gastrointestinal",
+    "musculoskeletal": "Kas-iskelet",
+    "oncology": "Onkolojik değerlendirme alanı",
 }
 
 # Summary terms are deliberately organ/system oriented rather than disease labels.
@@ -98,6 +104,64 @@ DOMAIN_SUMMARY_KEYWORDS: dict[str, tuple[str, ...]] = {
         "pankreas",
         "pancrea",
         "pankreat",
+    ),
+    "cardiovascular": (
+        "kalp",
+        "kardiyak",
+        "kardiyo",
+        "gogus agrisi",
+        "carpinti",
+        "aritmi",
+        "koroner",
+        "miyokard",
+        "perikard",
+    ),
+    "respiratory": (
+        "akciger",
+        "pulmoner",
+        "solunum",
+        "nefes darligi",
+        "dispne",
+        "oksuruk",
+        "pnonomi",
+        "plevra",
+    ),
+    "neurologic": (
+        "noroloj",
+        "beyin",
+        "bas agrisi",
+        "bas donmesi",
+        "senkop",
+        "nobet",
+        "parestezi",
+        "gucsuzluk",
+    ),
+    "gastrointestinal": (
+        "mide",
+        "bagirsak",
+        "gastro",
+        "kolon",
+        "karin agrisi",
+        "ishal",
+        "kabizlik",
+        "kusma",
+        "bulanti",
+    ),
+    "musculoskeletal": (
+        "eklem",
+        "kas agrisi",
+        "kemik",
+        "bel agrisi",
+        "boyun agrisi",
+        "ortopedi",
+        "travma",
+    ),
+    "oncology": (
+        "kitle",
+        "tumor",
+        "malign",
+        "neoplaz",
+        "onkoloj",
     ),
 }
 
@@ -177,6 +241,21 @@ DOMAIN_LAB_ALIASES: dict[str, tuple[str, ...]] = {
         "amilaz",
         "amylase",
     ),
+    "cardiovascular": (
+        "troponin",
+        "nt probnp",
+        "bnp",
+        "ck mb",
+    ),
+    "respiratory": (),
+    "neurologic": (),
+    "gastrointestinal": (),
+    "musculoskeletal": (
+        "kreatin kinaz",
+        "creatine kinase",
+        "ck",
+    ),
+    "oncology": (),
 }
 
 SCORE_DOMAIN: dict[str, str] = {
