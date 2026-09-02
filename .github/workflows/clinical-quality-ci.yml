@@ -32,7 +32,7 @@ jobs:
           pip install -r requirements.txt pytest
       - name: Run clinical quality tests
         run: |
-          pytest -q \
+          PYTHONPATH=. python -m pytest -q \
             tests/test_clinical_quality_runtime.py \
             tests/test_clinical_quality_scope_runtime.py \
             tests/test_urinalysis_runtime.py
@@ -52,6 +52,6 @@ jobs:
           cache: npm
           cache-dependency-path: app/frontend/package-lock.json
       - name: Install frontend dependencies
-        run: npm ci
+        run: npm install --no-audit --no-fund
       - name: Typecheck and build frontend
         run: npm run build
