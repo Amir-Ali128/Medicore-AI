@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - fix/clinical-quality-layer
+      - feature/clinical-domain-router
   pull_request:
     branches:
       - main
@@ -33,6 +34,7 @@ jobs:
       - name: Run clinical quality tests
         run: |
           PYTHONPATH=. python -m pytest -q \
+            tests/test_clinical_domain_router_runtime.py \
             tests/test_clinical_quality_runtime.py \
             tests/test_clinical_quality_scope_runtime.py \
             tests/test_urinalysis_runtime.py
