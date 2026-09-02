@@ -19,6 +19,7 @@ from app.api.routes import lab_globulin_fix as _lab_globulin_fix  # noqa: F401
 from app.api.routes import lab_case01_safety as _lab_case01_safety  # noqa: F401
 from app.api.routes import lab_case01_sql_hotfix as _lab_case01_sql_hotfix  # noqa: F401
 from app.api.routes import urinalysis_runtime as _urinalysis_runtime  # noqa: F401
+from app.domain import analysis_output_runtime as _analysis_output_runtime  # noqa: F401
 from app.domain import claude_compact_runtime_fix as _claude_compact_runtime_fix  # noqa: F401
 from app.domain import abnormal_lab_explanation_runtime as _abnormal_lab_explanation_runtime  # noqa: F401
 from app.domain import pathological_findings_runtime as _pathological_findings_runtime  # noqa: F401
