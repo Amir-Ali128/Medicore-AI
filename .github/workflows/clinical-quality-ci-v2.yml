@@ -7,6 +7,7 @@ on:
       - feature/clinical-domain-router
       - feature/single-source-evaluation
       - feature/radiology-clinical-observation-style
+      - feature/radiology-multi-model-consensus
   pull_request:
     branches:
       - main
@@ -37,6 +38,7 @@ jobs:
         run: |
           PYTHONPATH=. python -m pytest -q \
             tests/test_radiology_image_review.py \
+            tests/test_radiology_multi_model_ai.py \
             tests/test_source_only_case_evaluation.py \
             tests/test_clinical_domain_router_runtime.py \
             tests/test_clinical_quality_runtime.py \
