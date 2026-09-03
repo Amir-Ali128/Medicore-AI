@@ -12,6 +12,7 @@ add_library(
     medicore_vision_core
     STATIC
     src/preprocessing.cpp
+    src/inference_contract.cpp
 )
 set_target_properties(medicore_vision_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(
@@ -37,7 +38,7 @@ target_link_libraries(
 target_compile_definitions(
     medicore_vision
     PRIVATE
-        MEDICORE_VISION_VERSION="0.2.0"
+        MEDICORE_VISION_VERSION="0.3.0"
 )
 
 enable_testing()
@@ -51,3 +52,14 @@ target_link_libraries(
         medicore_vision_core
 )
 add_test(NAME xray_core_v2 COMMAND medicore_vision_core_tests)
+
+add_executable(
+    medicore_vision_inference_contract_tests
+    tests/test_inference_contract.cpp
+)
+target_link_libraries(
+    medicore_vision_inference_contract_tests
+    PRIVATE
+        medicore_vision_core
+)
+add_test(NAME onnx_inference_contract COMMAND medicore_vision_inference_contract_tests)

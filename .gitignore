@@ -20,6 +20,9 @@ CMakeCache.txt
 *.dylib
 *.dll
 
+# Local ML model binaries
+*.onnx
+
 # Env files
 .env
 .env.*

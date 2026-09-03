@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "model_id": "replace-with-validated-model-id",
+  "model_version": "1.0.0",
+  "model_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "tensor_contract": "xray-core-v2/nchw-f32-0-1",
+  "input_name": "image",
+  "input_shape": [-1, 1, 1024, 1024],
+  "output_name": "findings",
+  "output_kind": "logits",
+  "labels": [
+    "example_finding"
+  ],
+  "max_batch_size": 8,
+  "provider_order": [
+    "CUDAExecutionProvider",
+    "CPUExecutionProvider"
+  ],
+  "default_threshold": 0.5,
+  "thresholds": {}
+}
