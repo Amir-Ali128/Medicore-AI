@@ -5,29 +5,60 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+include(CTest)
+
 find_package(OpenCV REQUIRED COMPONENTS core imgcodecs imgproc)
 find_package(pybind11 CONFIG REQUIRED)
 
-pybind11_add_module(
-    medicore_vision
-    src/bindings.cpp
+add_library(
+    medicore_vision_core
+    STATIC
     src/preprocessing.cpp
 )
 
 target_include_directories(
-    medicore_vision
-    PRIVATE
+    medicore_vision_core
+    PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(
+    medicore_vision_core
+    PUBLIC
+        ${OpenCV_LIBS}
+)
+
+set_target_properties(medicore_vision_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+pybind11_add_module(
+    medicore_vision
+    src/bindings.cpp
 )
 
 target_link_libraries(
     medicore_vision
     PRIVATE
-        ${OpenCV_LIBS}
+        medicore_vision_core
 )
 
 target_compile_definitions(
     medicore_vision
     PRIVATE
-        MEDICORE_VISION_VERSION="0.1.0"
+        MEDICORE_VISION_VERSION="0.2.0"
 )
+
+if(BUILD_TESTING)
+    add_executable(
+        medicore_vision_preprocessing_test
+        tests/preprocessing_test.cpp
+    )
+    target_link_libraries(
+        medicore_vision_preprocessing_test
+        PRIVATE
+            medicore_vision_core
+    )
+    add_test(
+        NAME medicore_vision_preprocessing_test
+        COMMAND medicore_vision_preprocessing_test
+    )
+endif()
