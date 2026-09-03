@@ -242,7 +242,10 @@ async def generate_source_only_case(
             "model": service._model,
             "generated_by": "claude" if ai_called else "deterministic_fallback",
             "ai_called": ai_called,
-            "compact_mode": True,
+            # Keep the compact hypothesis type for persistence/deletion while hiding
+            # the old card badge that hard-codes all three sources as present.
+            "compact_mode": False,
+            "source_only_compact": True,
             "max_output_tokens": service_module._MAX_OUTPUT_TOKENS,
             "evaluation_only": True,
             "requires_physician_review": True,
