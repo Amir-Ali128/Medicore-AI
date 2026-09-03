@@ -1,14 +1,8 @@
-"""Route deterministic clinical helpers to the domains supported by case evidence.
+"""Route deterministic clinical helpers to evidence-supported case domains.
 
-The clinical-quality layer intentionally contains reusable calculations from several
-medical areas. Without routing, every calculation can appear for every patient when
-the required laboratory inputs happen to be present. This runtime adds a conservative,
-evidence-based relevance gate so a liver-specific score is not shown in a renal case,
-for example.
-
-This is *not* a diagnostic classifier. It only decides which deterministic helper
-packs are relevant enough to display. The compact AI synthesis still receives the
-same bounded source summaries and backend flags as before.
+This runtime is a relevance selector, not a diagnostic classifier. It limits which
+existing deterministic score/check packs are displayed for a case while preserving
+the compact AI synthesis and the tested formulas in ``clinical_quality_runtime``.
 """
 
 from __future__ import annotations
@@ -22,7 +16,7 @@ from app.domain import clinical_quality_runtime as quality_runtime
 from app.domain.claude_clinical_hypothesis_service import ClaudeClinicalHypothesisService
 
 
-ROUTER_VERSION = "clinical-domain-router-v1.1"
+ROUTER_VERSION = "clinical-domain-router-v1.2"
 
 DOMAIN_LABELS: dict[str, str] = {
     "liver": "Karaciğer / hepatobiliyer",
@@ -40,8 +34,9 @@ DOMAIN_LABELS: dict[str, str] = {
     "oncology": "Onkolojik değerlendirme alanı",
 }
 
-# Summary terms are deliberately organ/system oriented rather than disease labels.
-# A match means "this domain may be relevant", not "the patient has this disease".
+# These are relevance terms, not disease assertions. Stem-like entries intentionally
+# allow suffixes (for example ``hepat`` -> hepatit/hepatomegali). Very short tokens
+# that are prone to accidental substring matches are handled separately below.
 DOMAIN_SUMMARY_KEYWORDS: dict[str, tuple[str, ...]] = {
     "liver": (
         "karaciger",
@@ -123,6 +118,7 @@ DOMAIN_SUMMARY_KEYWORDS: dict[str, tuple[str, ...]] = {
         "nefes darligi",
         "dispne",
         "oksuruk",
+        "pnomoni",
         "pnonomi",
         "plevra",
     ),
@@ -162,11 +158,10 @@ DOMAIN_SUMMARY_KEYWORDS: dict[str, tuple[str, ...]] = {
         "malign",
         "neoplaz",
         "onkoloj",
+        "metastaz",
     ),
 }
 
-# Only abnormal/needs-review laboratory observations contribute routing evidence.
-# These aliases are for relevance only and are intentionally conservative.
 DOMAIN_LAB_ALIASES: dict[str, tuple[str, ...]] = {
     "liver": (
         "ast",
@@ -272,6 +267,17 @@ CHECK_DOMAINS: dict[str, set[str]] = {
     "ALBUMIN_DENSITY_HEMOCONCENTRATION_CONTEXT": {"renal_urinary"},
 }
 
+# A single abnormal AST/ALT/ALP is not specific enough to expose liver-specific
+# fibrosis helpers. Without an explicit hepatic summary, require at least two
+# independent abnormal liver-related laboratory observations.
+DOMAIN_MIN_ABNORMAL_HITS: dict[str, int] = {
+    "liver": 2,
+}
+
+# ``tas`` (stone) must be a complete normalized word. Substring matching would also
+# match ``metastaz`` and incorrectly activate the renal/urinary domain.
+SUMMARY_EXACT_TOKENS = {"tas"}
+
 _DOMAIN_CONTEXT: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
     "medicore_clinical_domain_router_context",
     default=None,
@@ -336,28 +342,32 @@ def _alias_matches(text: str, alias: str) -> bool:
     return candidate in text
 
 
+def _summary_keyword_matches(summary_text: str, keyword: str) -> bool:
+    candidate = _fold(keyword)
+    if not candidate:
+        return False
+    if candidate in SUMMARY_EXACT_TOKENS:
+        return f" {candidate} " in f" {summary_text} "
+    return candidate in summary_text
+
+
 def _source_summary_text(metadata: dict[str, Any]) -> str:
     source_summaries = metadata.get("source_summaries")
     if not isinstance(source_summaries, dict):
         return ""
-    values = [
-        source_summaries.get("clinical"),
-        source_summaries.get("laboratory"),
-        source_summaries.get("ultrasound"),
-    ]
-    return _fold(" ".join(str(item or "") for item in values))
+    return _fold(
+        " ".join(
+            str(source_summaries.get(key) or "")
+            for key in ("clinical", "laboratory", "ultrasound")
+        )
+    )
 
 
 def detect_clinical_domains(
     results: list[Any],
     metadata: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Return evidence-backed relevance domains, sorted strongest first.
-
-    Routing threshold is intentionally low for a domain-specific abnormal laboratory
-    observation (2 points) or an organ/system phrase in the bounded case summaries
-    (3 points). Normal routine-panel values do not activate a domain.
-    """
+    """Return evidence-backed relevance domains, strongest first."""
 
     summary_text = _source_summary_text(metadata)
     domain_entries: list[dict[str, Any]] = []
@@ -365,13 +375,14 @@ def detect_clinical_domains(
     for domain_id, label in DOMAIN_LABELS.items():
         score = 0
         evidence: list[str] = []
+        summary_hits = 0
 
-        for keyword in DOMAIN_SUMMARY_KEYWORDS.get(domain_id, ()):  # strong evidence
-            folded_keyword = _fold(keyword)
-            if folded_keyword and folded_keyword in summary_text:
+        for keyword in DOMAIN_SUMMARY_KEYWORDS.get(domain_id, ()):
+            if _summary_keyword_matches(summary_text, keyword):
+                summary_hits += 1
                 score += 3
                 evidence.append(f"Kaynak özeti: {keyword}")
-                if len(evidence) >= 4:
+                if summary_hits >= 4:
                     break
 
         abnormal_hits = 0
@@ -381,23 +392,27 @@ def detect_clinical_domains(
             text = _result_text(result)
             if not text:
                 continue
-            if any(
+            if not any(
                 _alias_matches(text, alias)
                 for alias in DOMAIN_LAB_ALIASES.get(domain_id, ())
             ):
-                abnormal_hits += 1
-                score += 2
-                name = (
-                    getattr(result, "canonical_name", None)
-                    or getattr(result, "raw_parameter_name", None)
-                    or getattr(result, "parameter_code", None)
-                    or "laboratuvar bulgusu"
-                )
-                evidence.append(f"Referans dışı laboratuvar: {name}")
-                if abnormal_hits >= 3:
-                    break
+                continue
 
-        if score >= 2:
+            abnormal_hits += 1
+            score += 2
+            name = (
+                getattr(result, "canonical_name", None)
+                or getattr(result, "raw_parameter_name", None)
+                or getattr(result, "parameter_code", None)
+                or "laboratuvar bulgusu"
+            )
+            evidence.append(f"Referans dışı laboratuvar: {name}")
+            if abnormal_hits >= 3:
+                break
+
+        min_abnormal_hits = DOMAIN_MIN_ABNORMAL_HITS.get(domain_id, 1)
+        qualifies = summary_hits > 0 or abnormal_hits >= min_abnormal_hits
+        if qualifies and score >= 2:
             domain_entries.append(
                 {
                     "id": domain_id,
@@ -424,27 +439,25 @@ def filter_scores_for_domains(
     scores: list[dict[str, Any]],
     domains: set[str],
 ) -> list[dict[str, Any]]:
-    """Keep only calculations whose clinical domain has case evidence."""
+    """Keep calculations only when their clinical relevance domain is active."""
 
-    kept: list[dict[str, Any]] = []
-    for score in scores:
-        code = str(score.get("code") or "")
-        required_domain = SCORE_DOMAIN.get(code)
-        if required_domain is None or required_domain in domains:
-            kept.append(score)
-    return kept
+    return [
+        score
+        for score in scores
+        if SCORE_DOMAIN.get(str(score.get("code") or "")) is None
+        or SCORE_DOMAIN[str(score.get("code") or "")] in domains
+    ]
 
 
 def filter_checks_for_domains(
     checks: list[dict[str, Any]],
     domains: set[str],
 ) -> list[dict[str, Any]]:
-    """Keep known cross-checks only when one of their relevance domains is active."""
+    """Keep known cross-checks only when at least one relevance domain is active."""
 
     kept: list[dict[str, Any]] = []
     for check in checks:
-        code = str(check.get("code") or "")
-        required_domains = CHECK_DOMAINS.get(code)
+        required_domains = CHECK_DOMAINS.get(str(check.get("code") or ""))
         if required_domains is None or required_domains.intersection(domains):
             kept.append(check)
     return kept
@@ -471,8 +484,7 @@ async def _generate_with_domain_router(
     analysis_run_id: Any,
     request: Any,
 ):
-    # One additional read is intentional: routing needs the abnormal result names
-    # before the quality wrapper chooses which deterministic helpers to emit.
+    # Routing needs abnormal result names before the quality wrapper selects helpers.
     results = list(await self._lab_results.list_for_analysis_run(analysis_run_id))
     metadata = dict(request.metadata_json or {})
     domains = detect_clinical_domains(results, metadata)
@@ -486,19 +498,18 @@ async def _generate_with_domain_router(
     }
     enriched_request = request.model_copy(update={"metadata_json": metadata})
 
-    token = _DOMAIN_CONTEXT.set(
-        {
-            "domains": domains,
-            "domain_ids": domain_ids,
-        }
-    )
+    token = _DOMAIN_CONTEXT.set({"domains": domains, "domain_ids": domain_ids})
     try:
         return await _original_generate(self, analysis_run_id, enriched_request)
     finally:
         _DOMAIN_CONTEXT.reset(token)
 
 
-def _build_hypothesis_with_domain_router(self: ClaudeClinicalHypothesisService, *args, **kwargs):
+def _build_hypothesis_with_domain_router(
+    self: ClaudeClinicalHypothesisService,
+    *args,
+    **kwargs,
+):
     hypothesis = _original_build_hypothesis(self, *args, **kwargs)
     context = _DOMAIN_CONTEXT.get()
     if not context:
@@ -521,11 +532,11 @@ def _build_hypothesis_with_domain_router(self: ClaudeClinicalHypothesisService, 
     return hypothesis
 
 
-# The quality wrapper looks up these module globals at call time, so replacing them
-# here changes only display/relevance selection while preserving the tested formulas.
+# The quality wrapper resolves these globals at call time. Replacing them changes
+# relevance/display selection while preserving the underlying tested formulas.
 quality_runtime._derive_scores = _derive_scores_routed
 quality_runtime._cross_checks = _cross_checks_routed
 
-# Install after clinical_quality_runtime and clinical_quality_scope_runtime.
+# Imported after clinical_quality_runtime and clinical_quality_scope_runtime.
 ClaudeClinicalHypothesisService.generate_for_analysis_run = _generate_with_domain_router
 ClaudeClinicalHypothesisService._build_hypothesis = _build_hypothesis_with_domain_router
