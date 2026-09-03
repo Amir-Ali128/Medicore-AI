@@ -10,6 +10,7 @@ on:
       - feature/native-vision-engine
       - feature/xray-core-v2
       - feature/onnx-inference-engine
+      - feature/dicom-engine
   pull_request:
     branches:
       - main
@@ -56,7 +57,7 @@ jobs:
       - name: Install native dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake g++ libopencv-dev pybind11-dev
+          sudo apt-get install -y cmake g++ libopencv-dev pybind11-dev libdcmtk-dev
       - name: Configure native vision engine
         run: cmake -S native/vision -B native/vision/build -DCMAKE_BUILD_TYPE=Release
       - name: Build native vision engine
