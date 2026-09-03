@@ -8,6 +8,7 @@ on:
       - feature/single-source-evaluation
       - feature/radiology-clinical-observation-style
       - feature/native-vision-engine
+      - feature/xray-core-v2
   pull_request:
     branches:
       - main
@@ -58,6 +59,8 @@ jobs:
         run: cmake -S native/vision -B native/vision/build -DCMAKE_BUILD_TYPE=Release
       - name: Build native vision engine
         run: cmake --build native/vision/build --config Release --parallel 2
+      - name: Run native X-Ray Core tests
+        run: ctest --test-dir native/vision/build --output-on-failure
 
   frontend-build:
     runs-on: ubuntu-latest

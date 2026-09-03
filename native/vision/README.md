@@ -1,70 +1,87 @@
-# MediCore Vision Engine
+# MediCore Vision Engine — X-Ray Core v2
 
-This directory contains the performance-oriented C++ layer for medical image
-processing. The Python backend remains the orchestration and clinical layer.
+This directory contains MediCore's performance-oriented C++ medical-image core.
+Python remains responsible for orchestration, clinical fusion, uncertainty, and
+physician-review workflow.
 
-## Current scope
+## X-Ray Core v2 scope
 
-The first iteration intentionally contains **no disease diagnosis logic**. It
-provides:
+The native layer now provides:
 
-- encoded JPG/PNG/WEBP decoding through OpenCV;
-- technical image metadata inspection;
-- conservative chest X-ray grayscale normalization and downscaling;
-- Python bindings through pybind11.
+- JPG/PNG/WEBP decoding through OpenCV;
+- deterministic 1/3/4-channel -> grayscale conversion;
+- 8/16-bit-safe conversion into an 8-bit technical working image;
+- robust 0.5/99.5 percentile normalization;
+- technical quality metrics: normalized mean/stddev, p01/p99, robust dynamic
+  range, clipping ratios, entropy, and normalized Laplacian variance;
+- explicitly heuristic quality flags such as low contrast, near-uniform image,
+  heavy clipping, small input, and low-sharpness heuristic;
+- aspect-ratio-preserving resize + letterbox geometry metadata;
+- versioned model-input tensor contract:
+  `xray-core-v2/nchw-f32-0-1` = `[1,1,H,W]`, float32, value range `[0,1]`;
+- pybind11 Python bindings;
+- deterministic C++ CTest coverage plus Python adapter contract tests.
 
-The preprocessing path avoids aggressive clinical enhancement by default. Any
-future windowing, CLAHE, segmentation, or model-specific normalization should
-match a validated model's training pipeline.
+None of the quality thresholds are diagnostic or a substitute for radiographic
+quality-control validation. Disease inference belongs to the next ONNX stage and
+must match the selected model's exact training preprocessing.
 
 ## Architecture
 
 ```text
-React / TypeScript
-        |
-FastAPI / Python
-        |
-Python clinical / safety layer
-        |
-pybind11
-        |
-MediCore Vision Engine (C++)
-        |
-OpenCV -> future validated ONNX/TensorRT inference
+encoded image
+   |
+OpenCV decode
+   |
+grayscale -> technical quality metrics
+   |
+robust normalization -> resize/letterbox
+   |
+NCHW float32 [0,1] tensor + transform metadata
+   |
+future ONNX inference engine
+   |
+Python clinical fusion / safety / physician review
 ```
 
-## Build
+The transform metadata deliberately preserves resize scale and padding so later
+bounding boxes, masks, and heatmaps can be mapped back to original-image
+coordinates without guessing.
+
+## Build and tests
 
 Ubuntu/Debian example:
 
 ```bash
 sudo apt-get install cmake g++ libopencv-dev pybind11-dev
-cmake -S native/vision -B native/vision/build
-cmake --build native/vision/build --config Release
+cmake -S native/vision -B native/vision/build -DCMAKE_BUILD_TYPE=Release
+cmake --build native/vision/build --parallel 2
+ctest --test-dir native/vision/build --output-on-failure
 ```
-
-Add the produced module directory to `PYTHONPATH` (or package/install the module)
-so the backend can import `medicore_vision`.
 
 ## Python API
 
 ```python
 from app.domain.native_vision_engine import (
-    inspect_image,
-    preprocess_chest_xray,
+    inspect_xray_quality,
+    prepare_xray_tensor,
 )
 
-metadata = inspect_image(image_bytes)
-normalized = preprocess_chest_xray(image_bytes)
+quality = inspect_xray_quality(image_bytes)
+prepared = prepare_xray_tensor(
+    image_bytes,
+    target_width=1024,
+    target_height=1024,
+)
+
+assert prepared["contract_version"] == "xray-core-v2/nchw-f32-0-1"
+tensor = prepared["tensor"]       # NumPy float32 [1,1,1024,1024]
+transform = prepared["transform"] # scale + letterbox padding
 ```
 
-## Next milestones
+## Next milestone
 
-1. Add native build verification to CI.
-2. Connect native metadata/preprocessing to the radiology upload pipeline as an
-   optional accelerator with Python fallback.
-3. Define a versioned model contract for chest X-ray multi-label findings.
-4. Add ONNX Runtime only after a validated model and its exact preprocessing
-   specification are selected.
-5. Keep disease-level interpretation, uncertainty handling, safety messaging,
-   and physician-review requirements in Python.
+**ONNX Inference Engine**: versioned model loader, input/output contract
+validation, batch inference, model metadata/version checks, and isolated failure
+handling. The ONNX stage should consume this tensor contract rather than duplicate
+image preprocessing.
