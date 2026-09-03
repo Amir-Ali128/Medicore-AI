@@ -5,6 +5,7 @@
 #include <cmath>
 #include <numeric>
 #include <stdexcept>
+#include <utility>
 
 #include <opencv2/core.hpp>
 #include <opencv2/imgcodecs.hpp>
