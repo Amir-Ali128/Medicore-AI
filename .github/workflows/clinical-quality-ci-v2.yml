@@ -7,6 +7,7 @@ on:
       - feature/clinical-domain-router
       - feature/single-source-evaluation
       - feature/radiology-clinical-observation-style
+      - feature/native-vision-engine
   pull_request:
     branches:
       - main
@@ -41,7 +42,22 @@ jobs:
             tests/test_clinical_domain_router_runtime.py \
             tests/test_clinical_quality_runtime.py \
             tests/test_clinical_quality_scope_runtime.py \
-            tests/test_urinalysis_runtime.py
+            tests/test_urinalysis_runtime.py \
+            tests/test_native_vision_engine.py
+
+  native-vision-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++ libopencv-dev pybind11-dev
+      - name: Configure native vision engine
+        run: cmake -S native/vision -B native/vision/build -DCMAKE_BUILD_TYPE=Release
+      - name: Build native vision engine
+        run: cmake --build native/vision/build --config Release --parallel 2
 
   frontend-build:
     runs-on: ubuntu-latest
