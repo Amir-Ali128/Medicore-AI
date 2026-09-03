@@ -58,7 +58,7 @@ export type ClaudeEvaluationHypothesis = ClinicalHypothesis & {
 };
 
 export type ClaudeReviewGenerationResult = {
-  analysis_run_id: string;
+  analysis_run_id: string | null;
   lab_report_id: string | null;
   patient_id: string | null;
   created_hypotheses: ClaudeEvaluationHypothesis[];
