@@ -6,6 +6,7 @@ from app.api.routes import (
     analytics,
     auth,
     clinical_copilot,
+    clinical_fusion,
     clinical_hypotheses,
     combined_case_import,
     doctor_reviews,
@@ -77,6 +78,7 @@ api_router.include_router(clinical_hypotheses.router)
 api_router.include_router(doctor_reviews.router)
 api_router.include_router(extraction.router)
 api_router.include_router(clinical_copilot.router)
+api_router.include_router(clinical_fusion.router)
 api_router.include_router(extraction_review.router)
 api_router.include_router(patient_timeline.router)
 api_router.include_router(radiology_reports.router)
