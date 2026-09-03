@@ -6,6 +6,7 @@ on:
       - fix/clinical-quality-layer
       - feature/clinical-domain-router
       - feature/single-source-evaluation
+      - feature/radiology-clinical-observation-style
   pull_request:
     branches:
       - main
@@ -35,6 +36,7 @@ jobs:
       - name: Run clinical quality tests
         run: |
           PYTHONPATH=. python -m pytest -q \
+            tests/test_radiology_image_review.py \
             tests/test_source_only_case_evaluation.py \
             tests/test_clinical_domain_router_runtime.py \
             tests/test_clinical_quality_runtime.py \

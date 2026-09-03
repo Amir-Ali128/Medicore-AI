@@ -2,8 +2,8 @@
 
 Written report photos are extracted conservatively: direct identifiers are omitted,
 explicit result/conclusion text is preserved separately, and other notable findings
-are stored without inventing diagnoses. True medical images continue to receive a
-non-diagnostic visual review.
+are stored without inventing diagnoses. True medical images receive an assistive,
+clinically useful visual review that remains non-diagnostic and physician-reviewable.
 """
 
 from __future__ import annotations
@@ -39,6 +39,87 @@ _DETECTED_MODALITIES = {
     "UNKNOWN",
 }
 _DOCUMENT_KINDS = {"REPORT_DOCUMENT", "MEDICAL_IMAGE", "OTHER"}
+
+_MEDICAL_IMAGE_REGION_CHECKLISTS: dict[str, str] = {
+    "ABDOMEN": (
+        "Karın/batın görüntüsünde, görüntü gerçekten izin veriyorsa: mide gazı ve hava-sıvı "
+        "seviyeleri; ince ve kalın bağırsak gaz paterni; dışkı/fekal yük; belirgin barsak "
+        "dilatasyonu; diyaframlar görüntü alanındaysa serbest subdiyafragmatik hava; belirgin "
+        "kalsifikasyon/yabancı cisim; kemik yapılar, omurga hizalanması ve hasta rotasyonu."
+    ),
+    "CHEST": (
+        "Toraks görüntüsünde, görüntü gerçekten izin veriyorsa: akciğer alanlarında fokal/yaygın "
+        "opasite; plevral sıvı veya pnömotoraks lehine bulgu; kardiyomediastinal silüet; "
+        "diyafram ve kostofrenik sinüsler; belirgin kemik/cihaz bulguları ve rotasyon."
+    ),
+    "SPINE": (
+        "Omurga görüntüsünde, görüntü gerçekten izin veriyorsa: koronal/sagittal hizalanma, "
+        "vertebra yükseklikleri, belirgin eğrilik, akut kemik düzensizliği ve çekim/hasta "
+        "rotasyonunun görünümü taklit edip edemeyeceği."
+    ),
+    "UPPER_EXTREMITY": (
+        "Üst ekstremite görüntüsünde, görüntü gerçekten izin veriyorsa: kortikal süreklilik, "
+        "eklem hizalanması, belirgin kırık/çıkık şüphesi, yumuşak doku şişliği ve yabancı cisim."
+    ),
+    "LOWER_EXTREMITY": (
+        "Alt ekstremite görüntüsünde, görüntü gerçekten izin veriyorsa: kortikal süreklilik, "
+        "eklem hizalanması, belirgin kırık/çıkık şüphesi, yumuşak doku şişliği ve yabancı cisim."
+    ),
+    "PELVIS": (
+        "Pelvis görüntüsünde, görüntü gerçekten izin veriyorsa: pelvik halka ve kalça eklem "
+        "hizalanması, belirgin kemik düzensizliği, kalça eklem aralıkları ve rotasyon."
+    ),
+    "HEAD": (
+        "Baş görüntüsünde yalnızca modalitenin ve tek görüntünün güvenle gösterebildiği kemik, "
+        "sinüs veya yumuşak doku özelliklerini değerlendir; görüntünün gösteremeyeceği intrakraniyal "
+        "patolojileri dışlanmış gibi yazma."
+    ),
+    "NECK": (
+        "Boyun görüntüsünde, görüntü gerçekten izin veriyorsa: servikal hizalanma, prevertebral "
+        "yumuşak doku, belirgin kemik düzensizliği ve çekim rotasyonu."
+    ),
+    "URINARY": (
+        "Üriner sistem görüntüsünde, modalite gerçekten izin veriyorsa: böbrek/mesane görünümü, "
+        "dilatasyon, taş/kalsifik odak şüphesi, sıvı içerikli yapılar ve çevre dokular."
+    ),
+    "THYROID": (
+        "Tiroid ultrasonunda, görüntü gerçekten izin veriyorsa: bez parankim görünümü, nodüler "
+        "odaklar, kistik/solid özellikler ve ölçülebilir yapıların yalnızca görünen özellikleri."
+    ),
+    "BREAST": (
+        "Meme görüntüsünde yalnızca doğrudan seçilebilen asimetri, kitle-benzeri odak, "
+        "kalsifikasyon veya yapı bozukluğu gibi görsel özellikleri tarif et; BI-RADS veya kesin "
+        "tanı üretme."
+    ),
+    "OBSTETRIC": (
+        "Obstetrik görüntüde yalnızca açıkça görünen anatomik/ölçümsel özellikleri tarif et; "
+        "tek kareden fetal sağlık, gebelik yaşı veya prognoz hakkında kesin sonuç üretme."
+    ),
+    "OTHER": (
+        "Bölge belirsizse önce görüntüde güvenle seçilebilen anatomik bölgeyi ve modaliteye uygun "
+        "ana yapıları değerlendir; görünmeyen yapılar hakkında negatif çıkarım yapma."
+    ),
+}
+
+_VISUAL_LIMITATION_MARKERS = (
+    "pacs",
+    "ekran fotoğraf",
+    "ekran fotograf",
+    "bilgisayar ekran",
+    "araç çubuğu",
+    "arac cubugu",
+    "moir",
+    "yansıma",
+    "yansima",
+    "bulanık",
+    "bulanik",
+    "çözünürlük",
+    "cozunurluk",
+    "kırp",
+    "kirp",
+    "artefakt",
+    "tek projeksiyon",
+)
 
 
 @dataclass(frozen=True)
@@ -147,6 +228,76 @@ def _detected_modality(value: object) -> str:
     return candidate if candidate in _DETECTED_MODALITIES else "UNKNOWN"
 
 
+def _medical_image_guidance(modality: str | None, body_part: str | None) -> str:
+    """Prompt guidance for clinically useful, non-diagnostic image observations."""
+
+    region = body_part if body_part in _MEDICAL_IMAGE_REGION_CHECKLISTS else "OTHER"
+    checklist = _MEDICAL_IMAGE_REGION_CHECKLISTS[region]
+    modality_note = (
+        "Röntgende yoğunluk, gaz paterni, hizalanma ve projeksiyonla değerlendirilebilen yapıları kullan."
+        if modality == "XRAY"
+        else (
+            "Ultrasonda ekojenite, sıvı/solid görünüm, kontur ve yalnızca karede seçilebilen anatomiyi kullan."
+            if modality == "ULTRASOUND"
+            else "Modalitenin gerçekten gösterebildiği yapılarla sınırlı kal."
+        )
+    )
+
+    return f"""
+MEDICAL_IMAGE için çıktı, yalnızca görüntünün türünü tarif eden genel cümleler değil,
+hekime gerçekten yararlı görsel gözlemler içermelidir.
+- {modality_note}
+- Bölgeye özgü kontrol listesi: {checklist}
+- observations alanındaki her madde tek, klinik olarak anlamlı bir gözlem olsun.
+- Önce pozitif/göze çarpan bulguları yaz. Ardından yalnızca görüntü alanı ve kalite gerçekten
+  izin veriyorsa önemli negatif bulguları (ör. belirgin dilatasyon/serbest hava/kırık/efüzyon
+  görülmemesi) yaz. Görüntünün göstermediği bir şeyi dışlanmış gibi yazma.
+- PACS arayüzü, ekran fotoğrafı, moiré, yansıma, çözünürlük, kırpılma, tek projeksiyon,
+  hasta rotasyonu gibi teknik noktalar observations yerine limitations alanına gitmelidir;
+  rotasyon bir anatomik görünümü taklit edebiliyorsa ilgili observation içinde de bağlam olarak belirtilebilir.
+- Görsel bulgunun düşük iddialı klinik anlamını belirtmek serbesttir: "... ile uyumlu olabilir",
+  "... düşündürebilir" veya "tek başına anormal olmak zorunda değildir" gibi ifadeler kullanılabilir.
+  Buna karşılık kesin tanı, olasılık yüzdesi, tedavi veya otomatik tetkik istemi üretme.
+- summary 1-3 cümlelik klinik sentez olsun. "Bir görüntü/PACS ekranı görülüyor" gibi boş bir
+  tanımla yetinme; en önemli 1-3 görsel bulguyu özetle ve gerekiyorsa önemli bir negatif bulguyu ekle.
+- Emin olmadığın bir yapıyı adlandırma. Belirsizliği açıkça yaz ve hekim doğrulaması gerektiğini koru.
+""".strip()
+
+
+def _separate_visual_observations(
+    observations: list[str], limitations: list[str]
+) -> tuple[list[str], list[str]]:
+    """Move low-value screenshot/quality descriptions out of clinical observations."""
+
+    clinical: list[str] = []
+    technical = list(limitations)
+    for observation in observations:
+        folded = observation.lower()
+        if any(marker in folded for marker in _VISUAL_LIMITATION_MARKERS):
+            if observation not in technical:
+                technical.append(observation)
+        elif observation not in clinical:
+            clinical.append(observation)
+
+    deduped_limitations: list[str] = []
+    for limitation in technical:
+        if limitation not in deduped_limitations:
+            deduped_limitations.append(limitation)
+    return clinical[:10], deduped_limitations[:8]
+
+
+def _prefer_clinical_visual_summary(summary: str, observations: list[str]) -> str:
+    """Replace a purely screenshot-descriptive summary when clinical observations exist."""
+
+    if not observations:
+        return summary
+    folded = summary.lower()
+    low_value_hits = sum(1 for marker in _VISUAL_LIMITATION_MARKERS if marker in folded)
+    if not summary or low_value_hits >= 2:
+        return " ".join(observations[:3])[:1800]
+    return summary
+
+
 async def review_radiology_media(
     *,
     content: bytes,
@@ -181,6 +332,7 @@ async def review_radiology_media(
         if requested_body_part
         else "Bölgeyi yalnızca açık metin/görüntü kanıtından çıkar; emin değilsen OTHER kullan."
     )
+    image_guidance = _medical_image_guidance(normalized_modality, requested_body_part)
 
     prompt = f"""
 {modality_context}
@@ -208,8 +360,8 @@ REPORT_DOCUMENT ise:
 - comparison_text: yalnızca açık KARŞILAŞTIRMA/önceki tetkik kıyaslaması.
 - Tek sayfa 1/2 veya 2/2 olabilir; görünmeyen sayfanın içeriğini tahmin etme.
 
-MEDICAL_IMAGE ise kesin tanı koyma. Yalnızca doğrudan görsel observations ve
-limitations üret. Metin ağırlıklı rapor sayfasını MEDICAL_IMAGE sayma.
+{image_guidance}
+Metin ağırlıklı rapor sayfasını MEDICAL_IMAGE sayma.
 
 Yalnızca JSON döndür:
 {{
@@ -217,14 +369,14 @@ Yalnızca JSON döndür:
   "detected_modality":"XRAY | ULTRASOUND | CT | MRI | MAMMOGRAPHY | DEXA | PET_CT | NUCLEAR_MEDICINE | ENDOSCOPY | PATHOLOGY | OTHER | UNKNOWN",
   "detected_body_part":"ABDOMEN | CHEST | HEAD | NECK | PELVIS | SPINE | UPPER_EXTREMITY | LOWER_EXTREMITY | BREAST | THYROID | URINARY | OBSTETRIC | OTHER",
   "report_type":"rapor türünün kısa adı veya UNKNOWN",
-  "summary":"kısa ve sadece kaynağa dayalı özet",
+  "summary":"MEDICAL_IMAGE ise klinik olarak anlamlı 1-3 cümlelik görsel sentez; REPORT_DOCUMENT ise kısa kaynak özeti",
   "result_text":"açık sonuç/izlenim/kanaat bölümü veya boş",
   "result_items":["sonuç bölümündeki ayrı ifadeler"],
   "key_findings":["diğer bölümlerdeki önemli açık bulgular"],
   "recommendations":["açık öneriler"],
   "comparison_text":"varsa karşılaştırma, yoksa boş",
-  "observations":["MEDICAL_IMAGE ise en fazla 8 doğrudan gözlem"],
-  "limitations":["en fazla 6 sınırlama"],
+  "observations":["MEDICAL_IMAGE ise en fazla 10 klinik olarak anlamlı doğrudan görsel gözlem"],
+  "limitations":["en fazla 8 teknik/kalite/sınırlandırıcı unsur"],
   "visible_text":"kimlik bilgileri çıkarılmış klinik metin"
 }}
 """.strip()
@@ -232,11 +384,13 @@ Yalnızca JSON döndür:
     client = AsyncAnthropic(api_key=settings.anthropic_api_key)
     message = await client.messages.create(
         model=model,
-        max_tokens=2400,
+        max_tokens=2800,
         temperature=0,
         system=(
-            "You extract medical report documents conservatively and review medical images assistively. "
-            "Never invent findings, diagnoses, or treatment. Remove direct identifiers. Return JSON only."
+            "You extract medical report documents conservatively and review medical images as a cautious "
+            "radiology-assist component. For medical images, be clinically descriptive rather than merely "
+            "describing the screenshot. Never invent findings, make a definitive diagnosis, prescribe treatment, "
+            "or order tests. Remove direct identifiers. Return JSON only."
         ),
         messages=[
             {
@@ -278,13 +432,17 @@ Yalnızca JSON döndür:
     key_findings = tuple(_string_list(payload.get("key_findings"), limit=24, item_limit=1200))
     recommendations = tuple(_string_list(payload.get("recommendations"), limit=12, item_limit=1200))
     comparison_text = _clean(payload.get("comparison_text"), 2000)
-    observations = _string_list(payload.get("observations"), limit=8, item_limit=1000)
-    limitations = _string_list(payload.get("limitations"), limit=6, item_limit=1000)
+    observations = _string_list(payload.get("observations"), limit=10, item_limit=1000)
+    limitations = _string_list(payload.get("limitations"), limit=8, item_limit=1000)
     visible_text = _clean(payload.get("visible_text"), 14000)
     summary = _clean(payload.get("summary"), 1800)
 
-    if kind == "REPORT_DOCUMENT" and not summary:
+    if kind == "MEDICAL_IMAGE":
+        observations, limitations = _separate_visual_observations(observations, limitations)
+        summary = _prefer_clinical_visual_summary(summary, observations)
+    elif kind == "REPORT_DOCUMENT" and not summary:
         summary = result_text or " ".join(result_items) or " ".join(key_findings)
+
     if not summary:
         summary = "Dosya klinik inceleme için kaydedildi; hekim doğrulaması gereklidir."
 
