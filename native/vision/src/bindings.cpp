@@ -1,6 +1,7 @@
 #include <array>
 #include <cstring>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -47,7 +48,10 @@ py::array_t<float> mat_to_numpy_f32(const cv::Mat& image) {
 }
 
 cv::Mat numpy_to_mat_f32(const py::array& value) {
-    py::array_t<float, py::array::c_style | py::array::forcecast> typed(value);
+    auto typed = py::array_t<float, py::array::c_style | py::array::forcecast>::ensure(value);
+    if (!typed) {
+        throw std::invalid_argument("spatial_map cannot be converted to float32");
+    }
     const auto buffer = typed.request();
     if (buffer.ndim != 2 || buffer.shape[0] <= 0 || buffer.shape[1] <= 0) {
         throw std::invalid_argument("spatial_map must be a non-empty 2D array");
@@ -96,16 +100,18 @@ py::dict transform_to_dict(const medicore::vision::TensorTransform& transform) {
 
 medicore::vision::TensorTransform transform_from_dict(const py::dict& value) {
     auto get_int = [&value](const char* key) -> int {
-        if (!value.contains(py::str(key))) {
+        const py::str py_key(key);
+        if (!value.contains(py_key)) {
             throw std::invalid_argument(std::string("transform missing field: ") + key);
         }
-        return value[py::str(key)].cast<int>();
+        return value[py_key].cast<int>();
     };
     auto get_double = [&value](const char* key) -> double {
-        if (!value.contains(py::str(key))) {
+        const py::str py_key(key);
+        if (!value.contains(py_key)) {
             throw std::invalid_argument(std::string("transform missing field: ") + key);
         }
-        return value[py::str(key)].cast<double>();
+        return value[py_key].cast<double>();
     };
 
     medicore::vision::TensorTransform transform{
@@ -161,6 +167,13 @@ py::dict dicom_metadata_to_dict(const medicore::vision::DicomMetadata& metadata)
     result["has_window"] = metadata.has_window;
     result["window_center"] = metadata.has_window ? py::cast(metadata.window_center) : py::none();
     result["window_width"] = metadata.has_window ? py::cast(metadata.window_width) : py::none();
+    result["has_pixel_spacing"] = metadata.has_pixel_spacing;
+    result["pixel_spacing_row_mm"] = metadata.has_pixel_spacing
+        ? py::cast(metadata.pixel_spacing_row_mm)
+        : py::none();
+    result["pixel_spacing_col_mm"] = metadata.has_pixel_spacing
+        ? py::cast(metadata.pixel_spacing_col_mm)
+        : py::none();
     result["native_pixel_decode_supported"] = !metadata.compressed;
     return result;
 }
@@ -201,13 +214,15 @@ py::object optional_double_to_python(const std::optional<double>& value) {
 py::list regions_to_python(const std::vector<medicore::vision::RegionMeasurement>& regions) {
     py::list result;
     for (const auto& region : regions) {
+        py::dict bbox;
+        bbox["x"] = region.x;
+        bbox["y"] = region.y;
+        bbox["width"] = region.width;
+        bbox["height"] = region.height;
+
         py::dict item;
         item["component_id"] = region.component_id;
-        item["bbox"] = py::dict(
-            "x"_a = region.x,
-            "y"_a = region.y,
-            "width"_a = region.width,
-            "height"_a = region.height);
+        item["bbox"] = bbox;
         item["area_pixels"] = region.area_pixels;
         item["area_fraction"] = region.area_fraction;
         item["centroid"] = py::make_tuple(region.centroid_x, region.centroid_y);
@@ -224,8 +239,6 @@ py::list regions_to_python(const std::vector<medicore::vision::RegionMeasurement
 }  // namespace
 
 PYBIND11_MODULE(medicore_vision, module) {
-    using namespace pybind11::literals;
-
     module.doc() = "MediCore native medical-image primitives. Technical processing only; no diagnosis.";
     module.attr("__version__") = MEDICORE_VISION_VERSION;
     module.attr("XRAY_TENSOR_CONTRACT") = "xray-core-v2/nchw-f32-0-1";
