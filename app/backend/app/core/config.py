@@ -65,10 +65,11 @@ class Settings(BaseSettings):
     claude_vision_model: str | None = None
 
     # --- Multi-model radiology review -----------------------------------
-    # Providers are optional and fail independently. Anthropic remains available
-    # through the fields above; OpenAI, Gemini and a fourth OpenAI-compatible
-    # provider can be enabled by supplying their keys.
-    radiology_multi_model_enabled: bool = True
+    # Multi-provider sharing is explicit opt-in because a medical image may
+    # contain sensitive health information. Anthropic remains available through
+    # the fields above; the additional providers run only when this flag is true
+    # and their individual credentials are configured.
+    radiology_multi_model_enabled: bool = False
     radiology_multi_model_timeout_seconds: float = 45.0
 
     openai_api_key: str | None = None
