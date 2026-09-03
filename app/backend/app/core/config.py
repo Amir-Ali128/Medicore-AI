@@ -64,6 +64,24 @@ class Settings(BaseSettings):
     # deployments do not require a new environment variable.
     claude_vision_model: str | None = None
 
+    # --- Multi-model radiology review -----------------------------------
+    # Multi-provider sharing is explicit opt-in because a medical image may
+    # contain sensitive health information. Anthropic remains available through
+    # the fields above; the additional providers run only when this flag is true
+    # and their individual credentials are configured.
+    radiology_multi_model_enabled: bool = False
+    radiology_multi_model_timeout_seconds: float = 45.0
+
+    openai_api_key: str | None = None
+    openai_vision_model: str = "gpt-5.6-terra"
+
+    gemini_api_key: str | None = None
+    gemini_vision_model: str = "gemini-3.8-flash"
+
+    radiology_fourth_api_key: str | None = None
+    radiology_fourth_base_url: str | None = None
+    radiology_fourth_model: str | None = None
+
     @staticmethod
     def _with_driver(url: str, driver: str) -> str:
         """Convert Render/Postgres URL into SQLAlchemy driver URL."""
