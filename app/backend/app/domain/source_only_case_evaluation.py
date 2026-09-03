@@ -35,16 +35,20 @@ def source_coverage(metadata: dict[str, Any]) -> dict[str, Any]:
 
     availability = {key: False for key in _SOURCE_KEYS}
     raw_availability = metadata.get("source_availability")
+    explicit_keys: set[str] = set()
     if isinstance(raw_availability, dict):
         for key in _SOURCE_KEYS:
-            availability[key] = raw_availability.get(key) is True
+            if key in raw_availability:
+                explicit_keys.add(key)
+                availability[key] = raw_availability.get(key) is True
 
-    # Backward-compatible fallback for callers that provide summaries but not the
-    # explicit availability map. Placeholder/empty strings do not count as evidence.
+    # Backward-compatible fallback for older callers that provide summaries but no
+    # availability value for that source. An explicit false is authoritative and
+    # cannot be overridden by placeholder/non-empty summary text.
     raw_summaries = metadata.get("source_summaries")
     if isinstance(raw_summaries, dict):
         for key in _SOURCE_KEYS:
-            if availability[key]:
+            if key in explicit_keys:
                 continue
             value = raw_summaries.get(key)
             if isinstance(value, str) and value.strip():
@@ -97,6 +101,14 @@ def _coverage_limitations(coverage: dict[str, Any]) -> list[str]:
     if missing:
         limitations.append("Eksik kaynaklar: " + ", ".join(missing) + ".")
     return limitations
+
+
+def _source_only_fallback(flags: list[str], language: str) -> tuple[int, str]:
+    if flags == [_SOURCE_ONLY_GATE]:
+        if language.lower().startswith("tr"):
+            return 1, "Sınırlı kaynak değerlendirildi; risk dışlanamaz, hekim doğrulaması gerekir."
+        return 1, "Limited source reviewed; risk cannot be excluded and physician review is required."
+    return ClaudeClinicalHypothesisService._fallback_output(flags, language)
 
 
 async def generate_source_only_case(
@@ -156,15 +168,17 @@ async def generate_source_only_case(
             ],
         )
         payload = service._safe_json(service._collect_text(response))
-        risk, summary = service._parse_compact_output(
-            payload,
-            flags=flags,
-            language=request.language,
-        )
         if payload is None:
+            risk, summary = _source_only_fallback(flags, request.language)
             warnings.append("Invalid compact AI JSON; deterministic fallback used.")
+        else:
+            risk, summary = service._parse_compact_output(
+                payload,
+                flags=flags,
+                language=request.language,
+            )
     except Exception:
-        risk, summary = service._fallback_output(flags, request.language)
+        risk, summary = _source_only_fallback(flags, request.language)
         warnings.append("AI call failed; deterministic fallback used.")
         ai_called = False
 
