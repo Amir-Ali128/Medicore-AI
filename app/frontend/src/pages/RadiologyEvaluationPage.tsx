@@ -26,6 +26,15 @@ type FileUploadResult = {
   error?: string;
 };
 
+type ConsensusDifferential = {
+  label: string;
+  supporting_provider_count: number;
+  total_provider_count: number;
+  supporting_providers: string[];
+  supporting_observations: string[];
+  agreement_strength: string;
+};
+
 function fileKey(file: File) {
   return `${file.name}:${file.size}:${file.lastModified}`;
 }
@@ -60,6 +69,44 @@ function metadataStringList(report: RadiologyReport, key: string) {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === 'string' && Boolean(item.trim()))
     : [];
+}
+
+function metadataNumber(report: RadiologyReport, key: string) {
+  const value = report.metadata_json?.[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+function metadataConsensus(report: RadiologyReport, key: string): ConsensusDifferential[] {
+  const value = report.metadata_json?.[key];
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== 'object') return [];
+    const raw = item as Record<string, unknown>;
+    if (typeof raw.label !== 'string' || !raw.label.trim()) return [];
+    const supportingCount =
+      typeof raw.supporting_provider_count === 'number'
+        ? raw.supporting_provider_count
+        : 0;
+    const totalCount =
+      typeof raw.total_provider_count === 'number' ? raw.total_provider_count : 0;
+    return [
+      {
+        label: raw.label,
+        supporting_provider_count: supportingCount,
+        total_provider_count: totalCount,
+        supporting_providers: Array.isArray(raw.supporting_providers)
+          ? raw.supporting_providers.filter((entry): entry is string => typeof entry === 'string')
+          : [],
+        supporting_observations: Array.isArray(raw.supporting_observations)
+          ? raw.supporting_observations.filter((entry): entry is string => typeof entry === 'string')
+          : [],
+        agreement_strength:
+          typeof raw.agreement_strength === 'string'
+            ? raw.agreement_strength
+            : 'unknown',
+      },
+    ];
+  });
 }
 
 export default function RadiologyEvaluationPage() {
@@ -265,7 +312,7 @@ export default function RadiologyEvaluationPage() {
           Radyoloji ve Diğer Tetkik Raporları
         </h1>
         <p className="mt-2 text-sm leading-6 text-slate-500">
-          PDF/metin raporu, rapor fotoğrafı veya röntgen/ultrason görüntüsü ekleyebilirsin.
+          PDF/metin raporu, rapor fotoğrafı veya medikal görüntü ekleyebilirsin.
         </p>
       </header>
 
@@ -314,7 +361,7 @@ export default function RadiologyEvaluationPage() {
                 onChange={(event) => setFilePurpose(event.target.value as FilePurpose)}
                 className={`${INPUT_CLASS} mt-2`}
               >
-                <option value="report">Rapor / diğer dosya</option>
+                <option value="report">Rapor / diğer görüntü — otomatik belirle</option>
                 <option value="xray">Röntgen görüntüsü</option>
                 <option value="ultrasound">Ultrason görüntüsü</option>
               </select>
@@ -329,11 +376,11 @@ export default function RadiologyEvaluationPage() {
 
             {filePurpose === 'report' ? (
               <p className="text-xs leading-5 text-slate-500">
-                PDF ve metin dosyaları doğrudan değerlendirilir. JPG, PNG ve WEBP önce yazılı rapor belgesi mi yoksa gerçek medikal görüntü mü diye ayrılır. Rapor fotoğrafında Sonuç/İzlenim/Kanaat bölümü ayrı çıkarılır; diğer önemli bulgular, karşılaştırma ve açık öneriler de kaydedilir. BT, MR, ultrason, röntgen ve diğer rapor türleri otomatik sınıflandırılabilir. Dosya başına sınır 15 MB'dır.
+                PDF ve metin dosyaları doğrudan değerlendirilir. JPG, PNG ve WEBP önce yazılı rapor belgesi mi yoksa gerçek medikal görüntü mü diye ayrılır. Gerçek medikal görüntüler otomatik modda röntgen, ultrason, BT/MR ekran görüntüsü ve diğer desteklenen görüntü türleri olarak sınıflandırılabilir. Tek kare BT/MR, tüm seri yerine geçmez. Dosya başına sınır 15 MB'dır.
               </p>
             ) : (
               <div className="rounded-lg border border-violet-200 bg-violet-50 p-3 text-xs leading-5 text-violet-900">
-                JPG, PNG veya WEBP görüntülerinde deneysel <strong>AI ön değerlendirmesi</strong> çalışır. Dosya aslında yazılı bir rapor sayfasıysa sistem bunu rapor belgesi olarak ayırır. Çıktı tanı değildir ve hekim/radyolog doğrulaması gerektirir.
+                JPG, PNG veya WEBP görüntülerinde <strong>çoklu-model AI ön değerlendirmesi</strong> çalışabilir. Yapılandırılmış sağlayıcılar aynı görüntüyü bağımsız okur; ortak ön tanı/diferansiyeller ve model görüş ayrılıkları ayrıca gösterilir. Çıktı kesin tanı değildir ve hekim/radyolog doğrulaması gerektirir.
               </div>
             )}
 
@@ -396,7 +443,7 @@ export default function RadiologyEvaluationPage() {
                 : item.documentReview
                   ? '— yazılı rapor belgesi algılandı; sonuç ve önemli bulgular çıkarıldı'
                   : item.visualAi
-                    ? '— AI görüntü ön değerlendirmesi yapıldı ve kaydedildi'
+                    ? '— çoklu-model görüntü ön değerlendirmesi yapıldı ve kaydedildi'
                     : item.analyzed
                       ? '— değerlendirildi ve kaydedildi'
                       : '— dosya olarak kaydedildi (otomatik analiz yok)'}
@@ -425,6 +472,11 @@ export default function RadiologyEvaluationPage() {
             const recommendations = metadataStringList(report, 'recommendations');
             const comparisonText = metadataString(report, 'comparison_text');
             const reportType = metadataString(report, 'report_type');
+            const providerCount = metadataNumber(report, 'provider_count');
+            const providers = metadataStringList(report, 'providers_succeeded');
+            const consensus = metadataConsensus(report, 'consensus_differential');
+            const singleModel = metadataConsensus(report, 'single_model_differential');
+            const criticalModelFlags = metadataStringList(report, 'critical_review_flags');
 
             return (
               <article key={report.id} className="rounded-xl border border-slate-200 bg-white p-4">
@@ -440,13 +492,18 @@ export default function RadiologyEvaluationPage() {
                         </span>
                       ) : visualAi ? (
                         <span className="rounded-full bg-violet-100 px-2.5 py-1 text-xs font-semibold text-violet-800">
-                          AI görüntü ön değerlendirmesi
+                          AI görüntü ön değerlendirmesi{providerCount > 0 ? ` · ${providerCount} model` : ''}
                         </span>
                       ) : null}
                     </div>
                     <p className="mt-1 text-xs text-slate-500">
                       {formatDate(report.report_date || report.created_at)} · {report.modality} · {reportType && reportType !== 'UNKNOWN' ? `${reportType} · ` : ''}{analyzable ? 'Değerlendirildi' : 'Dosya kaydı'}
                     </p>
+                    {visualAi && providers.length > 0 ? (
+                      <p className="mt-1 text-[11px] text-slate-400">
+                        Okuyucular: {providers.join(' · ')}
+                      </p>
+                    ) : null}
 
                     {documentReview && resultText ? (
                       <div className="mt-3 rounded-lg border border-blue-100 bg-blue-50/50 p-3">
@@ -456,6 +513,60 @@ export default function RadiologyEvaluationPage() {
                     ) : (
                       <p className="mt-2 text-sm leading-6 text-slate-600">{report.summary}</p>
                     )}
+
+                    {visualAi && consensus.length > 0 ? (
+                      <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50/60 p-3">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-emerald-800">
+                          Çoklu-model ortak ön tanı / diferansiyel
+                        </p>
+                        <div className="mt-2 space-y-2">
+                          {consensus.map((item, index) => (
+                            <div key={`${report.id}-consensus-${index}`} className="rounded-md bg-white/80 p-2.5">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <p className="text-sm font-semibold text-slate-900">{item.label}</p>
+                                <span className="rounded-full bg-emerald-100 px-2 py-1 text-[11px] font-bold text-emerald-800">
+                                  {item.supporting_provider_count}/{item.total_provider_count} model
+                                </span>
+                              </div>
+                              {item.supporting_observations.length > 0 ? (
+                                <p className="mt-1 text-xs leading-5 text-slate-600">
+                                  Dayanak: {item.supporting_observations.slice(0, 2).join(' · ')}
+                                </p>
+                              ) : null}
+                            </div>
+                          ))}
+                        </div>
+                        <p className="mt-2 text-[11px] leading-5 text-emerald-900">
+                          Model uyumu klinik doğrulama değildir; kesin tanı için hekim/radyolog değerlendirmesi gerekir.
+                        </p>
+                      </div>
+                    ) : null}
+
+                    {visualAi && criticalModelFlags.length > 0 ? (
+                      <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-red-800">Öncelikli hekim incelemesi</p>
+                        <ul className="mt-2 space-y-1 text-sm leading-6 text-red-950">
+                          {criticalModelFlags.map((flag, index) => (
+                            <li key={`${report.id}-critical-model-${index}`}>• {flag}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
+
+                    {visualAi && singleModel.length > 0 && providerCount >= 2 ? (
+                      <details className="mt-3 rounded-lg border border-amber-200 bg-amber-50/50 p-3">
+                        <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-amber-800">
+                          Modellerin ortaklaşmadığı adaylar ({singleModel.length})
+                        </summary>
+                        <ul className="mt-2 space-y-1 text-sm leading-6 text-slate-700">
+                          {singleModel.map((item, index) => (
+                            <li key={`${report.id}-solo-${index}`}>
+                              • {item.label} — {item.supporting_provider_count}/{item.total_provider_count} model
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    ) : null}
 
                     {documentReview && keyFindings.length > 0 ? (
                       <div className="mt-3 rounded-lg bg-slate-50 p-3">
