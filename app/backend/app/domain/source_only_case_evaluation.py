@@ -208,7 +208,13 @@ async def generate_source_only_case(
         domains = []
         domain_router = {}
 
-    severity = {1: "low", 2: "medium", 3: "high"}[risk]
+    # Source-only cases are necessarily incomplete with respect to the current 3-source
+    # model. Preserve the internal compact score for audit, but do not expose it through
+    # the standard risk badge/severity fields where "1" could be read as reassuring.
+    limited = bool(coverage.get("limited"))
+    severity = None if limited else {1: "low", 2: "medium", 3: "high"}[risk]
+    display_risk: int | None = None if limited else risk
+
     hypothesis = ClinicalHypothesis(
         patient_id=patient_id,
         lab_report_id=None,
@@ -223,7 +229,9 @@ async def generate_source_only_case(
         needs_doctor_review=True,
         evidence_json=[],
         metadata_json={
-            "risk": risk,
+            "risk": display_risk,
+            "limited_source_risk_score": risk,
+            "risk_display_suppressed_for_limited_sources": limited,
             "flags": flags,
             "symptoms": _plain_symptoms(symptoms),
             "possible_conditions": [],
