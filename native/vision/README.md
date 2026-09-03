@@ -1,4 +1,4 @@
-# MediCore Vision Engine — X-Ray Core v2 + ONNX + DICOM Engine
+# MediCore Vision Engine — X-Ray Core v2 + ONNX + DICOM + Post-processing
 
 This directory contains MediCore's performance-oriented C++ medical-image core.
 Python owns ONNX Runtime orchestration, clinical fusion, uncertainty, and the
@@ -23,23 +23,21 @@ The native DICOM path uses DCMTK and provides:
 
 - in-memory `.dcm` parsing without copying patient identifiers into engine output;
 - technical metadata for Rows/Columns/Frames, bit depth, pixel representation,
-  modality, photometric interpretation, rescale values, window values, and
-  transfer syntax;
+  modality, photometric interpretation, rescale values, window values, transfer
+  syntax, and patient-space `PixelSpacing` when it is actually present;
 - native uncompressed 8-bit and 16-bit monochrome Pixel Data decoding;
 - correct `BitsStored` / `HighBit` extraction and signed-pixel sign extension;
 - `RescaleSlope` + `RescaleIntercept` modality transform before display windowing;
 - explicit window override, DICOM WindowCenter/WindowWidth, then robust 0.5/99.5
   percentile fallback in that priority order;
-- DICOM-style linear window conversion into a versioned uint8 frame contract:
-  `dicom-frame-v1/grayscale-u8`;
+- DICOM-style linear window conversion into `dicom-frame-v1/grayscale-u8`;
 - `MONOCHROME1` polarity inversion and `MONOCHROME2` preservation;
 - multi-frame selection with bounds checks;
 - safe CR/DX-only conversion into the X-Ray Core v2 tensor contract;
 - fail-closed handling for compressed/encapsulated Pixel Data in this milestone.
 
-Compressed transfer syntaxes are deliberately reported in metadata but are not
-silently decoded. Codec registration/validation can be added as a later extension
-without changing the frame/tensor contracts.
+Physical measurements are only emitted when DICOM `PixelSpacing` exists. The
+engine does not substitute `ImagerPixelSpacing` or invent millimeter scale.
 
 ## ONNX Inference Engine
 
@@ -52,11 +50,35 @@ The backend ONNX layer (`app/domain/onnx_inference_engine.py`) adds:
 - dynamic-batch inference and safe micro-batching for models fixed at batch=1;
 - logits -> sigmoid score conversion or bounded probability passthrough;
 - per-label thresholds without promoting model scores to autonomous diagnoses;
-- preservation of X-Ray Core transform/quality metadata for later heatmaps,
-  bounding boxes, and clinical fusion.
+- preservation of X-Ray Core transform/quality metadata for localization work.
 
 Model binaries are deliberately ignored by git (`*.onnx`). A validated model and
 matching manifest must be supplied at deployment time.
+
+## Vision Post-processing v1
+
+The native localization layer consumes a 2D model heatmap or segmentation score
+map plus the exact `TensorTransform` produced by X-Ray Core v2. It provides:
+
+- resize from arbitrary model-map resolution into model input space;
+- removal of letterbox padding before localization is mapped back;
+- exact original-image shape restoration;
+- optional min-max normalization for CAM-style heatmaps, or strict `[0,1]`
+  probability-map validation when normalization is disabled;
+- thresholded binary segmentation mask;
+- 8-connected component extraction;
+- original-pixel bounding boxes and centroids;
+- mean/peak activation per region;
+- pixel area and image-area fraction;
+- optional bbox width/height in millimeters and area in mm² when trusted DICOM
+  `PixelSpacing` is supplied;
+- direct model-space `xyxy` bounding-box mapping through the same saved
+  letterbox geometry;
+- versioned output contract: `vision-post-v1/original-space`.
+
+Small components can be filtered and the number of returned components capped.
+NaN/Inf maps, inconsistent transform geometry, degenerate boxes, incomplete
+pixel spacing, and boxes entirely inside padding fail closed.
 
 ## Architecture
 
@@ -64,20 +86,23 @@ matching manifest must be supplied at deployment time.
 JPG/PNG/WEBP -----------------> C++ X-Ray Core v2 -----+
                                                        |
 DICOM -> DCMTK -> rescale/window/MONOCHROME -> CR/DX -+-> NCHW float32 [0,1]
-                                                       |      + transform metadata
+                                                       |      + TensorTransform
                                                        v
                                       C++ contract guard + Python ONNX Runtime
                                                        |
-                                      raw finding scores + model identity
+                           classifier scores / detector boxes / spatial maps
                                                        |
-                                      future Vision Post-processing
+                                      Vision Post-processing v1
+                                  heatmap + mask + bbox + measurements
                                                        |
-                                      clinical fusion / physician review
+                                      Clinical Fusion Brain
+                                                       |
+                                      physician review workflow
 ```
 
 CT DICOM frames can be decoded/windowed by the DICOM Engine, but the CR/DX X-Ray
 classifier path rejects CT rather than feeding it into a model trained for X-rays.
-A future CT model should define its own model-input contract.
+A CT model should define its own model-input contract.
 
 ## Build and native tests
 
@@ -88,25 +113,39 @@ cmake --build native/vision/build --parallel 2
 ctest --test-dir native/vision/build --output-on-failure
 ```
 
-## Python DICOM API
+## Python usage
 
 ```python
 from app.domain.native_vision_engine import (
     inspect_dicom,
-    prepare_dicom_frame,
+    map_model_box_to_original,
+    postprocess_prepared_spatial_map,
     prepare_dicom_xray_tensor,
 )
 
-meta = inspect_dicom(dicom_bytes)
-frame = prepare_dicom_frame(dicom_bytes, frame_index=0)
-
-# Only CR/DX modalities are permitted into the X-Ray classifier contract.
 prepared = prepare_dicom_xray_tensor(
     dicom_bytes,
     target_width=1024,
     target_height=1024,
 )
+
+# `model_heatmap` can be a lower-resolution CAM or a segmentation probability map.
+localization = postprocess_prepared_spatial_map(
+    model_heatmap,
+    prepared,
+    threshold=0.6,
+    normalize_minmax=False,
+)
+
+original_xyxy = map_model_box_to_original(
+    (model_x1, model_y1, model_x2, model_y2),
+    prepared["transform"],
+)
 ```
+
+For a non-DICOM X-ray, `postprocess_prepared_spatial_map` still maps heatmaps and
+boxes correctly, but physical millimeter measurements remain absent because no
+trusted pixel spacing is available.
 
 ## Model configuration
 
@@ -134,5 +173,6 @@ still need independent validation before clinical deployment.
 
 ## Next milestone
 
-**Vision Post-processing**: segmentation masks, bounding boxes, heatmaps, and
-measurements mapped back through saved resize/letterbox transform metadata.
+**Clinical Fusion Brain**: combine image findings/localization, laboratory results,
+symptoms, history, and AI-reader outputs into one evidence-aware physician-facing
+case assessment while preserving source provenance and disagreement.
