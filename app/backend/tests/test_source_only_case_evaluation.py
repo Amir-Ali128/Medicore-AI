@@ -1,4 +1,5 @@
 from app.domain.source_only_case_evaluation import (
+    _risk_display_for_coverage,
     _source_only_fallback,
     source_coverage,
 )
@@ -104,3 +105,25 @@ def test_neutral_source_only_fallback_does_not_claim_risk_is_excluded() -> None:
     assert risk == 1
     assert "risk dışlanamaz" in summary.lower()
     assert "hekim" in summary.lower()
+
+
+def test_limited_source_suppresses_only_reassuring_low_risk() -> None:
+    display_risk, severity, suppressed = _risk_display_for_coverage(
+        1,
+        {"limited": True},
+    )
+
+    assert display_risk is None
+    assert severity is None
+    assert suppressed is True
+
+
+def test_limited_source_preserves_actionable_high_risk() -> None:
+    display_risk, severity, suppressed = _risk_display_for_coverage(
+        3,
+        {"limited": True},
+    )
+
+    assert display_risk == 3
+    assert severity == "high"
+    assert suppressed is False
