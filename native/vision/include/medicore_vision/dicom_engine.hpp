@@ -30,6 +30,9 @@ struct DicomMetadata {
     bool has_window{false};
     double window_center{0.0};
     double window_width{0.0};
+    bool has_pixel_spacing{false};
+    double pixel_spacing_row_mm{0.0};
+    double pixel_spacing_col_mm{0.0};
 };
 
 struct DicomWindowConfig {
