@@ -214,6 +214,7 @@ async def generate_source_only_case(
     limited = bool(coverage.get("limited"))
     severity = None if limited else {1: "low", 2: "medium", 3: "high"}[risk]
     display_risk: int | None = None if limited else risk
+    display_flags = [flag for flag in flags if flag != _SOURCE_ONLY_GATE]
 
     hypothesis = ClinicalHypothesis(
         patient_id=patient_id,
@@ -232,7 +233,8 @@ async def generate_source_only_case(
             "risk": display_risk,
             "limited_source_risk_score": risk,
             "risk_display_suppressed_for_limited_sources": limited,
-            "flags": flags,
+            "flags": display_flags,
+            "routing_flags": flags,
             "symptoms": _plain_symptoms(symptoms),
             "possible_conditions": [],
             "recommended_laboratory_tests": [],
