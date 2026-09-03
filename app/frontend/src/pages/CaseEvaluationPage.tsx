@@ -70,7 +70,13 @@ function hasMeaningfulValue(value: unknown): boolean {
 }
 
 function hasClinicalData(value: ClinicalIntakeInput | null) {
-  return hasMeaningfulValue(value);
+  if (!value) return false;
+  // Patient demographics alone are not a clinical evidence source. Readiness follows
+  // the same complaint/exam fields that are actually included in the bounded summary.
+  return (
+    hasMeaningfulValue(value.presenting_complaint) ||
+    hasMeaningfulValue(value.physical_exam)
+  );
 }
 
 function errorMessage(value: unknown): string {
@@ -252,7 +258,9 @@ export default function CaseEvaluationPage() {
         return;
       }
 
-      if (failures.length > 0) {
+      const hasAnyReadySource =
+        hasClinicalData(intake) || labs.length > 0 || Boolean(latestReport);
+      if (failures.length > 0 && !hasAnyReadySource) {
         setError(errorMessage(failures[0]) || 'Kayıtlı bilgiler yüklenemedi.');
       }
 
