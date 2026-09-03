@@ -11,6 +11,7 @@ on:
       - feature/xray-core-v2
       - feature/onnx-inference-engine
       - feature/dicom-engine
+      - feature/vision-postprocessing
   pull_request:
     branches:
       - main
