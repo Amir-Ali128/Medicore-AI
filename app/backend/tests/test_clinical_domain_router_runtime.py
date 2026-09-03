@@ -66,6 +66,47 @@ def test_renal_case_does_not_activate_liver_from_normal_routine_labs() -> None:
     assert "liver" not in ids
 
 
+def test_metastasis_text_does_not_false_activate_renal_stone_domain() -> None:
+    domains = router.detect_clinical_domains(
+        [],
+        _metadata(
+            clinical="Bilinen malignite öyküsü",
+            ultrasound="Karaciğerde metastaz ile uyumlu kitle izlenmiştir.",
+        ),
+    )
+
+    ids = {item["id"] for item in domains}
+    assert "oncology" in ids
+    assert "renal_urinary" not in ids
+
+
+def test_isolated_ast_elevation_does_not_activate_liver_domain() -> None:
+    results = [
+        _result("AST", 76, status="high"),
+        _result("ALT", 31, status="normal"),
+        _result("PLT", 240, status="normal"),
+    ]
+    domains = router.detect_clinical_domains(
+        results,
+        _metadata(clinical="Kas ağrısı sonrası kontrol"),
+    )
+
+    ids = {item["id"] for item in domains}
+    assert "liver" not in ids
+
+
+def test_two_abnormal_liver_markers_can_activate_liver_without_summary_phrase() -> None:
+    results = [
+        _result("AST", 76, status="high"),
+        _result("ALT", 88, status="high"),
+        _result("PLT", 240, status="normal"),
+    ]
+    domains = router.detect_clinical_domains(results, _metadata())
+
+    ids = {item["id"] for item in domains}
+    assert "liver" in ids
+
+
 def test_renal_domain_filters_out_liver_specific_scores() -> None:
     all_scores = [
         {"code": "FIB4"},
