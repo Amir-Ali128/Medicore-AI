@@ -24,7 +24,7 @@ from app.domain.radiology_image_ai import (
     normalize_body_part,
     normalize_image_modality,
 )
-from app.domain.report_document_image_ai import review_radiology_media
+from app.domain.radiology_multi_model_ai import review_radiology_media_ensemble
 from app.infrastructure.database.models.radiology_report import RadiologyReport
 from app.infrastructure.database.models.user import User
 from app.infrastructure.database.repositories.radiology_report_repository import (
@@ -210,7 +210,7 @@ async def create_radiology_image_review(
     requested_body_part = normalize_body_part(body_part) or _infer_body_part_from_filename(filename)
 
     try:
-        review = await review_radiology_media(
+        review, ensemble_metadata = await review_radiology_media_ensemble(
             content=content,
             media_type=media_type,
             modality=normalized_modality,
@@ -241,7 +241,7 @@ async def create_radiology_image_review(
             content=content,
             session=session,
             current_user=current_user,
-            reason="AI görüntü/rapor modeli yapılandırılmamış veya geçici olarak kullanılamıyor.",
+            reason="AI görüntü/rapor modelleri yapılandırılmamış veya geçici olarak kullanılamıyor.",
         )
 
     is_document = review.document_kind == "REPORT_DOCUMENT"
@@ -274,8 +274,37 @@ async def create_radiology_image_review(
     analysis_mode = (
         "multimodal_report_document_extraction"
         if is_document
-        else "multimodal_dl_ml_assistive"
+        else "multimodal_multi_provider_consensus"
     )
+
+    metadata_json = {
+        "content_type": media_type,
+        "upload_size_bytes": len(content),
+        "original_file_stored": True,
+        "analysis_available": True,
+        "visual_analysis_available": not is_document,
+        "document_analysis_available": is_document,
+        "document_kind": review.document_kind,
+        "report_type": review.report_type,
+        "analysis_mode": analysis_mode,
+        "analysis_model": review.model,
+        "analysis_limitations": review.limitations,
+        "result_text": review.result_text,
+        "result_items": list(review.result_items),
+        "key_findings": list(review.key_findings),
+        "recommendations": list(review.recommendations),
+        "comparison_text": review.comparison_text,
+        "deidentified_visible_text": bool(review.visible_text),
+        "physician_review_required": True,
+        "not_diagnostic": True,
+        "requested_modality": normalized_modality,
+        "detected_modality": review.detected_modality,
+        "supported_modality": stored_modality,
+        "requested_body_part": requested_body_part,
+        "detected_body_part": review.detected_body_part,
+        "supported_body_part": stored_body_part,
+    }
+    metadata_json.update(ensemble_metadata)
 
     report = RadiologyReport(
         patient_id=patient_id,
@@ -293,33 +322,7 @@ async def create_radiology_image_review(
         impression=review.result_text or None if is_document else None,
         summary=_region_summary(stored_body_part, result_summary),
         status="needs_review",
-        metadata_json={
-            "content_type": media_type,
-            "upload_size_bytes": len(content),
-            "original_file_stored": True,
-            "analysis_available": True,
-            "visual_analysis_available": not is_document,
-            "document_analysis_available": is_document,
-            "document_kind": review.document_kind,
-            "report_type": review.report_type,
-            "analysis_mode": analysis_mode,
-            "analysis_model": review.model,
-            "analysis_limitations": review.limitations,
-            "result_text": review.result_text,
-            "result_items": list(review.result_items),
-            "key_findings": list(review.key_findings),
-            "recommendations": list(review.recommendations),
-            "comparison_text": review.comparison_text,
-            "deidentified_visible_text": bool(review.visible_text),
-            "physician_review_required": True,
-            "not_diagnostic": True,
-            "requested_modality": normalized_modality,
-            "detected_modality": review.detected_modality,
-            "supported_modality": stored_modality,
-            "requested_body_part": requested_body_part,
-            "detected_body_part": review.detected_body_part,
-            "supported_body_part": stored_body_part,
-        },
+        metadata_json=metadata_json,
     )
     repository = RadiologyReportRepository(session)
     repository.create(report)
