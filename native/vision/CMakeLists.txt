@@ -15,6 +15,7 @@ add_library(
     src/preprocessing.cpp
     src/inference_contract.cpp
     src/dicom_engine.cpp
+    src/postprocessing.cpp
 )
 set_target_properties(medicore_vision_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(
@@ -42,7 +43,7 @@ target_link_libraries(
 target_compile_definitions(
     medicore_vision
     PRIVATE
-        MEDICORE_VISION_VERSION="0.4.0"
+        MEDICORE_VISION_VERSION="0.5.0"
 )
 
 enable_testing()
@@ -78,3 +79,14 @@ target_link_libraries(
         medicore_vision_core
 )
 add_test(NAME dicom_engine COMMAND medicore_vision_dicom_tests)
+
+add_executable(
+    medicore_vision_postprocessing_tests
+    tests/test_postprocessing.cpp
+)
+target_link_libraries(
+    medicore_vision_postprocessing_tests
+    PRIVATE
+        medicore_vision_core
+)
+add_test(NAME vision_postprocessing COMMAND medicore_vision_postprocessing_tests)

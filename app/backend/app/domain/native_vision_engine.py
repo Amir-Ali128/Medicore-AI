@@ -2,18 +2,20 @@
 
 X-Ray Core v2 owns technical image preprocessing. DICOM Engine v1 owns native
 DICOM metadata, pixel decoding, rescale/windowing, MONOCHROME handling, and safe
-CR/DX conversion into the X-Ray tensor contract. Neither layer performs disease
-diagnosis by itself.
+CR/DX conversion into the X-Ray tensor contract. Vision Post-processing v1 maps
+model-space heatmaps, masks, and boxes back into original-image coordinates.
+None of these layers performs autonomous diagnosis by itself.
 """
 
 from __future__ import annotations
 
 import importlib
 from functools import lru_cache
-from typing import Any
+from typing import Any, Mapping, Sequence
 
 XRAY_TENSOR_CONTRACT = "xray-core-v2/nchw-f32-0-1"
 DICOM_FRAME_CONTRACT = "dicom-frame-v1/grayscale-u8"
+VISION_POSTPROCESS_CONTRACT = "vision-post-v1/original-space"
 
 
 class NativeVisionUnavailable(RuntimeError):
@@ -42,6 +44,30 @@ def _require_module() -> Any:
     if module is None:
         raise NativeVisionUnavailable("MediCore native vision engine yüklü değil.")
     return module
+
+
+def _validated_transform(transform: Mapping[str, Any]) -> dict[str, Any]:
+    required = {
+        "original_width",
+        "original_height",
+        "output_width",
+        "output_height",
+        "resized_width",
+        "resized_height",
+        "pad_left",
+        "pad_top",
+        "pad_right",
+        "pad_bottom",
+        "scale_x",
+        "scale_y",
+    }
+    payload = dict(transform)
+    if not required.issubset(payload):
+        missing = sorted(required.difference(payload))
+        raise ValueError(f"Tensor transform alanları eksik: {', '.join(missing)}")
+    if int(payload["original_width"]) <= 0 or int(payload["original_height"]) <= 0:
+        raise ValueError("Orijinal görüntü boyutları pozitif olmalıdır.")
+    return payload
 
 
 def inspect_image(content: bytes) -> dict[str, int | float]:
@@ -97,6 +123,7 @@ def prepare_xray_tensor(
     shape = payload.get("shape")
     if list(shape or []) != [1, 1, target_height, target_width]:
         raise RuntimeError("Native X-Ray Core beklenmeyen tensor shape döndürdü.")
+    _validated_transform(payload.get("transform") or {})
     return payload
 
 
@@ -199,7 +226,115 @@ def prepare_dicom_xray_tensor(
     metadata = payload.get("metadata") or {}
     if str(metadata.get("modality") or "").upper() not in {"CR", "DX"}:
         raise RuntimeError("CR/DX dışı DICOM X-Ray tensor contract'a giremez.")
+    _validated_transform(payload.get("transform") or {})
     return payload
+
+
+def map_model_box_to_original(
+    box: Sequence[float],
+    transform: Mapping[str, Any],
+    *,
+    clip: bool = True,
+) -> tuple[float, float, float, float]:
+    """Map one model-space xyxy box through X-Ray Core letterbox geometry."""
+    values = tuple(float(value) for value in box)
+    if len(values) != 4:
+        raise ValueError("Bounding box tam dört xyxy değeri içermelidir.")
+    mapped = _require_module().map_model_box_to_original(
+        values,
+        _validated_transform(transform),
+        clip,
+    )
+    result = tuple(float(value) for value in mapped)
+    if len(result) != 4:
+        raise RuntimeError("Native post-processing geçersiz bounding box döndürdü.")
+    return result
+
+
+def postprocess_spatial_map(
+    spatial_map: Any,
+    transform: Mapping[str, Any],
+    *,
+    threshold: float = 0.5,
+    min_component_area: int = 16,
+    max_components: int = 32,
+    normalize_minmax: bool = True,
+    pixel_spacing_row_mm: float | None = None,
+    pixel_spacing_col_mm: float | None = None,
+) -> dict[str, Any]:
+    """Map heatmap/segmentation scores into original pixels and measure regions."""
+    if not 0.0 <= float(threshold) <= 1.0:
+        raise ValueError("threshold 0 ile 1 arasında olmalıdır.")
+    if min_component_area < 1:
+        raise ValueError("min_component_area pozitif olmalıdır.")
+    if not 1 <= max_components <= 1024:
+        raise ValueError("max_components 1 ile 1024 arasında olmalıdır.")
+    if (pixel_spacing_row_mm is None) != (pixel_spacing_col_mm is None):
+        raise ValueError("Pixel spacing için row ve column birlikte verilmelidir.")
+    if pixel_spacing_row_mm is not None:
+        if pixel_spacing_row_mm <= 0 or pixel_spacing_col_mm is None or pixel_spacing_col_mm <= 0:
+            raise ValueError("Pixel spacing değerleri pozitif olmalıdır.")
+
+    transform_payload = _validated_transform(transform)
+    payload = _require_module().postprocess_spatial_map(
+        spatial_map,
+        transform_payload,
+        float(threshold),
+        int(min_component_area),
+        int(max_components),
+        bool(normalize_minmax),
+        pixel_spacing_row_mm,
+        pixel_spacing_col_mm,
+    )
+    if not isinstance(payload, dict):
+        raise RuntimeError("Native vision post-processing geçersiz çıktı döndürdü.")
+    if payload.get("contract_version") != VISION_POSTPROCESS_CONTRACT:
+        raise RuntimeError("Vision post-processing contract sürümü uyumsuz.")
+    expected_shape = [
+        int(transform_payload["original_height"]),
+        int(transform_payload["original_width"]),
+    ]
+    if list(payload.get("shape") or []) != expected_shape:
+        raise RuntimeError("Post-processing çıktısı orijinal görüntü boyutlarıyla uyuşmuyor.")
+    if not isinstance(payload.get("regions"), list):
+        raise RuntimeError("Post-processing regions alanı geçersiz.")
+    return payload
+
+
+def postprocess_prepared_spatial_map(
+    spatial_map: Any,
+    prepared: Mapping[str, Any],
+    *,
+    threshold: float = 0.5,
+    min_component_area: int = 16,
+    max_components: int = 32,
+    normalize_minmax: bool = True,
+) -> dict[str, Any]:
+    """Post-process a model map using transform/spacing from a prepared X-Ray item."""
+    transform = prepared.get("transform")
+    if not isinstance(transform, Mapping):
+        raise ValueError("Prepared X-Ray çıktısında transform bulunamadı.")
+
+    row_spacing: float | None = None
+    col_spacing: float | None = None
+    metadata = prepared.get("metadata")
+    if isinstance(metadata, Mapping) and bool(metadata.get("has_pixel_spacing")):
+        row_value = metadata.get("pixel_spacing_row_mm")
+        col_value = metadata.get("pixel_spacing_col_mm")
+        if row_value is not None and col_value is not None:
+            row_spacing = float(row_value)
+            col_spacing = float(col_value)
+
+    return postprocess_spatial_map(
+        spatial_map,
+        transform,
+        threshold=threshold,
+        min_component_area=min_component_area,
+        max_components=max_components,
+        normalize_minmax=normalize_minmax,
+        pixel_spacing_row_mm=row_spacing,
+        pixel_spacing_col_mm=col_spacing,
+    )
 
 
 def preprocess_chest_xray(content: bytes, *, max_side: int = 2048) -> Any:

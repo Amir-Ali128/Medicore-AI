@@ -1,3 +1,4 @@
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -43,7 +44,9 @@ std::vector<std::uint8_t> build_dicom(
     double window_center = 0.0,
     double window_width = 0.0,
     double slope = 1.0,
-    double intercept = 0.0) {
+    double intercept = 0.0,
+    double pixel_spacing_row_mm = 0.0,
+    double pixel_spacing_col_mm = 0.0) {
     static int counter = 1;
     DcmFileFormat file;
     DcmDataset* dataset = file.getDataset();
@@ -74,6 +77,11 @@ std::vector<std::uint8_t> build_dicom(
         dataset->putAndInsertString(DCM_WindowCenter, std::to_string(window_center).c_str());
         dataset->putAndInsertString(DCM_WindowWidth, std::to_string(window_width).c_str());
     }
+    if (pixel_spacing_row_mm > 0.0 && pixel_spacing_col_mm > 0.0) {
+        const std::string spacing = std::to_string(pixel_spacing_row_mm) + "\\" +
+                                    std::to_string(pixel_spacing_col_mm);
+        dataset->putAndInsertString(DCM_PixelSpacing, spacing.c_str());
+    }
     dataset->putAndInsertUint16Array(
         DCM_PixelData,
         pixels.data(),
@@ -103,7 +111,11 @@ void test_metadata_and_dicom_window() {
         {0, 500, 1000, 1500, 2000, 2500},
         true,
         1000.0,
-        2000.0);
+        2000.0,
+        1.0,
+        0.0,
+        0.5,
+        0.25);
 
     const auto metadata = medicore::vision::inspect_dicom(bytes);
     require(metadata.rows == 2 && metadata.columns == 3, "DICOM dimensions mismatch");
@@ -112,6 +124,9 @@ void test_metadata_and_dicom_window() {
     require(metadata.photometric_interpretation == "MONOCHROME2", "photometric mismatch");
     require(metadata.bits_allocated == 16 && metadata.bits_stored == 12, "bit depth mismatch");
     require(metadata.has_window, "DICOM window should be detected");
+    require(metadata.has_pixel_spacing, "DICOM PixelSpacing should be detected");
+    require(std::abs(metadata.pixel_spacing_row_mm - 0.5) < 1e-9, "row spacing mismatch");
+    require(std::abs(metadata.pixel_spacing_col_mm - 0.25) < 1e-9, "column spacing mismatch");
     require(!metadata.compressed, "explicit little endian should not be compressed");
 
     const auto frame = medicore::vision::decode_dicom_frame(bytes);
@@ -152,6 +167,7 @@ void test_monochrome1_inversion_and_robust_window() {
 
     const auto frame = medicore::vision::decode_dicom_frame(bytes);
     require(frame.window_source == "robust", "missing DICOM window should use robust fallback");
+    require(!frame.metadata.has_pixel_spacing, "spacing must not be invented when absent");
     require(frame.image.at<std::uint8_t>(0, 0) > frame.image.at<std::uint8_t>(0, 3),
             "MONOCHROME1 must invert display polarity");
 }

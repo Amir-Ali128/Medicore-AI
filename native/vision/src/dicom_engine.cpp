@@ -126,6 +126,18 @@ DicomMetadata extract_metadata(DcmDataset& dataset) {
         metadata.window_width = static_cast<double>(width);
     }
 
+    Float64 row_spacing = 0.0;
+    Float64 col_spacing = 0.0;
+    const bool has_row_spacing = dataset.findAndGetFloat64(DCM_PixelSpacing, row_spacing, 0).good();
+    const bool has_col_spacing = dataset.findAndGetFloat64(DCM_PixelSpacing, col_spacing, 1).good();
+    if (has_row_spacing && has_col_spacing &&
+        std::isfinite(row_spacing) && std::isfinite(col_spacing) &&
+        row_spacing > 0.0 && col_spacing > 0.0) {
+        metadata.has_pixel_spacing = true;
+        metadata.pixel_spacing_row_mm = static_cast<double>(row_spacing);
+        metadata.pixel_spacing_col_mm = static_cast<double>(col_spacing);
+    }
+
     const DcmXfer transfer(dataset.getOriginalXfer());
     metadata.compressed = transfer.isEncapsulated();
     if (const char* name = transfer.getXferName(); name != nullptr) {
