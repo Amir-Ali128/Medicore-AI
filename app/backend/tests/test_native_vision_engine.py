@@ -22,13 +22,11 @@ def test_native_vision_unavailable_is_non_fatal(monkeypatch: pytest.MonkeyPatch)
 
     assert native_vision_engine.native_vision_available() is False
     assert native_vision_engine.try_inspect_image(b"image") is None
-
     _reset_native_cache()
 
 
 def test_native_vision_metadata_passthrough(monkeypatch: pytest.MonkeyPatch) -> None:
     _reset_native_cache()
-
     fake_module = SimpleNamespace(
         inspect_image=lambda content: {
             "width": 1024,
@@ -40,20 +38,76 @@ def test_native_vision_metadata_passthrough(monkeypatch: pytest.MonkeyPatch) -> 
             "max_intensity": 255,
         }
     )
-    monkeypatch.setattr(
-        native_vision_engine.importlib,
-        "import_module",
-        lambda name: fake_module,
-    )
+    monkeypatch.setattr(native_vision_engine.importlib, "import_module", lambda name: fake_module)
 
     result = native_vision_engine.inspect_image(b"encoded-image")
-
     assert result["width"] == 1024
     assert result["channels"] == 1
+    _reset_native_cache()
 
+
+def test_xray_quality_passthrough(monkeypatch: pytest.MonkeyPatch) -> None:
+    _reset_native_cache()
+    fake_module = SimpleNamespace(
+        inspect_xray_quality=lambda content: {
+            "width": 512,
+            "height": 512,
+            "robust_dynamic_range": 0.62,
+            "technical_flags": [],
+        }
+    )
+    monkeypatch.setattr(native_vision_engine.importlib, "import_module", lambda name: fake_module)
+
+    result = native_vision_engine.inspect_xray_quality(b"encoded-image")
+    assert result["robust_dynamic_range"] == pytest.approx(0.62)
+    assert result["technical_flags"] == []
+    _reset_native_cache()
+
+
+def test_prepare_xray_tensor_enforces_contract(monkeypatch: pytest.MonkeyPatch) -> None:
+    _reset_native_cache()
+    fake_module = SimpleNamespace(
+        prepare_xray_tensor=lambda content, width, height, preserve, pad: {
+            "tensor": object(),
+            "shape": [1, 1, height, width],
+            "layout": "NCHW",
+            "dtype": "float32",
+            "value_range": (0.0, 1.0),
+            "contract_version": native_vision_engine.XRAY_TENSOR_CONTRACT,
+            "transform": {"pad_top": 10},
+            "quality": {},
+        }
+    )
+    monkeypatch.setattr(native_vision_engine.importlib, "import_module", lambda name: fake_module)
+
+    result = native_vision_engine.prepare_xray_tensor(
+        b"encoded-image", target_width=640, target_height=512
+    )
+    assert result["shape"] == [1, 1, 512, 640]
+    assert result["contract_version"] == "xray-core-v2/nchw-f32-0-1"
+    _reset_native_cache()
+
+
+def test_prepare_xray_tensor_rejects_contract_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    _reset_native_cache()
+    fake_module = SimpleNamespace(
+        prepare_xray_tensor=lambda *args: {
+            "shape": [1, 1, 1024, 1024],
+            "contract_version": "wrong-version",
+        }
+    )
+    monkeypatch.setattr(native_vision_engine.importlib, "import_module", lambda name: fake_module)
+
+    with pytest.raises(RuntimeError, match="contract"):
+        native_vision_engine.prepare_xray_tensor(b"encoded-image")
     _reset_native_cache()
 
 
 def test_preprocess_rejects_invalid_max_side() -> None:
     with pytest.raises(ValueError):
         native_vision_engine.preprocess_chest_xray(b"image", max_side=128)
+
+
+def test_tensor_rejects_invalid_target_size() -> None:
+    with pytest.raises(ValueError):
+        native_vision_engine.prepare_xray_tensor(b"image", target_width=16)
