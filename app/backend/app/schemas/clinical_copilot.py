@@ -124,7 +124,9 @@ class ClinicalHypothesisGenerationRequest(BaseModel):
 class ClinicalHypothesisGenerationResult(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    analysis_run_id: uuid.UUID
+    # Patient-scoped source-only evaluations have no synthetic/fake analysis run.
+    # Existing analysis-run endpoints still always return a UUID here.
+    analysis_run_id: uuid.UUID | None = None
     lab_report_id: uuid.UUID | None = None
     patient_id: uuid.UUID | None = None
     created_hypotheses: list[ClinicalHypothesisResponse] = Field(default_factory=list)

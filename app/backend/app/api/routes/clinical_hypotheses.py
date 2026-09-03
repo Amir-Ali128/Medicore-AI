@@ -21,6 +21,7 @@ router = APIRouter(tags=["clinical-hypotheses"])
 
 _COMPACT_TYPE = "compact_risk_summary"
 _COMPACT_SOURCE = "claude_compact_risk_summary"
+_SOURCE_ONLY_SCOPE = "source_only"
 
 
 @router.post(
@@ -128,6 +129,41 @@ async def delete_compact_clinical_hypotheses_for_analysis_run(
         if hypothesis.hypothesis_type == _COMPACT_TYPE
         or hypothesis.source == _COMPACT_SOURCE
     ]
+
+    try:
+        for hypothesis in compact:
+            await session.delete(hypothesis)
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+
+    return {"deleted_count": len(compact)}
+
+
+@router.delete(
+    "/patients/{patient_id}/clinical-hypotheses/compact/source-only",
+)
+async def delete_source_only_compact_hypotheses_for_patient(
+    patient_id: uuid.UUID,
+    session: SessionDep,
+    repository: ClinicalHypothesisRepositoryDep,
+) -> dict[str, int]:
+    """Delete compact evaluations created without a laboratory analysis run."""
+
+    hypotheses = list(await repository.list_for_patient(patient_id))
+    compact = []
+    for hypothesis in hypotheses:
+        metadata = hypothesis.metadata_json if isinstance(hypothesis.metadata_json, dict) else {}
+        if hypothesis.analysis_run_id is not None:
+            continue
+        if metadata.get("source_evaluation_scope") != _SOURCE_ONLY_SCOPE:
+            continue
+        if (
+            hypothesis.hypothesis_type == _COMPACT_TYPE
+            or hypothesis.source == _COMPACT_SOURCE
+        ):
+            compact.append(hypothesis)
 
     try:
         for hypothesis in compact:

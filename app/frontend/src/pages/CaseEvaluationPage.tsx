@@ -27,8 +27,12 @@ import {
   type ClinicalIntakeInput,
   type LabAnalysisResult,
 } from '../services/labAnalysisClient';
-import { evaluateMultisourceCase } from '../services/multisourceEvaluationClient';
 import {
+  evaluateMultisourceCase,
+  type CaseSourceAvailability,
+} from '../services/multisourceEvaluationClient';
+import {
+  ACTIVE_PATIENT_ID_KEY,
   listPatientRadiologyReports,
   type RadiologyReport,
 } from '../services/radiologyClient';
@@ -36,6 +40,10 @@ import {
   getClinicalHypothesesForAnalysisRun,
   type ClinicalHypothesis,
 } from '../services/clinicalHypothesesClient';
+import {
+  deleteSourceOnlyEvaluationsForPatient,
+  getSourceOnlyEvaluationsForPatient,
+} from '../services/sourceOnlyEvaluationClient';
 
 const ACTIVE_CLINICAL_INTAKE_KEY = 'medicore:activeClinicalIntake';
 const CASE_SUMMARY_UPDATED_EVENT = 'medicore:case-summary-updated';
@@ -62,7 +70,13 @@ function hasMeaningfulValue(value: unknown): boolean {
 }
 
 function hasClinicalData(value: ClinicalIntakeInput | null) {
-  return hasMeaningfulValue(value);
+  if (!value) return false;
+  // Patient demographics alone are not a clinical evidence source. Readiness follows
+  // the same complaint/exam fields that are actually included in the bounded summary.
+  return (
+    hasMeaningfulValue(value.presenting_complaint) ||
+    hasMeaningfulValue(value.physical_exam)
+  );
 }
 
 function errorMessage(value: unknown): string {
@@ -100,6 +114,13 @@ function keepOnlyNewestCompactEvaluation(
     compactSeen = true;
     return true;
   });
+}
+
+function coverageLabel(count: number) {
+  if (count >= 3) return 'Tam kaynak kapsamı';
+  if (count === 2) return 'Kısmi kaynak kapsamı';
+  if (count === 1) return 'Sınırlı kaynak kapsamı';
+  return 'Kaynak yok';
 }
 
 function SourceStatus({
@@ -178,8 +199,8 @@ export default function CaseEvaluationPage() {
   const [error, setError] = useState('');
 
   const analysisRunId = localStorage.getItem(LAST_ANALYSIS_RUN_ID_KEY);
+  const activePatientId = localStorage.getItem(ACTIVE_PATIENT_ID_KEY);
   const clinicalReady = hasClinicalData(clinicalIntake);
-  const allReady = clinicalReady && labReady && ultrasoundReady;
 
   useEffect(() => {
     let cancelled = false;
@@ -191,34 +212,45 @@ export default function CaseEvaluationPage() {
       const intake = readClinicalIntake();
       if (!cancelled) setClinicalIntake(intake);
 
-      const [labsResult, reportsResult, hypothesesResult] =
-        await Promise.allSettled([
-          analysisRunId
-            ? getAnalysisRunResults(analysisRunId)
-            : Promise.resolve([]),
-          listPatientRadiologyReports(null, { includeUnanalyzed: true }),
-          analysisRunId
-            ? getClinicalHypothesesForAnalysisRun(analysisRunId)
-            : Promise.resolve([]),
-        ]);
+      const [labsResult, reportsResult] = await Promise.allSettled([
+        analysisRunId
+          ? getAnalysisRunResults(analysisRunId)
+          : Promise.resolve([]),
+        listPatientRadiologyReports(null, { includeUnanalyzed: true }),
+      ]);
 
       if (cancelled) return;
 
       const labs = labsResult.status === 'fulfilled' ? labsResult.value : [];
       const reports = reportsResult.status === 'fulfilled' ? reportsResult.value : [];
+      const latestReport = getLatestUltrasoundReport(reports);
+      const patientId = activePatientId ?? latestReport?.patient_id ?? null;
+
       setLabResults(labs);
       setRadiologyReports(reports);
       setLabReady(labs.length > 0);
-      setUltrasoundReady(Boolean(getLatestUltrasoundReport(reports)));
-      setStoredHypotheses(
-        hypothesesResult.status === 'fulfilled' ? hypothesesResult.value : [],
-      );
+      setUltrasoundReady(Boolean(latestReport));
 
-      const failures = [labsResult, reportsResult, hypothesesResult]
+      let hypotheses: ClinicalHypothesis[] = [];
+      let hypothesisFailure: unknown = null;
+      try {
+        if (analysisRunId && labs.length > 0) {
+          hypotheses = await getClinicalHypothesesForAnalysisRun(analysisRunId);
+        } else if (patientId) {
+          hypotheses = await getSourceOnlyEvaluationsForPatient(patientId);
+        }
+      } catch (loadError) {
+        hypothesisFailure = loadError;
+      }
+      if (cancelled) return;
+      setStoredHypotheses(hypotheses);
+
+      const failures = [labsResult, reportsResult]
         .filter(
           (entry): entry is PromiseRejectedResult => entry.status === 'rejected',
         )
         .map((entry) => entry.reason);
+      if (hypothesisFailure) failures.push(hypothesisFailure);
 
       if (failures.some(isAuthSessionError)) {
         clearAccessToken();
@@ -226,7 +258,9 @@ export default function CaseEvaluationPage() {
         return;
       }
 
-      if (failures.length > 0) {
+      const hasAnyReadySource =
+        hasClinicalData(intake) || labs.length > 0 || Boolean(latestReport);
+      if (failures.length > 0 && !hasAnyReadySource) {
         setError(errorMessage(failures[0]) || 'Kayıtlı bilgiler yüklenemedi.');
       }
 
@@ -237,12 +271,29 @@ export default function CaseEvaluationPage() {
     return () => {
       cancelled = true;
     };
-  }, [analysisRunId, navigate]);
+  }, [activePatientId, analysisRunId, navigate]);
 
   const latestUltrasound = useMemo(
     () => getLatestUltrasoundReport(radiologyReports),
     [radiologyReports],
   );
+
+  const patientId = activePatientId ?? latestUltrasound?.patient_id ?? null;
+  const sourceAvailability = useMemo<CaseSourceAvailability>(
+    () => ({
+      clinical: clinicalReady,
+      laboratory: labReady,
+      ultrasound: ultrasoundReady,
+    }),
+    [clinicalReady, labReady, ultrasoundReady],
+  );
+  const availableSourceCount = useMemo(
+    () => Object.values(sourceAvailability).filter(Boolean).length,
+    [sourceAvailability],
+  );
+  const evaluationAnalysisRunId = labReady ? analysisRunId : null;
+  const canEvaluate =
+    availableSourceCount > 0 && Boolean(evaluationAnalysisRunId || patientId);
 
   const sourceDates = useMemo(
     () => buildSourceDates(labResults, latestUltrasound),
@@ -250,8 +301,8 @@ export default function CaseEvaluationPage() {
   );
   const sourceGapDays = useMemo(() => temporalGapDays(sourceDates), [sourceDates]);
   const performedStudies = useMemo(
-    () => buildPerformedStudies(radiologyReports),
-    [radiologyReports],
+    () => buildPerformedStudies(latestUltrasound ? [latestUltrasound] : []),
+    [latestUltrasound],
   );
 
   const sourceSummaries = useMemo<CaseSourceSummaries>(
@@ -276,7 +327,7 @@ export default function CaseEvaluationPage() {
   }, [result, storedHypotheses]);
 
   async function handleEvaluate() {
-    if (!analysisRunId || !clinicalIntake || !allReady) return;
+    if (!canEvaluate) return;
 
     try {
       setEvaluating(true);
@@ -284,18 +335,29 @@ export default function CaseEvaluationPage() {
       setResult(null);
 
       const aiSummaries: CaseSourceSummaries = {
-        clinical: buildClinicalAiSummary(clinicalIntake),
-        laboratory: buildLaboratoryAiSummary(labResults),
-        ultrasound: sourceSummaries.ultrasound,
+        clinical:
+          sourceAvailability.clinical && clinicalIntake
+            ? buildClinicalAiSummary(clinicalIntake)
+            : '',
+        laboratory: sourceAvailability.laboratory
+          ? buildLaboratoryAiSummary(labResults)
+          : '',
+        ultrasound: sourceAvailability.ultrasound
+          ? sourceSummaries.ultrasound
+          : '',
       };
       const nextResult = await evaluateMultisourceCase(
-        analysisRunId,
+        evaluationAnalysisRunId,
+        patientId,
         clinicalIntake,
         aiSummaries,
-        buildUltrasoundContextFlags(latestUltrasound),
+        sourceAvailability.ultrasound
+          ? buildUltrasoundContextFlags(latestUltrasound)
+          : [],
         {
           performedStudies,
           sourceDates,
+          sourceAvailability,
         },
       );
       setResult(nextResult);
@@ -323,13 +385,17 @@ export default function CaseEvaluationPage() {
   }
 
   async function handleDeleteEvaluation() {
-    if (!analysisRunId || deleting) return;
+    if (deleting || (!evaluationAnalysisRunId && !patientId)) return;
     if (!window.confirm('AI tarafından oluşturulan değerlendirme silinsin mi?')) return;
 
     try {
       setDeleting(true);
       setError('');
-      await deleteCompactEvaluation(analysisRunId);
+      if (evaluationAnalysisRunId) {
+        await deleteCompactEvaluation(evaluationAnalysisRunId);
+      } else if (patientId) {
+        await deleteSourceOnlyEvaluationsForPatient(patientId);
+      }
       setResult(null);
       setStoredHypotheses((current) =>
         current.filter((hypothesis) => !isCompactEvaluation(hypothesis)),
@@ -347,9 +413,8 @@ export default function CaseEvaluationPage() {
       <header>
         <h1 className="text-2xl font-bold text-slate-950">Bulguları Değerlendir</h1>
         <p className="mt-2 text-sm leading-6 text-slate-500">
-          Önce klinik, yüksek/düşük laboratuvar bulguları ve ultrason sonucu kısa bir
-          vaka özetine dönüştürülür; yalnızca gerekirse kompakt AI değerlendirmesi
-          çalışır.
+          Mevcut klinik, laboratuvar ve ultrason kaynakları ayrı ayrı veya birlikte
+          kısa vaka özetlerine dönüştürülür; eksik kaynaklar varsayılmaz.
         </p>
       </header>
 
@@ -359,12 +424,29 @@ export default function CaseEvaluationPage() {
         <SourceStatus title="Ultrason" ready={ultrasoundReady} link="/radiology" />
       </div>
 
+      <div
+        className={`rounded-xl border px-4 py-3 text-sm ${
+          availableSourceCount === 3
+            ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
+            : availableSourceCount > 0
+              ? 'border-amber-200 bg-amber-50 text-amber-900'
+              : 'border-slate-200 bg-slate-50 text-slate-600'
+        }`}
+      >
+        <span className="font-semibold">
+          Kaynak kapsamı: {availableSourceCount}/3 · {coverageLabel(availableSourceCount)}
+        </span>
+        {availableSourceCount > 0 && availableSourceCount < 3 ? (
+          <span> — değerlendirme yalnızca hazır kaynaklarla sınırlandırılır.</span>
+        ) : null}
+      </div>
+
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div>
           <h2 className="text-lg font-bold text-slate-950">Vaka Özeti</h2>
           <p className="mt-1 text-xs leading-5 text-slate-500">
-            Bu üç özet deterministik olarak hazırlanır. Tam dosya AI'ya gönderilmez;
-            normal laboratuvar sonuçları bu özete dahil edilmez.
+            Yalnızca hazır kaynaklar değerlendirmeye dahil edilir. Tam dosya AI'ya
+            gönderilmez; normal laboratuvar sonuçları kompakt AI özetine dahil edilmez.
           </p>
         </div>
 
@@ -400,7 +482,7 @@ export default function CaseEvaluationPage() {
       <button
         type="button"
         onClick={handleEvaluate}
-        disabled={!allReady || loading || evaluating}
+        disabled={!canEvaluate || loading || evaluating}
         className="w-full rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
       >
         {loading
@@ -410,17 +492,34 @@ export default function CaseEvaluationPage() {
             : 'Gerekirse AI ile değerlendir'}
       </button>
 
-      {!loading && !allReady ? (
+      {!loading && availableSourceCount === 0 ? (
         <p className="text-sm text-slate-500">
-          Değerlendirme için klinik, laboratuvar ve ultrason bölümlerinin hazır olması
-          gerekiyor.
+          Değerlendirme için en az bir kaynak ekle.
+        </p>
+      ) : null}
+
+      {!loading && availableSourceCount > 0 && !canEvaluate ? (
+        <p className="text-sm text-amber-700">
+          Tek veya kısmi kaynakla değerlendirme için önce hasta kaydını kaydet.
+        </p>
+      ) : null}
+
+      {!loading && canEvaluate && availableSourceCount < 3 ? (
+        <p className="text-sm text-amber-700">
+          Sınırlı kaynak kapsamıyla değerlendirme yapılacak; eksik kaynaklar
+          varsayılmayacak ve sonuç hekim doğrulaması gerektirecek.
         </p>
       ) : null}
 
       {result || storedHypotheses.length > 0 ? (
         <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex items-center justify-between gap-3">
-            <h2 className="text-lg font-bold text-slate-950">AI Değerlendirmesi</h2>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-bold text-slate-950">AI Değerlendirmesi</h2>
+              <p className="mt-1 text-xs text-slate-500">
+                {availableSourceCount}/3 kaynak · {coverageLabel(availableSourceCount)}
+              </p>
+            </div>
             {findings.some(isCompactEvaluation) ? (
               <button
                 type="button"
@@ -453,8 +552,8 @@ export default function CaseEvaluationPage() {
             </div>
           ) : (
             <p className="mt-4 text-sm leading-6 text-slate-600">
-              Kaynak özetleri hazır. Deterministik gate AI değerlendirmesi
-              gerektirmediyse burada yeni AI çıktısı oluşmaz.
+              Hazır kaynaklarda deterministik değerlendirme gerektiren bir bulgu
+              oluşmadıysa yeni AI çıktısı oluşturulmayabilir.
             </p>
           )}
 
@@ -466,7 +565,8 @@ export default function CaseEvaluationPage() {
 
           <p className="mt-5 border-t border-slate-100 pt-4 text-xs leading-5 text-slate-500">
             Bu çıktı klinik karar desteği içindir; kesin tanı veya tedavi kararı
-            değildir ve hekim değerlendirmesi gerektirir.
+            değildir ve hekim değerlendirmesi gerektirir. Eksik kaynaklar mevcutmuş
+            gibi varsayılmaz.
           </p>
         </section>
       ) : null}
