@@ -111,6 +111,23 @@ def _source_only_fallback(flags: list[str], language: str) -> tuple[int, str]:
     return ClaudeClinicalHypothesisService._fallback_output(flags, language)
 
 
+def _risk_display_for_coverage(
+    risk: int,
+    coverage: dict[str, Any],
+) -> tuple[int | None, str | None, bool]:
+    """Hide only reassuring low-risk output when source coverage is incomplete.
+
+    Missing sources must not make a low-risk badge look definitive. Conversely, a
+    known medium/high signal must remain visible even when other sources are absent.
+    """
+
+    limited = bool(coverage.get("limited"))
+    suppress_reassuring_low = limited and risk == 1
+    if suppress_reassuring_low:
+        return None, None, True
+    return risk, {1: "low", 2: "medium", 3: "high"}[risk], False
+
+
 async def generate_source_only_case(
     service: ClaudeClinicalHypothesisService,
     patient_id: uuid.UUID,
@@ -208,12 +225,9 @@ async def generate_source_only_case(
         domains = []
         domain_router = {}
 
-    # Source-only cases are necessarily incomplete with respect to the current 3-source
-    # model. Preserve the internal compact score for audit, but do not expose it through
-    # the standard risk badge/severity fields where "1" could be read as reassuring.
-    limited = bool(coverage.get("limited"))
-    severity = None if limited else {1: "low", 2: "medium", 3: "high"}[risk]
-    display_risk: int | None = None if limited else risk
+    # Incomplete source coverage must never make a low-risk label look definitive,
+    # but actionable medium/high signals still need to remain visible.
+    display_risk, severity, risk_suppressed = _risk_display_for_coverage(risk, coverage)
     display_flags = [flag for flag in flags if flag != _SOURCE_ONLY_GATE]
 
     hypothesis = ClinicalHypothesis(
@@ -232,7 +246,7 @@ async def generate_source_only_case(
         metadata_json={
             "risk": display_risk,
             "limited_source_risk_score": risk,
-            "risk_display_suppressed_for_limited_sources": limited,
+            "risk_display_suppressed_for_limited_sources": risk_suppressed,
             "flags": display_flags,
             "routing_flags": flags,
             "symptoms": _plain_symptoms(symptoms),
