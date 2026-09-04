@@ -152,6 +152,27 @@ function SummaryCard({
   );
 }
 
+function radiologyRecordSummary(report: RadiologyReport | null): string {
+  if (!report) return 'Radyoloji / görüntüleme kaydı bulunamadı.';
+
+  const summary = report.summary?.trim();
+  if (summary && summary !== 'Rapor özeti oluşturulamadı.') return summary;
+
+  const impression = report.impression?.trim();
+  if (impression) return impression;
+
+  const originalText = report.original_text?.trim();
+  if (originalText) {
+    return originalText.length > 420
+      ? `${originalText.slice(0, 419).trim()}…`
+      : originalText;
+  }
+
+  return report.file_name
+    ? `${report.file_name} görüntüleme kaydı hazır.`
+    : 'Radyoloji / görüntüleme kaydı hazır.';
+}
+
 export default function CaseEvaluationPage() {
   const navigate = useNavigate();
   const [clinicalIntake, setClinicalIntake] = useState<ClinicalIntakeInput | null>(null);
@@ -182,7 +203,9 @@ export default function CaseEvaluationPage() {
         analysisRunId
           ? getAnalysisRunResults(analysisRunId)
           : Promise.resolve([]),
-        listPatientRadiologyReports(null, { includeUnanalyzed: true }),
+        activePatientId
+          ? listPatientRadiologyReports(activePatientId, { includeUnanalyzed: true })
+          : Promise.resolve([]),
       ]);
 
       if (cancelled) return;
@@ -248,7 +271,7 @@ export default function CaseEvaluationPage() {
       const hasAnyReadySource = brainResult
         ? Object.values(brainResult.source_availability).some(Boolean)
         : false;
-      if (failures.length > 0 && !hasAnyReadySource) {
+      if (failures.length > 0 && !hasAnyReadySource && reports.length === 0) {
         setError(
           brainFailure
             ? 'Klinik Brain hazırlanamadı. Tarayıcı yerel klinik karar mantığına geri dönmedi; lütfen tekrar dene.'
@@ -275,6 +298,16 @@ export default function CaseEvaluationPage() {
     [brain?.selected_ultrasound_report_id, radiologyReports],
   );
 
+  const latestRadiology = useMemo(() => {
+    if (radiologyReports.length === 0) return null;
+
+    return [...radiologyReports].sort((left, right) => {
+      const leftTime = Date.parse(left.updated_at || left.created_at || left.report_date || '') || 0;
+      const rightTime = Date.parse(right.updated_at || right.created_at || right.report_date || '') || 0;
+      return rightTime - leftTime;
+    })[0] ?? null;
+  }, [radiologyReports]);
+
   const sourceAvailability = useMemo<CaseSourceAvailability>(
     () =>
       brain?.source_availability ?? {
@@ -287,6 +320,11 @@ export default function CaseEvaluationPage() {
   const clinicalReady = sourceAvailability.clinical;
   const labReady = sourceAvailability.laboratory;
   const ultrasoundReady = sourceAvailability.ultrasound;
+  const radiologyReady = radiologyReports.length > 0;
+  const recordedSourceCount = useMemo(
+    () => [clinicalReady, labReady, radiologyReady].filter(Boolean).length,
+    [clinicalReady, labReady, radiologyReady],
+  );
   const availableSourceCount = useMemo(
     () => Object.values(sourceAvailability).filter(Boolean).length,
     [sourceAvailability],
@@ -396,33 +434,41 @@ export default function CaseEvaluationPage() {
       <header>
         <h1 className="text-2xl font-bold text-slate-950">Bulguları Değerlendir</h1>
         <p className="mt-2 text-sm leading-6 text-slate-500">
-          Mevcut klinik, laboratuvar ve ultrason kaynakları Python Clinical Brain
-          tarafından tek kuralla hazırlanır; eksik kaynaklar varsayılmaz.
+          Kaynakların varlığı aktif hastanın kalıcı backend kayıtlarından okunur.
+          Clinical Brain yalnızca desteklediği görüntüleme türlerini klinik değerlendirmeye dahil eder.
         </p>
       </header>
 
       <div className="grid gap-3 md:grid-cols-3">
         <SourceStatus title="Hasta bilgileri" ready={clinicalReady} link="/patients/demo" />
         <SourceStatus title="Laboratuvar" ready={labReady} link="/analysis/mock" />
-        <SourceStatus title="Ultrason" ready={ultrasoundReady} link="/radiology" />
+        <SourceStatus title="Radyoloji / Görüntüleme" ready={radiologyReady} link="/radiology" />
       </div>
 
       <div
         className={`rounded-xl border px-4 py-3 text-sm ${
-          availableSourceCount === 3
+          recordedSourceCount === 3
             ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
-            : availableSourceCount > 0
+            : recordedSourceCount > 0
               ? 'border-amber-200 bg-amber-50 text-amber-900'
               : 'border-slate-200 bg-slate-50 text-slate-600'
         }`}
       >
         <span className="font-semibold">
-          Kaynak kapsamı: {availableSourceCount}/3 · {coverageLabel(availableSourceCount)}
+          Kayıt kapsamı: {recordedSourceCount}/3 · {coverageLabel(recordedSourceCount)}
         </span>
-        {availableSourceCount > 0 && availableSourceCount < 3 ? (
-          <span> — değerlendirme yalnızca hazır kaynaklarla sınırlandırılır.</span>
+        {recordedSourceCount > 0 && recordedSourceCount < 3 ? (
+          <span> — yalnızca bu hastaya kayıtlı kaynaklar hazır kabul edilir.</span>
         ) : null}
       </div>
+
+      {radiologyReady && !ultrasoundReady ? (
+        <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm leading-6 text-blue-900">
+          <span className="font-semibold">Radyoloji kaydı hazır.</span>{' '}
+          Röntgen ve diğer görüntüleme kayıtları bu hastanın backend kaydından kalıcı olarak okunur.
+          Röntgen, ultrason olarak varsayılmaz; Clinical Brain desteklediği görüntüleme türlerini ayrı kurallarla değerlendirir.
+        </div>
+      ) : null}
 
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div>
@@ -449,9 +495,17 @@ export default function CaseEvaluationPage() {
             date={sourceDates.laboratory}
           />
           <SummaryCard
-            title="Ultrason sonucu"
-            text={sourceSummaries.ultrasound}
-            date={sourceDates.ultrasound}
+            title={latestUltrasound ? 'Ultrason sonucu' : 'Radyoloji / görüntüleme özeti'}
+            text={
+              latestUltrasound
+                ? sourceSummaries.ultrasound
+                : radiologyRecordSummary(latestRadiology)
+            }
+            date={
+              latestUltrasound
+                ? sourceDates.ultrasound
+                : latestRadiology?.report_date ?? latestRadiology?.created_at ?? null
+            }
           />
         </div>
       </section>
@@ -477,7 +531,7 @@ export default function CaseEvaluationPage() {
 
       {!loading && availableSourceCount === 0 ? (
         <p className="text-sm text-slate-500">
-          Değerlendirme için en az bir kaynak ekle.
+          Klinik değerlendirme için desteklenen en az bir kaynak ekle.
         </p>
       ) : null}
 
@@ -489,7 +543,7 @@ export default function CaseEvaluationPage() {
 
       {!loading && canEvaluate && availableSourceCount < 3 ? (
         <p className="text-sm text-amber-700">
-          Sınırlı kaynak kapsamıyla değerlendirme yapılacak; eksik kaynaklar
+          Sınırlı klinik kaynak kapsamıyla değerlendirme yapılacak; eksik kaynaklar
           varsayılmayacak ve sonuç hekim doğrulaması gerektirecek.
         </p>
       ) : null}
@@ -500,7 +554,7 @@ export default function CaseEvaluationPage() {
             <div>
               <h2 className="text-lg font-bold text-slate-950">AI Değerlendirmesi</h2>
               <p className="mt-1 text-xs text-slate-500">
-                {availableSourceCount}/3 kaynak · {coverageLabel(availableSourceCount)}
+                {availableSourceCount}/3 klinik kaynak · {coverageLabel(availableSourceCount)}
               </p>
             </div>
             {findings.some(isCompactEvaluation) ? (
