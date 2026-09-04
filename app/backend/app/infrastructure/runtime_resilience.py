@@ -340,16 +340,24 @@ def get_dependency_guard(
         return replacement
 
 
-def get_anthropic_guard(workload: str) -> AsyncDependencyGuard:
+def _provider_guard(provider: str, workload: str) -> AsyncDependencyGuard:
     settings = get_settings()
     return get_dependency_guard(
-        f"anthropic:{str(workload).strip() or 'default'}",
+        f"{provider}:{str(workload).strip() or 'default'}",
         timeout_seconds=settings.ai_call_timeout_seconds,
         queue_timeout_seconds=settings.ai_queue_timeout_seconds,
         max_concurrency=settings.ai_max_concurrency,
         failure_threshold=settings.ai_circuit_breaker_failures,
         recovery_seconds=settings.ai_circuit_breaker_recovery_seconds,
     )
+
+
+def get_anthropic_guard(workload: str) -> AsyncDependencyGuard:
+    return _provider_guard("anthropic", workload)
+
+
+def get_openai_guard(workload: str) -> AsyncDependencyGuard:
+    return _provider_guard("openai", workload)
 
 
 def registered_dependency_snapshots() -> dict[str, dict[str, Any]]:
