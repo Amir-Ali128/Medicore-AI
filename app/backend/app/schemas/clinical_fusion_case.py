@@ -152,6 +152,20 @@ class ClinicalFusionCaseRequest(BaseModel):
     source_availability: dict[str, bool] = Field(default_factory=dict)
     language: str = Field(default="tr", min_length=2, max_length=16)
 
+    @field_validator("candidates")
+    @classmethod
+    def unique_candidate_codes(
+        cls,
+        values: list[ClinicalFusionCandidate],
+    ) -> list[ClinicalFusionCandidate]:
+        seen: set[str] = set()
+        for item in values:
+            key = item.code.casefold()
+            if key in seen:
+                raise ValueError(f"Duplicate fusion candidate code: {item.code}")
+            seen.add(key)
+        return values
+
     @model_validator(mode="after")
     def unique_signal_ids(self) -> "ClinicalFusionCaseRequest":
         ids: list[str] = []
