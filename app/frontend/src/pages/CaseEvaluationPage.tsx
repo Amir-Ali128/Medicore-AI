@@ -6,6 +6,7 @@ import { clearAccessToken } from '../services/authClient';
 import {
   evaluateClinicalBrain,
   type ClinicalBrainResult,
+  type ClinicalBrainSourceSummaries,
 } from '../services/clinicalBrainClient';
 import type {
   ClaudeEvaluationHypothesis,
@@ -27,6 +28,7 @@ import {
 } from '../services/multisourceEvaluationClient';
 import {
   ACTIVE_PATIENT_ID_KEY,
+  isAnalyzableRadiologyReport,
   listPatientRadiologyReports,
   type RadiologyReport,
 } from '../services/radiologyClient';
@@ -152,16 +154,21 @@ function SummaryCard({
   );
 }
 
+function normalizeText(value: string | null | undefined): string | null {
+  const text = value?.replace(/\s+/g, ' ').trim();
+  return text || null;
+}
+
 function radiologyRecordSummary(report: RadiologyReport | null): string {
   if (!report) return 'Radyoloji / görüntüleme kaydı bulunamadı.';
 
-  const summary = report.summary?.trim();
+  const summary = normalizeText(report.summary);
   if (summary && summary !== 'Rapor özeti oluşturulamadı.') return summary;
 
-  const impression = report.impression?.trim();
+  const impression = normalizeText(report.impression);
   if (impression) return impression;
 
-  const originalText = report.original_text?.trim();
+  const originalText = normalizeText(report.original_text);
   if (originalText) {
     return originalText.length > 420
       ? `${originalText.slice(0, 419).trim()}…`
@@ -171,6 +178,34 @@ function radiologyRecordSummary(report: RadiologyReport | null): string {
   return report.file_name
     ? `${report.file_name} görüntüleme kaydı hazır.`
     : 'Radyoloji / görüntüleme kaydı hazır.';
+}
+
+/**
+ * Only bounded, already-analyzed radiology text may enter the compact AI path.
+ * Raw report/image content and file-only records are intentionally excluded.
+ */
+function compactRadiologyEvaluationSummary(report: RadiologyReport | null): string | null {
+  if (!report || !isAnalyzableRadiologyReport(report)) return null;
+
+  const summary = normalizeText(report.summary);
+  const impression = normalizeText(report.impression);
+  const meaningfulSummary =
+    summary && summary !== 'Rapor özeti oluşturulamadı.' ? summary : impression;
+  if (!meaningfulSummary) return null;
+
+  const modality = report.modality && report.modality !== 'UNKNOWN' ? report.modality : '';
+  const bodyPart = report.body_part && report.body_part !== 'OTHER' ? report.body_part : '';
+  const label = [modality, bodyPart].filter(Boolean).join(' / ');
+  return (label ? `${label}: ${meaningfulSummary}` : meaningfulSummary).slice(0, 320);
+}
+
+function radiologyTimestamp(report: RadiologyReport): number {
+  return Date.parse(report.updated_at || report.created_at || report.report_date || '') || 0;
+}
+
+function radiologyDate(report: RadiologyReport | null): string | null {
+  if (!report) return null;
+  return report.report_date ?? report.created_at?.slice(0, 10) ?? null;
 }
 
 export default function CaseEvaluationPage() {
@@ -268,13 +303,21 @@ export default function CaseEvaluationPage() {
         return;
       }
 
-      const hasAnyReadySource = brainResult
-        ? Object.values(brainResult.source_availability).some(Boolean)
+      const hasBrainSource = brainResult
+        ? [
+            brainResult.source_availability.clinical,
+            brainResult.source_availability.laboratory,
+            brainResult.source_availability.radiology,
+          ].some(Boolean)
         : false;
-      if (failures.length > 0 && !hasAnyReadySource && reports.length === 0) {
+      const hasRadiologyFallback = reports.some(
+        (report) => compactRadiologyEvaluationSummary(report) !== null,
+      );
+
+      if (failures.length > 0 && !hasBrainSource && !hasRadiologyFallback) {
         setError(
           brainFailure
-            ? 'Klinik Brain hazırlanamadı. Tarayıcı yerel klinik karar mantığına geri dönmedi; lütfen tekrar dene.'
+            ? 'Clinical Brain hazırlanamadı. Kayıtlı kaynakları yeniden yükleyip tekrar dene.'
             : errorMessage(failures[0]) || 'Kayıtlı bilgiler yüklenemedi.',
         );
       }
@@ -300,54 +343,96 @@ export default function CaseEvaluationPage() {
 
   const latestRadiology = useMemo(() => {
     if (radiologyReports.length === 0) return null;
-
-    return [...radiologyReports].sort((left, right) => {
-      const leftTime = Date.parse(left.updated_at || left.created_at || left.report_date || '') || 0;
-      const rightTime = Date.parse(right.updated_at || right.created_at || right.report_date || '') || 0;
-      return rightTime - leftTime;
-    })[0] ?? null;
+    return [...radiologyReports].sort(
+      (left, right) => radiologyTimestamp(right) - radiologyTimestamp(left),
+    )[0] ?? null;
   }, [radiologyReports]);
 
-  const sourceAvailability = useMemo<CaseSourceAvailability>(
+  const latestEvaluableRadiology = useMemo(
     () =>
-      brain?.source_availability ?? {
-        clinical: false,
-        laboratory: false,
-        ultrasound: false,
-      },
-    [brain?.source_availability],
+      [...radiologyReports]
+        .filter(isAnalyzableRadiologyReport)
+        .sort((left, right) => radiologyTimestamp(right) - radiologyTimestamp(left))
+        .find((report) => compactRadiologyEvaluationSummary(report) !== null) ?? null,
+    [radiologyReports],
   );
+
+  const radiologyAiSummary = useMemo(
+    () => compactRadiologyEvaluationSummary(latestEvaluableRadiology),
+    [latestEvaluableRadiology],
+  );
+
+  const radiologyReady = Boolean(radiologyAiSummary);
+  const sourceAvailability = useMemo<CaseSourceAvailability>(
+    () => ({
+      clinical: brain?.source_availability.clinical === true,
+      laboratory: brain?.source_availability.laboratory === true,
+      radiology:
+        brain?.source_availability.radiology === true || Boolean(radiologyAiSummary),
+      ultrasound: brain?.source_availability.ultrasound === true,
+    }),
+    [brain?.source_availability, radiologyAiSummary],
+  );
+
   const clinicalReady = sourceAvailability.clinical;
   const labReady = sourceAvailability.laboratory;
-  const ultrasoundReady = sourceAvailability.ultrasound;
-  const radiologyReady = radiologyReports.length > 0;
+  const ultrasoundReady = sourceAvailability.ultrasound === true;
   const recordedSourceCount = useMemo(
     () => [clinicalReady, labReady, radiologyReady].filter(Boolean).length,
     [clinicalReady, labReady, radiologyReady],
   );
   const availableSourceCount = useMemo(
-    () => Object.values(sourceAvailability).filter(Boolean).length,
+    () =>
+      [
+        sourceAvailability.clinical,
+        sourceAvailability.laboratory,
+        sourceAvailability.radiology,
+      ].filter(Boolean).length,
     [sourceAvailability],
   );
+
   const patientId =
     activePatientId ?? latestUltrasound?.patient_id ?? radiologyReports[0]?.patient_id ?? null;
   const evaluationAnalysisRunId = labReady ? analysisRunId : null;
   const canEvaluate =
-    Boolean(brain) &&
-    availableSourceCount > 0 &&
-    Boolean(evaluationAnalysisRunId || patientId);
+    availableSourceCount > 0 && Boolean(evaluationAnalysisRunId || patientId);
 
-  const sourceDates = brain?.source_dates ?? {
-    laboratory: null,
-    ultrasound: null,
-  };
+  const sourceDates = useMemo(
+    () => ({
+      laboratory: brain?.source_dates.laboratory ?? null,
+      ultrasound: brain?.source_dates.ultrasound ?? null,
+      radiology:
+        brain?.source_dates.radiology ?? radiologyDate(latestEvaluableRadiology),
+    }),
+    [brain?.source_dates, latestEvaluableRadiology],
+  );
   const sourceGapDays = brain?.temporal_gap_days ?? null;
   const performedStudies = brain?.performed_studies ?? [];
-  const sourceSummaries = brain?.source_summaries ?? {
-    clinical: 'Python Clinical Brain bekleniyor.',
-    laboratory: 'Python Clinical Brain bekleniyor.',
-    ultrasound: 'Python Clinical Brain bekleniyor.',
-  };
+
+  const sourceSummaries = useMemo<ClinicalBrainSourceSummaries>(
+    () => ({
+      clinical: brain?.source_summaries.clinical ?? 'Python Clinical Brain bekleniyor.',
+      laboratory:
+        brain?.source_summaries.laboratory ?? 'Python Clinical Brain bekleniyor.',
+      ultrasound:
+        brain?.source_summaries.ultrasound ?? 'Python Clinical Brain bekleniyor.',
+      radiology:
+        brain?.source_summaries.radiology ??
+        radiologyAiSummary ??
+        'Radyoloji / görüntüleme özeti bulunamadı.',
+    }),
+    [brain?.source_summaries, radiologyAiSummary],
+  );
+
+  const evaluationSourceSummaries = useMemo<ClinicalBrainSourceSummaries>(
+    () => ({
+      clinical: brain?.ai_source_summaries.clinical ?? '',
+      laboratory: brain?.ai_source_summaries.laboratory ?? '',
+      ultrasound: brain?.ai_source_summaries.ultrasound ?? '',
+      radiology: brain?.ai_source_summaries.radiology ?? radiologyAiSummary ?? '',
+    }),
+    [brain?.ai_source_summaries, radiologyAiSummary],
+  );
 
   const findings = useMemo<
     Array<ClinicalHypothesis | ClaudeEvaluationHypothesis>
@@ -362,7 +447,7 @@ export default function CaseEvaluationPage() {
   }, [result, storedHypotheses]);
 
   async function handleEvaluate() {
-    if (!canEvaluate || !brain) return;
+    if (!canEvaluate) return;
 
     try {
       setEvaluating(true);
@@ -373,8 +458,8 @@ export default function CaseEvaluationPage() {
         evaluationAnalysisRunId,
         patientId,
         clinicalIntake,
-        brain.ai_source_summaries,
-        sourceAvailability.ultrasound ? brain.ultrasound_context_flags : [],
+        evaluationSourceSummaries,
+        ultrasoundReady ? brain?.ultrasound_context_flags ?? [] : [],
         {
           performedStudies,
           sourceDates,
@@ -429,6 +514,8 @@ export default function CaseEvaluationPage() {
     }
   }
 
+  const displayedRadiology = latestEvaluableRadiology ?? latestRadiology;
+
   return (
     <div className="mx-auto max-w-4xl space-y-5">
       <header>
@@ -466,7 +553,8 @@ export default function CaseEvaluationPage() {
         <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm leading-6 text-blue-900">
           <span className="font-semibold">Radyoloji kaydı hazır.</span>{' '}
           Röntgen ve diğer görüntüleme kayıtları bu hastanın backend kaydından kalıcı olarak okunur.
-          Röntgen, ultrason olarak varsayılmaz; Clinical Brain desteklediği görüntüleme türlerini ayrı kurallarla değerlendirir.
+          Clinical Brain yanıtı alınamasa bile analiz edilmiş, sınırlandırılmış radyoloji özeti
+          tek kaynaklı AI değerlendirmesinde kullanılabilir; röntgen ultrason olarak varsayılmaz.
         </div>
       ) : null}
 
@@ -499,12 +587,12 @@ export default function CaseEvaluationPage() {
             text={
               latestUltrasound
                 ? sourceSummaries.ultrasound
-                : radiologyRecordSummary(latestRadiology)
+                : radiologyRecordSummary(displayedRadiology)
             }
             date={
               latestUltrasound
                 ? sourceDates.ultrasound
-                : latestRadiology?.report_date ?? latestRadiology?.created_at ?? null
+                : radiologyDate(displayedRadiology)
             }
           />
         </div>
@@ -531,7 +619,7 @@ export default function CaseEvaluationPage() {
 
       {!loading && availableSourceCount === 0 ? (
         <p className="text-sm text-slate-500">
-          Klinik değerlendirme için desteklenen en az bir kaynak ekle.
+          Klinik değerlendirme için analiz edilmiş en az bir kaynak ekle.
         </p>
       ) : null}
 
