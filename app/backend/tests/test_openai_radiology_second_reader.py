@@ -152,4 +152,21 @@ def test_comparator_flags_high_attention_asymmetry_not_false_disagreement() -> N
     assert "fracture" in comparison["second_reader_only_concepts"]
     assert "fracture" in comparison["high_attention_asymmetry"]
     assert comparison["requires_physician_attention"] is True
-    assert comparison["mode"] == "deterministic_concept_overlap_not_ground_truth"
+    assert comparison["mode"] == "deterministic_concept_polarity_not_ground_truth"
+
+
+def test_comparator_does_not_corroborate_positive_against_explicit_negative() -> None:
+    primary = _review(
+        summary="Pnömotoraks ile uyumlu olabilecek apikal plevral çizgi izleniyor.",
+        observations=[],
+    )
+    second = _review(
+        summary="Pnömotoraks lehine bulgu yok.",
+        observations=[],
+    )
+
+    comparison = compare_radiology_readers(primary, second)
+
+    assert "pneumothorax" not in comparison["corroborated_concepts"]
+    assert "pneumothorax" in comparison["polarity_conflicts"]
+    assert comparison["requires_physician_attention"] is True
