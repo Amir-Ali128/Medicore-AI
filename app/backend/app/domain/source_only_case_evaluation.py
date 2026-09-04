@@ -18,6 +18,7 @@ from typing import Any
 from app.domain import claude_clinical_hypothesis_service as service_module
 from app.domain.claude_clinical_hypothesis_service import ClaudeClinicalHypothesisService
 from app.infrastructure.database.models.clinical_hypothesis import ClinicalHypothesis
+from app.infrastructure.runtime_resilience import get_anthropic_guard
 from app.schemas.clinical_copilot import (
     ClinicalHypothesisGenerationRequest,
     ClinicalHypothesisGenerationResult,
@@ -163,26 +164,29 @@ async def generate_source_only_case(
     warnings: list[str] = []
     ai_called = True
     try:
-        response = await service._client.messages.create(
-            model=service._model,
-            max_tokens=service_module._MAX_OUTPUT_TOKENS,
-            temperature=0,
-            system=service_module._SYSTEM_PROMPT,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": service._build_user_prompt(
-                                symptoms,
-                                flags,
-                                request.language,
-                            ),
-                        }
-                    ],
-                }
-            ],
+        guard = get_anthropic_guard("clinical-hypothesis")
+        response = await guard.call(
+            lambda: service._client.messages.create(
+                model=service._model,
+                max_tokens=service_module._MAX_OUTPUT_TOKENS,
+                temperature=0,
+                system=service_module._SYSTEM_PROMPT,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": service._build_user_prompt(
+                                    symptoms,
+                                    flags,
+                                    request.language,
+                                ),
+                            }
+                        ],
+                    }
+                ],
+            )
         )
         payload = service._safe_json(service._collect_text(response))
         if payload is None:

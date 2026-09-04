@@ -11,7 +11,7 @@ from __future__ import annotations
 from functools import lru_cache
 from urllib.parse import quote_plus
 
-from pydantic import computed_field
+from pydantic import Field, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -63,6 +63,44 @@ class Settings(BaseSettings):
     # already configured hypothesis or extraction model so existing Render
     # deployments do not require a new environment variable.
     claude_vision_model: str | None = None
+
+    # --- Production hardening -------------------------------------------
+    # External AI calls are optional dependencies. Bound both the number of
+    # concurrent requests and the amount of time any request may occupy a worker.
+    ai_call_timeout_seconds: float = Field(default=45.0, ge=1.0, le=180.0)
+    ai_queue_timeout_seconds: float = Field(default=2.0, ge=0.05, le=30.0)
+    ai_max_concurrency: int = Field(default=4, ge=1, le=32)
+    ai_circuit_breaker_failures: int = Field(default=3, ge=1, le=20)
+    ai_circuit_breaker_recovery_seconds: float = Field(
+        default=30.0,
+        ge=1.0,
+        le=600.0,
+    )
+
+    # Readiness is intentionally much faster than model calls: health probes must
+    # never accumulate while a database or dependency is unhealthy.
+    health_check_timeout_seconds: float = Field(default=2.0, ge=0.1, le=10.0)
+
+    # Binary upload limits remain configurable but bounded so an accidental env
+    # value cannot turn one worker into an unbounded in-memory file buffer.
+    lab_extraction_max_bytes: int = Field(
+        default=10 * 1024 * 1024,
+        ge=1 * 1024 * 1024,
+        le=25 * 1024 * 1024,
+    )
+    radiology_image_max_bytes: int = Field(
+        default=15 * 1024 * 1024,
+        ge=1 * 1024 * 1024,
+        le=25 * 1024 * 1024,
+    )
+
+    # The configured ONNX engine is CPU-safe by default on small Render workers.
+    # Model manifests still own the clinical batch limit; these settings only bound
+    # process resources and concurrent execution.
+    onnx_max_concurrency: int = Field(default=2, ge=1, le=16)
+    onnx_concurrency_wait_seconds: float = Field(default=2.0, ge=0.05, le=30.0)
+    onnx_intra_op_threads: int = Field(default=1, ge=1, le=16)
+    onnx_inter_op_threads: int = Field(default=1, ge=1, le=16)
 
     @staticmethod
     def _with_driver(url: str, driver: str) -> str:

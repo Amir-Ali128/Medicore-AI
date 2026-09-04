@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import mimetypes
 import uuid
-from datetime import date
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 
@@ -19,11 +18,16 @@ from app.api.dependencies import (
     ExtractionReviewServiceDep,
     SessionDep,
 )
-from app.domain.claude_lab_extraction_service import (
-    SUPPORTED_CONTENT_TYPES,
-)
+from app.core.config import get_settings
+from app.domain.claude_lab_extraction_service import SUPPORTED_CONTENT_TYPES
 from app.infrastructure.database.models.extracted_lab_value import ExtractedLabValue
 from app.infrastructure.database.models.extraction_job import ExtractionJob
+from app.infrastructure.runtime_resilience import (
+    DependencyBusyError,
+    DependencyCircuitOpenError,
+    DependencyGuardError,
+    DependencyTimeoutError,
+)
 from app.schemas.extraction_review import (
     ExtractedLabValueResponse,
     ExtractedLabValueUpdate,
@@ -40,11 +44,48 @@ _PATIENT_NOT_FOUND = "Patient not found."
 
 
 def _resolve_content_type(file: UploadFile) -> str | None:
-    content_type = (file.content_type or "").lower() or None
+    content_type = (file.content_type or "").lower().strip() or None
     if content_type in SUPPORTED_CONTENT_TYPES:
         return content_type
     guessed, _ = mimetypes.guess_type(file.filename or "")
-    return guessed or content_type
+    return guessed if guessed in SUPPORTED_CONTENT_TYPES else content_type
+
+
+async def _read_supported_upload(file: UploadFile) -> tuple[bytes, str]:
+    content_type = _resolve_content_type(file)
+    if content_type not in SUPPORTED_CONTENT_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Laboratuvar incelemesi için PDF, JPG/JPEG, PNG veya WEBP yükleyin.",
+        )
+
+    max_upload_bytes = get_settings().lab_extraction_max_bytes
+    data = await file.read(max_upload_bytes + 1)
+    if not data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Boş laboratuvar dosyası işlenemez.",
+        )
+    if len(data) > max_upload_bytes:
+        max_megabytes = max_upload_bytes // (1024 * 1024)
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"Laboratuvar dosyası {max_megabytes} MB sınırını aşıyor.",
+        )
+    return data, content_type
+
+
+def _dependency_http_error(exc: DependencyGuardError) -> HTTPException:
+    if isinstance(exc, DependencyTimeoutError):
+        return HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="Laboratuvar çıkarım servisi zaman aşımına uğradı. İşlem daha sonra yeniden denenebilir.",
+        )
+    if isinstance(exc, (DependencyBusyError, DependencyCircuitOpenError)):
+        detail = "Laboratuvar çıkarım servisi geçici olarak yoğun veya koruma devresi açık. Kısa süre sonra yeniden deneyin."
+    else:
+        detail = "Laboratuvar çıkarım servisi geçici olarak kullanılamıyor."
+    return HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail)
 
 
 def _job_response(
@@ -79,13 +120,15 @@ async def create_job_from_file(
     patient_id: uuid.UUID | None = Form(default=None),
     uploaded_by_user_id: uuid.UUID | None = Form(default=None),
 ) -> ExtractionJobCreateResponse:
-    data = await file.read()
-    content_type = _resolve_content_type(file)
+    data, content_type = await _read_supported_upload(file)
     try:
         job = await service.create_job_from_file(
             data, file.filename, content_type, patient_id, uploaded_by_user_id
         )
         await session.commit()
+    except DependencyGuardError as exc:
+        await session.rollback()
+        raise _dependency_http_error(exc) from None
     except ValueError as exc:
         await session.rollback()
         raise HTTPException(

@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, s
 from app.api.dependencies import SessionDep
 from app.api.routes import radiology_reports
 from app.api.routes.auth import get_current_active_user
+from app.core.config import get_settings
 from app.domain.radiology_image_ai import (
     SUPPORTED_IMAGE_MEDIA_TYPES,
     SUPPORTED_MODALITIES,
@@ -30,11 +31,11 @@ from app.infrastructure.database.models.user import User
 from app.infrastructure.database.repositories.radiology_report_repository import (
     RadiologyReportRepository,
 )
+from app.infrastructure.runtime_resilience import get_anthropic_guard
 from app.schemas.radiology_report import RadiologyReportResponse
 
 router = APIRouter(prefix="/radiology-reports", tags=["radiology-image-review"])
 
-_MAX_IMAGE_BYTES = 15 * 1024 * 1024
 _EXTENSION_TO_MEDIA_TYPE = {
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
@@ -198,11 +199,16 @@ async def create_radiology_image_review(
             detail="Görüntü/rapor incelemesi için JPG, PNG veya WEBP yükleyin. DICOM ve diğer formatlar normal dosya yükleme ile arşivlenebilir.",
         )
 
-    content = await file.read(_MAX_IMAGE_BYTES + 1)
+    max_image_bytes = get_settings().radiology_image_max_bytes
+    content = await file.read(max_image_bytes + 1)
     if not content:
         raise HTTPException(status_code=400, detail="Boş görüntü yüklenemez.")
-    if len(content) > _MAX_IMAGE_BYTES:
-        raise HTTPException(status_code=413, detail="Görüntü 15 MB sınırını aşıyor.")
+    if len(content) > max_image_bytes:
+        max_megabytes = max_image_bytes // (1024 * 1024)
+        raise HTTPException(
+            status_code=413,
+            detail=f"Görüntü {max_megabytes} MB sınırını aşıyor.",
+        )
 
     await radiology_reports._ensure_phase2_table(session)
     await radiology_reports._get_accessible_patient(patient_id, session, current_user)
@@ -210,11 +216,14 @@ async def create_radiology_image_review(
     requested_body_part = normalize_body_part(body_part) or _infer_body_part_from_filename(filename)
 
     try:
-        review = await review_radiology_media(
-            content=content,
-            media_type=media_type,
-            modality=normalized_modality,
-            body_part=requested_body_part,
+        guard = get_anthropic_guard("radiology-media")
+        review = await guard.call(
+            lambda: review_radiology_media(
+                content=content,
+                media_type=media_type,
+                modality=normalized_modality,
+                body_part=requested_body_part,
+            )
         )
     except Exception as exc:
         return await _save_ai_fallback(
