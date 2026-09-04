@@ -1,3 +1,4 @@
+from app.domain import multisource_summary_runtime as _multisource_summary_runtime  # noqa: F401
 from app.domain.source_only_case_evaluation import (
     _risk_display_for_coverage,
     _source_only_fallback,
@@ -11,12 +12,12 @@ def test_clinical_only_is_single_source() -> None:
             "source_availability": {
                 "clinical": True,
                 "laboratory": False,
-                "ultrasound": False,
+                "radiology": False,
             },
             "source_summaries": {
                 "clinical": "Baş ağrısı",
                 "laboratory": "",
-                "ultrasound": "",
+                "radiology": "",
             },
         }
     )
@@ -27,17 +28,17 @@ def test_clinical_only_is_single_source() -> None:
     assert coverage["available"] == {
         "clinical": True,
         "laboratory": False,
-        "ultrasound": False,
+        "radiology": False,
     }
 
 
-def test_clinical_and_ultrasound_is_partial_multisource() -> None:
+def test_clinical_and_radiology_is_partial_multisource() -> None:
     coverage = source_coverage(
         {
             "source_availability": {
                 "clinical": True,
                 "laboratory": False,
-                "ultrasound": True,
+                "radiology": True,
             }
         }
     )
@@ -47,7 +48,7 @@ def test_clinical_and_ultrasound_is_partial_multisource() -> None:
     assert coverage["limited"] is True
 
 
-def test_summary_fallback_supports_older_callers() -> None:
+def test_legacy_ultrasound_summary_maps_to_radiology_source() -> None:
     coverage = source_coverage(
         {
             "source_summaries": {
@@ -59,7 +60,7 @@ def test_summary_fallback_supports_older_callers() -> None:
     )
 
     assert coverage["available_count"] == 1
-    assert coverage["available"]["ultrasound"] is True
+    assert coverage["available"]["radiology"] is True
 
 
 def test_explicit_false_cannot_be_overridden_by_placeholder_summary() -> None:
@@ -68,19 +69,19 @@ def test_explicit_false_cannot_be_overridden_by_placeholder_summary() -> None:
             "source_availability": {
                 "clinical": True,
                 "laboratory": False,
-                "ultrasound": False,
+                "radiology": False,
             },
             "source_summaries": {
                 "clinical": "Baş ağrısı",
                 "laboratory": "Laboratuvar verisi bulunamadı.",
-                "ultrasound": "Ultrason sonucu bulunamadı.",
+                "radiology": "Radyoloji sonucu bulunamadı.",
             },
         }
     )
 
     assert coverage["available_count"] == 1
     assert coverage["available"]["laboratory"] is False
-    assert coverage["available"]["ultrasound"] is False
+    assert coverage["available"]["radiology"] is False
 
 
 def test_all_three_sources_are_full_multisource() -> None:
@@ -89,7 +90,7 @@ def test_all_three_sources_are_full_multisource() -> None:
             "source_availability": {
                 "clinical": True,
                 "laboratory": True,
-                "ultrasound": True,
+                "radiology": True,
             }
         }
     )
