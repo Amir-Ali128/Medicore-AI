@@ -230,7 +230,6 @@ class AsyncDependencyGuard:
     async def call(self, operation: Callable[[], Awaitable[T]]) -> T:
         """Execute one dependency call with bounded queueing and a hard timeout."""
 
-        # Do not let known-bad upstreams fill the local concurrency queue.
         self.breaker.assert_available()
         semaphore = self._semaphore_for_running_loop()
         try:
@@ -251,7 +250,6 @@ class AsyncDependencyGuard:
             self._admitted_total += 1
 
         try:
-            # The breaker may have opened while this call was waiting in the queue.
             probe = self.breaker.before_call()
             try:
                 result = await asyncio.wait_for(
@@ -358,6 +356,10 @@ def get_anthropic_guard(workload: str) -> AsyncDependencyGuard:
 
 def get_openai_guard(workload: str) -> AsyncDependencyGuard:
     return _provider_guard("openai", workload)
+
+
+def get_gemini_guard(workload: str) -> AsyncDependencyGuard:
+    return _provider_guard("gemini", workload)
 
 
 def registered_dependency_snapshots() -> dict[str, dict[str, Any]]:
