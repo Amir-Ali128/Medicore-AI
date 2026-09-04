@@ -13,10 +13,13 @@ import json
 import math
 import os
 import re
+import threading
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Mapping, Sequence
+
+from app.core.config import get_settings
 
 EXPECTED_XRAY_TENSOR_CONTRACT = "xray-core-v2/nchw-f32-0-1"
 MANIFEST_SCHEMA_VERSION = 1
@@ -38,6 +41,10 @@ class ModelContractError(OnnxInferenceError):
 
 class ModelUnavailable(OnnxInferenceError):
     """Raised when a configured model/runtime cannot be loaded."""
+
+
+class ModelBusy(OnnxInferenceError):
+    """Raised when local ONNX execution slots are saturated."""
 
 
 @dataclass(frozen=True)
@@ -207,10 +214,28 @@ class OnnxInferenceEngine:
         manifest_path: str | Path,
         *,
         providers: Sequence[str] | None = None,
+        max_concurrency: int = 2,
+        concurrency_wait_seconds: float = 2.0,
+        intra_op_num_threads: int | None = None,
+        inter_op_num_threads: int | None = None,
     ) -> None:
+        if max_concurrency < 1:
+            raise ValueError("ONNX max_concurrency must be at least 1.")
+        if concurrency_wait_seconds <= 0:
+            raise ValueError("ONNX concurrency_wait_seconds must be positive.")
+        if intra_op_num_threads is not None and intra_op_num_threads < 1:
+            raise ValueError("ONNX intra_op_num_threads must be at least 1.")
+        if inter_op_num_threads is not None and inter_op_num_threads < 1:
+            raise ValueError("ONNX inter_op_num_threads must be at least 1.")
+
         self.model_path = Path(model_path)
         self.manifest_path = Path(manifest_path)
         self.manifest = load_model_manifest(self.manifest_path)
+        self._max_concurrency = int(max_concurrency)
+        self._concurrency_wait_seconds = float(concurrency_wait_seconds)
+        self._intra_op_num_threads = intra_op_num_threads
+        self._inter_op_num_threads = inter_op_num_threads
+        self._execution_gate = threading.BoundedSemaphore(self._max_concurrency)
 
         actual_hash = sha256_file(self.model_path)
         if actual_hash.lower() != self.manifest.model_sha256.lower():
@@ -234,6 +259,10 @@ class OnnxInferenceEngine:
 
         try:
             options = ort.SessionOptions()
+            if intra_op_num_threads is not None:
+                options.intra_op_num_threads = int(intra_op_num_threads)
+            if inter_op_num_threads is not None:
+                options.inter_op_num_threads = int(inter_op_num_threads)
             self._session = ort.InferenceSession(
                 str(self.model_path),
                 sess_options=options,
@@ -316,6 +345,12 @@ class OnnxInferenceEngine:
             "labels": list(self.manifest.labels),
             "max_batch_size": self.manifest.max_batch_size,
             "providers": list(self.providers),
+            "runtime_limits": {
+                "max_concurrency": self._max_concurrency,
+                "concurrency_wait_seconds": self._concurrency_wait_seconds,
+                "intra_op_num_threads": self._intra_op_num_threads,
+                "inter_op_num_threads": self._inter_op_num_threads,
+            },
         }
 
     def _validate_batch(self, batch: Any, *, tensor_contract: str) -> Any:
@@ -341,29 +376,40 @@ class OnnxInferenceEngine:
         return array
 
     def _run_raw(self, batch: Any) -> Any:
-        np = _load_numpy()
-        size = int(batch.shape[0])
+        acquired = self._execution_gate.acquire(timeout=self._concurrency_wait_seconds)
+        if not acquired:
+            raise ModelBusy(
+                "ONNX inference kapasitesi dolu; istek yerel concurrency sınırında bekletilmedi."
+            )
+
         try:
-            if self._static_input_batch in {None, size}:
-                raw = self._session.run(
-                    [self.manifest.output_name],
-                    {self.manifest.input_name: batch},
-                )[0]
-                return np.asarray(raw, dtype=np.float32)
-            if self._static_input_batch == 1:
-                rows = []
-                for index in range(size):
-                    output = self._session.run(
+            np = _load_numpy()
+            size = int(batch.shape[0])
+            try:
+                if self._static_input_batch in {None, size}:
+                    raw = self._session.run(
                         [self.manifest.output_name],
-                        {self.manifest.input_name: batch[index : index + 1]},
+                        {self.manifest.input_name: batch},
                     )[0]
-                    rows.append(np.asarray(output, dtype=np.float32))
-                return np.concatenate(rows, axis=0)
-        except Exception as exc:
-            raise OnnxInferenceError("ONNX inference çalıştırılamadı.") from exc
-        raise ModelContractError(
-            "Model sabit batch boyutu gelen batch ile uyumsuz; otomatik padding uygulanmadı."
-        )
+                    return np.asarray(raw, dtype=np.float32)
+                if self._static_input_batch == 1:
+                    rows = []
+                    for index in range(size):
+                        output = self._session.run(
+                            [self.manifest.output_name],
+                            {self.manifest.input_name: batch[index : index + 1]},
+                        )[0]
+                        rows.append(np.asarray(output, dtype=np.float32))
+                    return np.concatenate(rows, axis=0)
+            except Exception as exc:
+                if isinstance(exc, OnnxInferenceError):
+                    raise
+                raise OnnxInferenceError("ONNX inference çalıştırılamadı.") from exc
+            raise ModelContractError(
+                "Model sabit batch boyutu gelen batch ile uyumsuz; otomatik padding uygulanmadı."
+            )
+        finally:
+            self._execution_gate.release()
 
     def infer_batch(
         self,
@@ -464,7 +510,15 @@ def get_configured_xray_onnx_engine() -> OnnxInferenceEngine | None:
         raise ModelUnavailable(
             "XRAY_ONNX_ENABLED açık ancak model/manifest yolu yapılandırılmamış."
         )
-    return OnnxInferenceEngine(model_path, manifest_path)
+    settings = get_settings()
+    return OnnxInferenceEngine(
+        model_path,
+        manifest_path,
+        max_concurrency=settings.onnx_max_concurrency,
+        concurrency_wait_seconds=settings.onnx_concurrency_wait_seconds,
+        intra_op_num_threads=settings.onnx_intra_op_threads,
+        inter_op_num_threads=settings.onnx_inter_op_threads,
+    )
 
 
 def try_get_configured_xray_onnx_engine() -> OnnxInferenceEngine | None:
