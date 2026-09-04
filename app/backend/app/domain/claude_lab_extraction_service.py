@@ -17,6 +17,10 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from app.infrastructure.runtime_resilience import (
+    AsyncDependencyGuard,
+    get_anthropic_guard,
+)
 from app.schemas.extraction import LabExtractionResult
 
 SUPPORTED_CONTENT_TYPES: frozenset[str] = frozenset(
@@ -67,7 +71,13 @@ _USER_PROMPT = (
 
 
 class ClaudeLabExtractionService:
-    def __init__(self, *, api_key: str | None, model: str | None) -> None:
+    def __init__(
+        self,
+        *,
+        api_key: str | None,
+        model: str | None,
+        guard: AsyncDependencyGuard | None = None,
+    ) -> None:
         if not model:
             raise ValueError("CLAUDE_EXTRACTION_MODEL is not configured.")
         if not api_key:
@@ -78,6 +88,7 @@ class ClaudeLabExtractionService:
 
         self._model = model
         self._client = AsyncAnthropic(api_key=api_key)
+        self._guard = guard or get_anthropic_guard("lab-extraction")
 
     async def extract_from_bytes(
         self, file_bytes: bytes, file_name: str | None, content_type: str | None
@@ -88,16 +99,18 @@ class ClaudeLabExtractionService:
         encoded = base64.standard_b64encode(file_bytes).decode("ascii")
         file_block = self._build_file_block(content_type, encoded)
 
-        response = await self._client.messages.create(
-            model=self._model,
-            max_tokens=_MAX_TOKENS,
-            system=_SYSTEM_PROMPT,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [file_block, {"type": "text", "text": _USER_PROMPT}],
-                }
-            ],
+        response = await self._guard.call(
+            lambda: self._client.messages.create(
+                model=self._model,
+                max_tokens=_MAX_TOKENS,
+                system=_SYSTEM_PROMPT,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [file_block, {"type": "text", "text": _USER_PROMPT}],
+                    }
+                ],
+            )
         )
 
         text = self._collect_text(response)
