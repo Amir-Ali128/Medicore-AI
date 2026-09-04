@@ -1,22 +1,33 @@
 import { apiClient } from './apiClient';
 import type { ClinicalIntakeInput, LabAnalysisResult } from './labAnalysisClient';
-import type { RadiologyReport } from './radiologyClient';
+import {
+  isAnalyzableRadiologyReport,
+  type RadiologyReport,
+} from './radiologyClient';
 
 export type ClinicalBrainSourceSummaries = {
   clinical: string;
   laboratory: string;
   ultrasound: string;
+  /**
+   * Generic imaging summary used only by the compact physician-review workflow.
+   * The Python Clinical Brain still owns ultrasound-specific reasoning separately.
+   */
+  radiology?: string;
 };
 
 export type ClinicalBrainSourceAvailability = {
   clinical: boolean;
   laboratory: boolean;
   ultrasound: boolean;
+  /** Generic analyzable radiology/imaging source for compact evaluation. */
+  radiology?: boolean;
 };
 
 export type ClinicalBrainSourceDates = {
   laboratory: string | null;
   ultrasound: string | null;
+  radiology?: string | null;
 };
 
 export type ClinicalBrainPerformedStudy = {
@@ -116,12 +127,79 @@ export type ClinicalBrainInput = {
   language?: string;
 };
 
+function compactRadiologySummary(report: RadiologyReport): string | null {
+  const summary = report.summary?.replace(/\s+/g, ' ').trim();
+  const impression = report.impression?.replace(/\s+/g, ' ').trim();
+  const meaningfulSummary =
+    summary && summary !== 'Rapor özeti oluşturulamadı.' ? summary : impression;
+  if (!meaningfulSummary) return null;
+
+  const modality = report.modality && report.modality !== 'UNKNOWN' ? report.modality : '';
+  const bodyPart = report.body_part && report.body_part !== 'OTHER' ? report.body_part : '';
+  const label = [modality, bodyPart].filter(Boolean).join(' / ');
+  const text = label ? `${label}: ${meaningfulSummary}` : meaningfulSummary;
+  return text.slice(0, 320);
+}
+
+function reportTimestamp(report: RadiologyReport): number {
+  return (
+    Date.parse(report.updated_at || report.created_at || report.report_date || '') || 0
+  );
+}
+
 /**
- * Thin browser adapter. Clinical decisions and summaries are intentionally owned by
- * the Python backend; this function only transports structured inputs/outputs.
+ * Thin browser adapter. Clinical decisions and disease-specific imaging reasoning are
+ * intentionally owned by the Python backend. This adapter only adds a generic,
+ * bounded radiology source for the separate compact physician-review workflow.
  */
 export async function evaluateClinicalBrain(
   input: ClinicalBrainInput,
 ): Promise<ClinicalBrainResult> {
-  return apiClient.post<ClinicalBrainResult>('/clinical-brain/evaluate', input);
+  const result = await apiClient.post<ClinicalBrainResult>(
+    '/clinical-brain/evaluate',
+    input,
+  );
+
+  const latestRadiology = [...input.radiology_reports]
+    .filter(isAnalyzableRadiologyReport)
+    .sort((left, right) => reportTimestamp(right) - reportTimestamp(left))
+    .find((report) => compactRadiologySummary(report) !== null) ?? null;
+  const radiologySummary = latestRadiology
+    ? compactRadiologySummary(latestRadiology)
+    : null;
+  const radiologyReady = Boolean(radiologySummary);
+
+  // The UI historically reads `.ultrasound`, while its 3-source coverage counter
+  // uses Object.values(). Keep ultrasound available for its specific rules without
+  // counting it as a fourth source; radiology is the single imaging source group.
+  const sourceAvailability: ClinicalBrainSourceAvailability = {
+    clinical: result.source_availability.clinical,
+    laboratory: result.source_availability.laboratory,
+    radiology: radiologyReady,
+    ultrasound: result.source_availability.ultrasound,
+  };
+  Object.defineProperty(sourceAvailability, 'ultrasound', {
+    value: result.source_availability.ultrasound,
+    enumerable: false,
+    writable: false,
+    configurable: false,
+  });
+
+  return {
+    ...result,
+    source_summaries: {
+      ...result.source_summaries,
+      radiology: radiologySummary ?? 'Radyoloji / görüntüleme özeti bulunamadı.',
+    },
+    ai_source_summaries: {
+      ...result.ai_source_summaries,
+      radiology: radiologySummary ?? '',
+    },
+    source_availability: sourceAvailability,
+    source_dates: {
+      ...result.source_dates,
+      radiology:
+        latestRadiology?.report_date ?? latestRadiology?.created_at?.slice(0, 10) ?? null,
+    },
+  };
 }

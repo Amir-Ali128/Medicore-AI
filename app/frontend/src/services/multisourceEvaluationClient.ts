@@ -10,10 +10,15 @@ import type { ClinicalIntakeInput } from './labAnalysisClient';
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000';
 
+/**
+ * Compact AI evaluates three user-facing source groups. Ultrasound remains an
+ * optional subtype signal for Clinical Brain but is not counted as a fourth source.
+ */
 export type CaseSourceAvailability = {
   clinical: boolean;
   laboratory: boolean;
-  ultrasound: boolean;
+  radiology?: boolean;
+  ultrasound?: boolean;
 };
 
 export type MultisourceQualityContext = {
@@ -56,8 +61,16 @@ function buildCompactVitals(context: ClinicalIntakeInput | null) {
   };
 }
 
+function canonicalAvailability(availability: CaseSourceAvailability) {
+  return {
+    clinical: availability.clinical === true,
+    laboratory: availability.laboratory === true,
+    radiology: availability.radiology === true,
+  };
+}
+
 function sourceCount(availability: CaseSourceAvailability) {
-  return Object.values(availability).filter(Boolean).length;
+  return Object.values(canonicalAvailability(availability)).filter(Boolean).length;
 }
 
 function boundedSummary(summary: string, available: boolean) {
@@ -86,6 +99,7 @@ export async function evaluateMultisourceCase(
   contextFlags: string[],
   qualityContext: MultisourceQualityContext,
 ): Promise<ClaudeReviewGenerationResult> {
+  const availability = canonicalAvailability(qualityContext.sourceAvailability);
   const availableCount = sourceCount(qualityContext.sourceAvailability);
   if (availableCount === 0) {
     throw new Error('Değerlendirme için en az bir klinik kaynak gerekiyor.');
@@ -101,6 +115,7 @@ export async function evaluateMultisourceCase(
     ? `${API_BASE_URL}/analysis-runs/${analysisRunId}/clinical-hypotheses/generate`
     : `${API_BASE_URL}/clinical-evaluations/source-only/generate`;
 
+  const radiologySummary = sourceSummaries.radiology ?? sourceSummaries.ultrasound;
   const response = await fetch(endpoint, {
     method: 'POST',
     headers: {
@@ -124,20 +139,14 @@ export async function evaluateMultisourceCase(
         symptoms: buildCompactSymptoms(clinicalContext),
         vitals: buildCompactVitals(clinicalContext),
         source_summaries: {
-          clinical: boundedSummary(
-            sourceSummaries.clinical,
-            qualityContext.sourceAvailability.clinical,
-          ),
+          clinical: boundedSummary(sourceSummaries.clinical, availability.clinical),
           laboratory: boundedSummary(
             sourceSummaries.laboratory,
-            qualityContext.sourceAvailability.laboratory,
+            availability.laboratory,
           ),
-          ultrasound: boundedSummary(
-            sourceSummaries.ultrasound,
-            qualityContext.sourceAvailability.ultrasound,
-          ),
+          radiology: boundedSummary(radiologySummary, availability.radiology),
         },
-        source_availability: qualityContext.sourceAvailability,
+        source_availability: availability,
         source_coverage: {
           available_count: availableCount,
           total_sources: 3,
@@ -145,7 +154,14 @@ export async function evaluateMultisourceCase(
         },
         context_flags: contextFlags,
         performed_studies: qualityContext.performedStudies.slice(0, 24),
-        source_dates: qualityContext.sourceDates,
+        source_dates: {
+          laboratory: qualityContext.sourceDates.laboratory,
+          radiology:
+            qualityContext.sourceDates.radiology ??
+            qualityContext.sourceDates.ultrasound ??
+            null,
+          ultrasound: qualityContext.sourceDates.ultrasound,
+        },
       },
     }),
   });
