@@ -1,6 +1,6 @@
 """Minimal FastAPI application for MediCore AI (Phase 1).
 
-Wires the API router, CORS, health check, and small idempotent startup
+Wires the API router, CORS, health checks, and small idempotent startup
 migrations required by deployments without shell access.
 """
 
@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.api.router import api_router
 from app.api.routes import lab_derived_parameters as _lab_derived_parameters  # noqa: F401
@@ -19,6 +20,7 @@ from app.api.routes import lab_globulin_fix as _lab_globulin_fix  # noqa: F401
 from app.api.routes import lab_case01_safety as _lab_case01_safety  # noqa: F401
 from app.api.routes import lab_case01_sql_hotfix as _lab_case01_sql_hotfix  # noqa: F401
 from app.api.routes import urinalysis_runtime as _urinalysis_runtime  # noqa: F401
+from app.core.config import get_settings
 from app.domain import analysis_output_runtime as _analysis_output_runtime  # noqa: F401
 from app.domain import claude_compact_runtime_fix as _claude_compact_runtime_fix  # noqa: F401
 from app.domain import abnormal_lab_explanation_runtime as _abnormal_lab_explanation_runtime  # noqa: F401
@@ -52,6 +54,10 @@ from app.infrastructure.database.startup_migrations import (
     ensure_user_nicknames,
     purge_old_analytics,
 )
+from app.infrastructure.runtime_health import (
+    build_readiness_snapshot,
+    run_noncritical_startup_step,
+)
 
 
 @asynccontextmanager
@@ -77,11 +83,19 @@ async def lifespan(_: FastAPI):
         await _lab_case01_safety._ensure_case01_parameters(session)
         await session.commit()
 
-    admin_bootstrap = await ensure_bootstrap_admin()
+    # Admin bootstrap and retention cleanup are operational conveniences. Their
+    # failure must not make existing patient records/API routes unavailable.
+    admin_bootstrap = await run_noncritical_startup_step(
+        "admin_bootstrap",
+        ensure_bootstrap_admin,
+    )
     if admin_bootstrap == "created":
         print("Admin bootstrap completed: administrator account created.")
 
-    purged_analytics_rows = await purge_old_analytics(engine)
+    purged_analytics_rows = await run_noncritical_startup_step(
+        "analytics_retention_cleanup",
+        lambda: purge_old_analytics(engine),
+    )
     if purged_analytics_rows:
         print(
             "Analytics retention cleanup completed: "
@@ -110,4 +124,25 @@ app.include_router(api_router)
 
 @app.get("/health", tags=["health"])
 async def health() -> dict[str, str]:
+    """Backward-compatible lightweight health endpoint used by existing deploys."""
     return {"status": "ok"}
+
+
+@app.get("/health/live", tags=["health"])
+async def liveness() -> dict[str, str]:
+    """Process-only liveness probe; never calls downstream services."""
+    return {"status": "ok"}
+
+
+@app.get("/health/ready", tags=["health"])
+async def readiness() -> JSONResponse:
+    """Readiness: database is critical; optional AI/model failures are degraded."""
+    settings = get_settings()
+    snapshot = await build_readiness_snapshot(
+        engine,
+        timeout_seconds=settings.health_check_timeout_seconds,
+    )
+    return JSONResponse(
+        status_code=200 if snapshot["ready"] else 503,
+        content=snapshot,
+    )
