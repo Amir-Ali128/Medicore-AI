@@ -65,18 +65,19 @@ class Settings(BaseSettings):
     claude_vision_model: str | None = None
 
     # --- OpenAI independent radiology second reader ----------------------
-    # The key is injected only through runtime environment configuration and must
-    # never be committed. The second reader gets the original image independently,
-    # not Claude output. GPT-5.6 Terra is the default cost/performance vision model.
+    # Runtime-only secret; the original image is read independently. Prefer the
+    # current frontier model when the project has access. Provider isolation in the
+    # radiology router keeps Claude/Gemini available if OpenAI access is unavailable.
     openai_api_key: str | None = None
-    openai_vision_model: str = "gpt-5.6-terra"
+    openai_vision_model: str = "gpt-6-astra"
     openai_radiology_second_reader_enabled: bool = True
 
     # --- Gemini independent radiology third reader -----------------------
-    # Same isolation rule as OpenAI: only runtime secrets, original image input,
-    # no other provider prose. The model can be overridden without code changes.
+    # Maximum-quality multimodal profile. Gemini 3.1 Pro is currently preview;
+    # deployments that require GA-only models can override this with
+    # GEMINI_VISION_MODEL=gemini-3.8-flash without changing code.
     gemini_api_key: str | None = None
-    gemini_vision_model: str = "gemini-3.7-flash"
+    gemini_vision_model: str = "gemini-3.1-pro-preview"
     gemini_radiology_third_reader_enabled: bool = True
 
     # --- Production hardening -------------------------------------------
