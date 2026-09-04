@@ -2,6 +2,7 @@ import json
 
 from app.domain.multisource_summary_runtime import (
     _build_user_prompt_with_source_summaries,
+    _extract_symptoms_with_source_summaries,
     _vital_flags_with_context,
 )
 
@@ -19,7 +20,7 @@ def test_source_summaries_are_separate_from_symptoms_in_prompt() -> None:
             "2 gündür kusma",
             "__MEDICORE_SOURCE_SUMMARY__clinical:Kusma ve sıvı alımı azalmış.",
             "__MEDICORE_SOURCE_SUMMARY__laboratory:Kreatinin yüksek; GFR düşük.",
-            "__MEDICORE_SOURCE_SUMMARY__ultrasound:Böbrek USG'de review bulgusu.",
+            "__MEDICORE_SOURCE_SUMMARY__radiology:Akciğer grafisi için sınırlı görüntüleme özeti.",
         ],
         ["KREATININ_HIGH"],
         "tr",
@@ -28,4 +29,19 @@ def test_source_summaries_are_separate_from_symptoms_in_prompt() -> None:
 
     assert payload["symptoms"] == ["2 gündür kusma"]
     assert payload["summaries"]["laboratory"] == "Kreatinin yüksek; GFR düşük."
-    assert payload["summaries"]["ultrasound"] == "Böbrek USG'de review bulgusu."
+    assert (
+        payload["summaries"]["radiology"]
+        == "Akciğer grafisi için sınırlı görüntüleme özeti."
+    )
+
+
+def test_legacy_ultrasound_summary_is_canonicalized_as_radiology() -> None:
+    symptoms = _extract_symptoms_with_source_summaries(
+        {
+            "source_summaries": {
+                "ultrasound": "Böbrek USG'de review bulgusu.",
+            }
+        }
+    )
+
+    assert "__MEDICORE_SOURCE_SUMMARY__radiology:Böbrek USG'de review bulgusu." in symptoms
