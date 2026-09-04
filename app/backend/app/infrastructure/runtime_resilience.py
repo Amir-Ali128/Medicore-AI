@@ -72,6 +72,23 @@ class CircuitBreaker:
         self._opened_at: float | None = None
         self._half_open_in_flight = False
 
+    def assert_available(self) -> None:
+        """Fail fast for a definitely-open circuit without reserving a probe."""
+        now = self._clock()
+        with self._lock:
+            if self._opened_at is None:
+                return
+            elapsed = now - self._opened_at
+            if elapsed < self.recovery_seconds:
+                remaining = max(0.0, self.recovery_seconds - elapsed)
+                raise DependencyCircuitOpenError(
+                    f"Dependency circuit is open for another {remaining:.2f}s."
+                )
+            if self._half_open_in_flight:
+                raise DependencyCircuitOpenError(
+                    "Dependency circuit is half-open and already has a probe in flight."
+                )
+
     def before_call(self) -> _CircuitProbe:
         now = self._clock()
         with self._lock:
@@ -136,7 +153,7 @@ class CircuitBreaker:
         else:
             elapsed = max(0.0, now - opened_at)
             retry_after = max(0.0, self.recovery_seconds - elapsed)
-            state = "half_open" if retry_after <= 0 and half_open else "open"
+            state = "open" if retry_after > 0 else "half_open"
 
         return {
             "state": state,
@@ -213,8 +230,8 @@ class AsyncDependencyGuard:
     async def call(self, operation: Callable[[], Awaitable[T]]) -> T:
         """Execute one dependency call with bounded queueing and a hard timeout."""
 
-        # Fail fast before joining the queue when the upstream is already known bad.
-        self.breaker.before_call()
+        # Do not let known-bad upstreams fill the local concurrency queue.
+        self.breaker.assert_available()
         semaphore = self._semaphore_for_running_loop()
         try:
             await asyncio.wait_for(
