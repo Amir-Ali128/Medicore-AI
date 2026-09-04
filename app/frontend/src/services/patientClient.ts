@@ -8,6 +8,18 @@ export const ACTIVE_PATIENT_ID_KEY = 'medicore:activePatientId';
 export const ACTIVE_PATIENT_PROTOCOL_KEY = 'medicore:activePatientProtocol';
 export const ACTIVE_CLINICAL_INTAKE_KEY = 'medicore:activeClinicalIntake';
 
+const PATIENT_WORKFLOW_KEYS = [
+  ACTIVE_PATIENT_ID_KEY,
+  ACTIVE_PATIENT_PROTOCOL_KEY,
+  ACTIVE_CLINICAL_INTAKE_KEY,
+  'medicore:lastPatientAge',
+  'medicore:lastPatientSex',
+  'medicore:lastPatientDisplayName',
+  'medicore:lastAnalysisRunId',
+  'medicore:lastLabReportId',
+  'medicore:lastRadiologyReportId',
+] as const;
+
 export type PatientRecord = {
   id: string;
   protocol_no: string;
@@ -74,6 +86,22 @@ export function getActivePatientProtocolNo(): string | null {
   return localStorage.getItem(ACTIVE_PATIENT_PROTOCOL_KEY);
 }
 
+/**
+ * Start a completely fresh patient workflow.
+ *
+ * Clearing analysis/report pointers here is important: otherwise a new patient
+ * can accidentally inherit the previous patient's active analysis state in the
+ * UI even though the backend records are correctly separated.
+ */
+export function clearActivePatientRecord(): void {
+  for (const key of PATIENT_WORKFLOW_KEYS) {
+    localStorage.removeItem(key);
+  }
+
+  window.dispatchEvent(new CustomEvent('medicore:patient-cleared'));
+  window.dispatchEvent(new CustomEvent('medicore:case-summary-updated'));
+}
+
 export function activatePatientRecord(record: PatientRecord): void {
   localStorage.setItem(ACTIVE_PATIENT_ID_KEY, record.id);
   localStorage.setItem(ACTIVE_PATIENT_PROTOCOL_KEY, record.protocol_no);
@@ -98,6 +126,7 @@ export function activatePatientRecord(record: PatientRecord): void {
       detail: record,
     }),
   );
+  window.dispatchEvent(new CustomEvent('medicore:case-summary-updated'));
 }
 
 async function sendPatientSave(
@@ -169,14 +198,13 @@ export async function deletePatientRecord(patientId: string): Promise<void> {
   }
 
   if (getActivePatientId() === patientId) {
-    localStorage.removeItem(ACTIVE_PATIENT_ID_KEY);
-    localStorage.removeItem(ACTIVE_PATIENT_PROTOCOL_KEY);
-    localStorage.removeItem(ACTIVE_CLINICAL_INTAKE_KEY);
+    clearActivePatientRecord();
   }
 }
 
-export async function listPatientRecords(): Promise<PatientRecord[]> {
-  const response = await fetch(`${API_BASE_URL}/patients?limit=100`, {
+export async function listPatientRecords(limit = 500): Promise<PatientRecord[]> {
+  const safeLimit = Math.max(1, Math.min(limit, 500));
+  const response = await fetch(`${API_BASE_URL}/patients?limit=${safeLimit}`, {
     headers: headers(),
   });
   if (!response.ok) {
