@@ -78,6 +78,16 @@ async function readError(response: Response) {
   }
 }
 
+function readActiveClinicalDraft(): ClinicalIntakeInput | null {
+  try {
+    const raw = localStorage.getItem(ACTIVE_CLINICAL_INTAKE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as ClinicalIntakeInput;
+  } catch {
+    return null;
+  }
+}
+
 export function getActivePatientId(): string | null {
   return localStorage.getItem(ACTIVE_PATIENT_ID_KEY);
 }
@@ -109,16 +119,22 @@ export function activatePatientRecord(record: PatientRecord): void {
   const intake = record.metadata_json?.clinical_context;
   if (intake) {
     localStorage.setItem(ACTIVE_CLINICAL_INTAKE_KEY, JSON.stringify(intake));
+  } else {
+    localStorage.removeItem(ACTIVE_CLINICAL_INTAKE_KEY);
   }
 
   const age = intake?.patient_information.age ?? record.metadata_json?.age ?? null;
   if (age !== null && age !== undefined) {
     localStorage.setItem('medicore:lastPatientAge', String(age));
+  } else {
+    localStorage.removeItem('medicore:lastPatientAge');
   }
 
   const sex = intake?.patient_information.sex ?? record.sex ?? null;
   if (sex && sex !== 'unknown') {
     localStorage.setItem('medicore:lastPatientSex', String(sex));
+  } else {
+    localStorage.removeItem('medicore:lastPatientSex');
   }
 
   window.dispatchEvent(
@@ -142,6 +158,43 @@ async function sendPatientSave(
       body: JSON.stringify(payloadFromIntake(intake, protocolNo)),
     },
   );
+}
+
+/**
+ * Persist the browser draft for the currently active patient before another
+ * screen (especially the archive) reads patient records.
+ *
+ * ClinicalIntakeForm writes every field edit to localStorage immediately, while
+ * the explicit Save button writes to the backend. Without this bridge a user can
+ * edit the patient, open the archive, and still see the older backend snapshot.
+ * This best-effort sync closes that gap without creating a new patient record.
+ */
+export async function syncActivePatientDraft(): Promise<PatientRecord | null> {
+  const activeId = getActivePatientId();
+  const protocolNo = getActivePatientProtocolNo();
+  const draft = readActiveClinicalDraft();
+
+  if (!activeId || !protocolNo || !draft) return null;
+
+  try {
+    const response = await sendPatientSave(
+      draft,
+      activeId,
+      normalizeProtocolNo(protocolNo),
+    );
+
+    // A background archive sync must never create a replacement patient if the
+    // active id is stale or inaccessible. The normal explicit Save flow handles
+    // that recovery path.
+    if (!response.ok) return null;
+
+    const record = (await response.json()) as PatientRecord;
+    activatePatientRecord(record);
+    return record;
+  } catch {
+    // Archive loading remains usable when a best-effort draft sync is offline.
+    return null;
+  }
 }
 
 export async function savePatientRecord(
@@ -203,6 +256,10 @@ export async function deletePatientRecord(patientId: string): Promise<void> {
 }
 
 export async function listPatientRecords(limit = 500): Promise<PatientRecord[]> {
+  // Make sure the archive reads the newest clinical draft, even if the user
+  // navigated away before pressing the explicit update button.
+  await syncActivePatientDraft();
+
   const safeLimit = Math.max(1, Math.min(limit, 500));
   const response = await fetch(`${API_BASE_URL}/patients?limit=${safeLimit}`, {
     headers: headers(),
