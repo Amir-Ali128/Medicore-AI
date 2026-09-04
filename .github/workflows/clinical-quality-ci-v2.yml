@@ -52,7 +52,8 @@ jobs:
             tests/test_native_vision_engine.py \
             tests/test_onnx_inference_engine.py \
             tests/test_clinical_fusion_brain.py \
-            tests/test_clinical_fusion_case_adapter.py
+            tests/test_clinical_fusion_case_adapter.py \
+            tests/test_clinical_fusion_onnx_bridge.py
 
   native-vision-build:
     runs-on: ubuntu-latest
