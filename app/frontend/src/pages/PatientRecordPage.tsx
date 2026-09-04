@@ -330,7 +330,7 @@ export default function PatientRecordPage() {
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Protokol / Hasta No</p>
           <p className="mt-2 break-all text-lg font-semibold text-slate-950">
-            {getActivePatientProtocolNo() ?? protocolNo || 'Otomatik oluşturulacak'}
+            {(getActivePatientProtocolNo() ?? protocolNo) || 'Otomatik oluşturulacak'}
           </p>
         </div>
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
