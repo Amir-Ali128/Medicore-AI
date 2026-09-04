@@ -11,7 +11,7 @@ from __future__ import annotations
 import uuid
 from datetime import date
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 
@@ -19,19 +19,21 @@ from app.api.dependencies import SessionDep
 from app.api.routes import radiology_reports
 from app.api.routes.auth import get_current_active_user
 from app.core.config import get_settings
+from app.domain.openai_radiology_second_reader import review_radiology_media_openai
 from app.domain.radiology_image_ai import (
     SUPPORTED_IMAGE_MEDIA_TYPES,
     SUPPORTED_MODALITIES,
     normalize_body_part,
     normalize_image_modality,
 )
-from app.domain.report_document_image_ai import review_radiology_media
+from app.domain.radiology_provider_comparator import compare_radiology_readers
+from app.domain.report_document_image_ai import RadiologyMediaReview, review_radiology_media
 from app.infrastructure.database.models.radiology_report import RadiologyReport
 from app.infrastructure.database.models.user import User
 from app.infrastructure.database.repositories.radiology_report_repository import (
     RadiologyReportRepository,
 )
-from app.infrastructure.runtime_resilience import get_anthropic_guard
+from app.infrastructure.runtime_resilience import get_anthropic_guard, get_openai_guard
 from app.schemas.radiology_report import RadiologyReportResponse
 
 router = APIRouter(prefix="/radiology-reports", tags=["radiology-image-review"])
@@ -110,6 +112,50 @@ def _dedupe(values: list[str]) -> list[str]:
         if clean and clean not in result:
             result.append(clean)
     return result
+
+
+def _review_metadata(review: RadiologyMediaReview) -> dict[str, Any]:
+    """Safe bounded snapshot for provider comparison/audit metadata."""
+    return {
+        "model": review.model,
+        "document_kind": review.document_kind,
+        "detected_modality": review.detected_modality,
+        "detected_body_part": review.detected_body_part,
+        "summary": review.summary,
+        "observations": list(review.observations),
+        "limitations": list(review.limitations),
+        "physician_review_required": True,
+        "not_diagnostic": True,
+    }
+
+
+async def _try_openai_review(
+    *,
+    content: bytes,
+    media_type: str,
+    modality: str,
+    body_part: str | None,
+) -> tuple[RadiologyMediaReview | None, str | None]:
+    settings = get_settings()
+    if (
+        not settings.openai_radiology_second_reader_enabled
+        or not settings.openai_api_key
+        or not settings.openai_vision_model
+    ):
+        return None, "not_configured"
+
+    try:
+        review = await get_openai_guard("radiology-media").call(
+            lambda: review_radiology_media_openai(
+                content=content,
+                media_type=media_type,
+                modality=modality,
+                body_part=body_part,
+            )
+        )
+    except Exception as exc:
+        return None, exc.__class__.__name__
+    return review, None if review is not None else "not_configured"
 
 
 async def _save_ai_fallback(
@@ -215,9 +261,10 @@ async def create_radiology_image_review(
 
     requested_body_part = normalize_body_part(body_part) or _infer_body_part_from_filename(filename)
 
+    anthropic_review: RadiologyMediaReview | None = None
+    anthropic_error: str | None = None
     try:
-        guard = get_anthropic_guard("radiology-media")
-        review = await guard.call(
+        anthropic_review = await get_anthropic_guard("radiology-media").call(
             lambda: review_radiology_media(
                 content=content,
                 media_type=media_type,
@@ -226,20 +273,52 @@ async def create_radiology_image_review(
             )
         )
     except Exception as exc:
-        return await _save_ai_fallback(
-            patient_id=patient_id,
-            report_date=report_date,
-            normalized_modality=normalized_modality,
-            body_part=requested_body_part,
-            filename=filename,
-            media_type=media_type,
-            content=content,
-            session=session,
-            current_user=current_user,
-            reason=str(exc) or exc.__class__.__name__,
-        )
+        anthropic_error = exc.__class__.__name__
+
+    review = anthropic_review
+    primary_provider = "anthropic"
+    second_reader: RadiologyMediaReview | None = None
+    openai_error: str | None = None
+    provider_comparison: dict[str, Any] | None = None
 
     if review is None:
+        # Provider failover: a Claude outage/unconfigured deployment must not prevent
+        # an independently configured OpenAI reader from preserving useful review.
+        openai_review, openai_error = await _try_openai_review(
+            content=content,
+            media_type=media_type,
+            modality=normalized_modality,
+            body_part=requested_body_part,
+        )
+        if openai_review is not None:
+            review = openai_review
+            primary_provider = "openai_failover"
+    elif review.document_kind == "MEDICAL_IMAGE":
+        # Cost-aware second reader: written report photos stay on the primary OCR /
+        # extraction path. True medical images receive an independent GPT review.
+        second_reader, openai_error = await _try_openai_review(
+            content=content,
+            media_type=media_type,
+            modality=normalized_modality,
+            body_part=requested_body_part,
+        )
+        if second_reader is not None:
+            if second_reader.document_kind == "MEDICAL_IMAGE":
+                provider_comparison = compare_radiology_readers(review, second_reader)
+            else:
+                provider_comparison = {
+                    "mode": "document_kind_mismatch",
+                    "primary_document_kind": review.document_kind,
+                    "second_reader_document_kind": second_reader.document_kind,
+                    "requires_physician_attention": True,
+                    "agreement_is_not_validation": True,
+                }
+
+    if review is None:
+        fallback_reasons = [
+            f"anthropic:{anthropic_error or 'not_configured'}",
+            f"openai:{openai_error or 'not_configured'}",
+        ]
         return await _save_ai_fallback(
             patient_id=patient_id,
             report_date=report_date,
@@ -250,7 +329,7 @@ async def create_radiology_image_review(
             content=content,
             session=session,
             current_user=current_user,
-            reason="AI görüntü/rapor modeli yapılandırılmamış veya geçici olarak kullanılamıyor.",
+            reason="; ".join(fallback_reasons),
         )
 
     is_document = review.document_kind == "REPORT_DOCUMENT"
@@ -286,6 +365,20 @@ async def create_radiology_image_review(
         else "multimodal_dl_ml_assistive"
     )
 
+    second_reader_metadata: dict[str, Any] = {
+        "enabled": get_settings().openai_radiology_second_reader_enabled,
+        "status": "available" if second_reader is not None else (
+            "primary_failover" if primary_provider == "openai_failover" else (
+                "not_configured" if openai_error == "not_configured" else "unavailable"
+            )
+        ),
+        "provider": "openai",
+    }
+    if second_reader is not None:
+        second_reader_metadata["review"] = _review_metadata(second_reader)
+    if openai_error and openai_error != "not_configured":
+        second_reader_metadata["error_type"] = openai_error
+
     report = RadiologyReport(
         patient_id=patient_id,
         uploaded_by_user_id=current_user.id,
@@ -312,6 +405,7 @@ async def create_radiology_image_review(
             "document_kind": review.document_kind,
             "report_type": review.report_type,
             "analysis_mode": analysis_mode,
+            "analysis_provider": primary_provider,
             "analysis_model": review.model,
             "analysis_limitations": review.limitations,
             "result_text": review.result_text,
@@ -328,6 +422,10 @@ async def create_radiology_image_review(
             "requested_body_part": requested_body_part,
             "detected_body_part": review.detected_body_part,
             "supported_body_part": stored_body_part,
+            "openai_second_reader": second_reader_metadata,
+            "provider_comparison": provider_comparison,
+            "anthropic_primary_error_type": anthropic_error,
+            "provider_agreement_is_not_ground_truth": True,
         },
     )
     repository = RadiologyReportRepository(session)
