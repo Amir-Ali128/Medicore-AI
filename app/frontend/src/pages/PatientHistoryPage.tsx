@@ -14,33 +14,38 @@ import {
   listPatientRecords,
   type PatientRecord,
 } from '../services/patientClient';
-import { listPatientRadiologyReports } from '../services/radiologyClient';
+import {
+  listPatientRadiologyReports,
+  type RadiologyReport,
+} from '../services/radiologyClient';
 
 type AttachmentSummary = {
   labCount: number;
   radiologyCount: number;
-  latestLabFile: string | null;
-  latestRadiologyFile: string | null;
   labReports: LabReportSummary[];
+  radiologyReports: RadiologyReport[];
 };
 
-const PAGE_SIZE = 12;
+const PAGE_SIZE = 10;
 
-function formatDate(value: string) {
+function formatDate(value: string | null | undefined) {
+  if (!value) return 'Tarih yok';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
   return new Intl.DateTimeFormat('tr-TR', {
     dateStyle: 'medium',
     timeStyle: 'short',
-  }).format(new Date(value));
+  }).format(parsed);
 }
 
-function formatPdfDate(value: string | null | undefined) {
+function formatShortDate(value: string | null | undefined) {
   if (!value) return 'Tarih yok';
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return value;
   return new Intl.DateTimeFormat('tr-TR', { dateStyle: 'medium' }).format(parsed);
 }
 
-function sexLabel(value: string) {
+function sexLabel(value: string | null | undefined) {
   switch (value) {
     case 'male': return 'Erkek';
     case 'female': return 'Kadın';
@@ -49,7 +54,7 @@ function sexLabel(value: string) {
   }
 }
 
-function clip(value: string | null | undefined, max = 110) {
+function clip(value: string | null | undefined, max = 145) {
   const text = value?.trim();
   if (!text) return null;
   return text.length > max ? `${text.slice(0, max).trim()}…` : text;
@@ -57,8 +62,7 @@ function clip(value: string | null | undefined, max = 110) {
 
 function recordDisplayName(record: PatientRecord) {
   const name = record.metadata_json?.clinical_context?.patient_information?.full_name?.trim();
-  if (name) return name;
-  return `Hasta ${record.protocol_no}`;
+  return name || `Hasta ${record.protocol_no}`;
 }
 
 function recordSearchText(record: PatientRecord) {
@@ -69,72 +73,98 @@ function recordSearchText(record: PatientRecord) {
     record.external_ref,
     recordDisplayName(record),
     patient?.age,
+    patient?.height_cm,
+    patient?.weight_kg,
     sexLabel(record.sex),
     context?.presenting_complaint?.chief_complaint,
     context?.clinical_history_details?.current_medical_conditions,
+    context?.clinical_history_details?.past_medical_history,
+    context?.clinical_history_details?.medications,
   ]
     .filter((value) => value !== null && value !== undefined)
     .join(' ')
     .toLocaleLowerCase('tr-TR');
 }
 
-function recordSummary(record: PatientRecord) {
+function clinicalRows(record: PatientRecord) {
   const context = record.metadata_json?.clinical_context;
   if (!context) return [];
 
   return [
-    ['Şikâyet', clip(context.presenting_complaint.chief_complaint)],
-    ['Mevcut hastalıklar', clip(context.clinical_history_details.current_medical_conditions)],
+    ['Şikâyet', clip(context.presenting_complaint?.chief_complaint)],
+    ['Mevcut hastalıklar', clip(context.clinical_history_details?.current_medical_conditions)],
+    ['Geçmiş öykü', clip(context.clinical_history_details?.past_medical_history)],
+    ['İlaçlar', clip(context.clinical_history_details?.medications)],
+    ['Alerjiler', clip(context.clinical_history_details?.allergies)],
+    ['Muayene', clip(context.physical_exam?.examination_findings)],
   ].filter((item): item is [string, string] => Boolean(item[1]));
+}
+
+function labTitle(report: LabReportSummary) {
+  if (report.file_name?.trim()) return report.file_name;
+  return 'Manuel laboratuvar kaydı';
+}
+
+function radiologyTitle(report: RadiologyReport) {
+  if (report.file_name?.trim()) return report.file_name;
+  const modality = report.modality && report.modality !== 'UNKNOWN' ? report.modality : null;
+  const bodyPart = report.body_part && report.body_part !== 'OTHER' ? report.body_part : null;
+  return [modality, bodyPart].filter(Boolean).join(' · ') || 'Manuel radyoloji / tetkik raporu';
 }
 
 function RecordCard({
   record,
   attachments,
   active,
-  onOpen,
-  onDelete,
   deleting,
+  onOpen,
+  onAddLab,
+  onAddRadiology,
+  onDelete,
 }: {
   record: PatientRecord;
   attachments?: AttachmentSummary;
   active: boolean;
-  onOpen: (record: PatientRecord) => void;
-  onDelete: (record: PatientRecord) => void;
   deleting: boolean;
+  onOpen: (record: PatientRecord) => void;
+  onAddLab: (record: PatientRecord) => void;
+  onAddRadiology: (record: PatientRecord) => void;
+  onDelete: (record: PatientRecord) => void;
 }) {
-  const [labOpen, setLabOpen] = useState(false);
   const [openingLabId, setOpeningLabId] = useState<string | null>(null);
-  const [labOpenError, setLabOpenError] = useState('');
-  const age =
-    record.metadata_json?.clinical_context?.patient_information?.age ??
-    record.metadata_json?.age ??
-    null;
-  const summary = recordSummary(record);
-  const labPdfs = (attachments?.labReports ?? []).filter((report) =>
-    report.file_name?.toLowerCase().endsWith('.pdf'),
-  );
+  const [labError, setLabError] = useState('');
+  const context = record.metadata_json?.clinical_context;
+  const patient = context?.patient_information;
+  const age = patient?.age ?? record.metadata_json?.age ?? null;
+  const height = patient?.height_cm ?? record.metadata_json?.height_cm ?? null;
+  const weight = patient?.weight_kg ?? record.metadata_json?.weight_kg ?? null;
+  const clinical = clinicalRows(record);
+  const labs = attachments?.labReports ?? [];
+  const radiology = attachments?.radiologyReports ?? [];
 
-  async function handleOpenLabPdf(report: LabReportSummary) {
+  async function handleOpenLab(report: LabReportSummary) {
+    if (report.metadata_json?.original_file_stored !== true) return;
     setOpeningLabId(report.id);
-    setLabOpenError('');
+    setLabError('');
     try {
       await openLabReportPdf(report.id, report.file_name);
-    } catch (openError) {
-      setLabOpenError(
-        openError instanceof Error ? openError.message : 'PDF açılamadı.',
-      );
+    } catch (error) {
+      setLabError(error instanceof Error ? error.message : 'Laboratuvar dosyası açılamadı.');
     } finally {
       setOpeningLabId(null);
     }
   }
 
   return (
-    <article className={`rounded-xl border bg-white p-5 shadow-sm ${active ? 'border-blue-300 ring-2 ring-blue-50' : 'border-slate-200'}`}>
+    <article
+      className={`rounded-2xl border bg-white p-5 shadow-sm ${
+        active ? 'border-blue-300 ring-2 ring-blue-50' : 'border-slate-200'
+      }`}
+    >
       <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h2 className="truncate text-lg font-semibold text-slate-950">
+            <h2 className="truncate text-xl font-semibold text-slate-950">
               {recordDisplayName(record)}
             </h2>
             {active ? (
@@ -145,9 +175,6 @@ function RecordCard({
           </div>
           <p className="mt-1 text-sm font-semibold text-cyan-700">
             Protokol / Hasta No: {record.protocol_no}
-          </p>
-          <p className="mt-1 text-sm text-slate-500">
-            {age !== null && age !== undefined ? `${age} yaş` : 'Yaş bilgisi yok'} · {sexLabel(record.sex)}
           </p>
           <p className="mt-2 text-xs text-slate-400">
             Oluşturma: {formatDate(record.created_at)} · Son güncelleme: {formatDate(record.updated_at)}
@@ -160,14 +187,21 @@ function RecordCard({
             onClick={() => onOpen(record)}
             className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
           >
-            Kaydı aç
+            Kaydı aç / Düzenle
           </button>
           <button
             type="button"
-            onClick={() => onOpen(record)}
-            className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            onClick={() => onAddLab(record)}
+            className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-100"
           >
-            Düzenle
+            + Lab ekle
+          </button>
+          <button
+            type="button"
+            onClick={() => onAddRadiology(record)}
+            className="rounded-lg border border-violet-200 bg-violet-50 px-4 py-2 text-sm font-semibold text-violet-800 hover:bg-violet-100"
+          >
+            + Tetkik ekle
           </button>
           <button
             type="button"
@@ -180,103 +214,108 @@ function RecordCard({
         </div>
       </div>
 
-      <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <button
-          type="button"
-          onClick={() => {
-            setLabOpen((current) => !current);
-            setLabOpenError('');
-          }}
-          className="rounded-lg border border-emerald-200 bg-emerald-50/60 p-4 text-left transition hover:bg-emerald-50"
-        >
-          <p className="text-xs font-semibold uppercase tracking-wide text-emerald-800">Laboratuvar</p>
-          <p className="mt-2 text-sm font-semibold text-slate-900">
-            {attachments ? `${attachments.labCount} kayıt` : 'Yükleniyor…'}
-          </p>
-          {attachments?.latestLabFile ? (
-            <p className="mt-1 truncate text-xs text-slate-500">Son: {attachments.latestLabFile}</p>
-          ) : null}
-          <p className="mt-2 text-xs font-semibold text-emerald-700">
-            {labOpen ? 'PDF’leri gizle' : 'PDF’leri göster'}
-          </p>
-        </button>
-
-        <div className="rounded-lg border border-violet-200 bg-violet-50/60 p-4">
-          <p className="text-xs font-semibold uppercase tracking-wide text-violet-800">Radyoloji / diğer tetkikler</p>
-          <p className="mt-2 text-sm font-semibold text-slate-900">
-            {attachments ? `${attachments.radiologyCount} kayıt` : 'Yükleniyor…'}
-          </p>
-          {attachments?.latestRadiologyFile ? (
-            <p className="mt-1 truncate text-xs text-slate-500">Son: {attachments.latestRadiologyFile}</p>
-          ) : null}
+      <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="rounded-xl border border-blue-100 bg-blue-50/50 p-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">Hasta bilgileri</p>
+          <div className="mt-3 space-y-1.5 text-sm text-slate-700">
+            <p><span className="font-semibold">Yaş:</span> {age ?? '—'}</p>
+            <p><span className="font-semibold">Cinsiyet:</span> {sexLabel(record.sex)}</p>
+            <p><span className="font-semibold">Boy:</span> {height !== null && height !== undefined ? `${height} cm` : '—'}</p>
+            <p><span className="font-semibold">Kilo:</span> {weight !== null && weight !== undefined ? `${weight} kg` : '—'}</p>
+          </div>
         </div>
 
-        <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 sm:col-span-2 lg:col-span-1">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Klinik özet</p>
-          {summary.length > 0 ? (
-            <div className="mt-2 space-y-1.5">
-              {summary.map(([label, value]) => (
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 sm:col-span-1 xl:col-span-1">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Klinik öykü</p>
+          {clinical.length > 0 ? (
+            <div className="mt-3 space-y-2">
+              {clinical.slice(0, 4).map(([label, value]) => (
                 <p key={label} className="text-xs leading-5 text-slate-700">
                   <span className="font-semibold">{label}:</span> {value}
                 </p>
               ))}
             </div>
           ) : (
-            <p className="mt-2 text-xs leading-5 text-slate-500">Henüz klinik öykü eklenmedi.</p>
+            <p className="mt-3 text-sm text-slate-500">Henüz klinik bilgi eklenmedi.</p>
+          )}
+        </div>
+
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-4">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs font-semibold uppercase tracking-wide text-emerald-800">Laboratuvar</p>
+            <span className="rounded-full bg-white px-2 py-0.5 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200">
+              {attachments ? attachments.labCount : '…'} kayıt
+            </span>
+          </div>
+          {labs.length === 0 ? (
+            <p className="mt-3 text-sm text-slate-500">Henüz laboratuvar kaydı yok.</p>
+          ) : (
+            <div className="mt-3 space-y-2">
+              {labs.slice(0, 4).map((report) => {
+                const canOpen = report.metadata_json?.original_file_stored === true;
+                return (
+                  <div key={report.id} className="rounded-lg border border-emerald-100 bg-white p-2.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="truncate text-xs font-semibold text-slate-900">{labTitle(report)}</p>
+                        <p className="mt-1 text-[11px] text-slate-500">
+                          {formatShortDate(report.report_date || report.created_at)}
+                        </p>
+                      </div>
+                      {canOpen ? (
+                        <button
+                          type="button"
+                          onClick={() => void handleOpenLab(report)}
+                          disabled={openingLabId === report.id}
+                          className="shrink-0 text-[11px] font-semibold text-emerald-700 hover:text-emerald-900 disabled:opacity-50"
+                        >
+                          {openingLabId === report.id ? 'Açılıyor…' : 'Aç'}
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                );
+              })}
+              {labs.length > 4 ? (
+                <p className="text-[11px] font-semibold text-emerald-700">+ {labs.length - 4} kayıt daha</p>
+              ) : null}
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-xl border border-violet-200 bg-violet-50/50 p-4">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs font-semibold uppercase tracking-wide text-violet-800">Radyoloji / USG / Tetkik</p>
+            <span className="rounded-full bg-white px-2 py-0.5 text-xs font-semibold text-violet-700 ring-1 ring-violet-200">
+              {attachments ? attachments.radiologyCount : '…'} kayıt
+            </span>
+          </div>
+          {radiology.length === 0 ? (
+            <p className="mt-3 text-sm text-slate-500">Henüz tetkik kaydı yok.</p>
+          ) : (
+            <div className="mt-3 space-y-2">
+              {radiology.slice(0, 4).map((report) => (
+                <div key={report.id} className="rounded-lg border border-violet-100 bg-white p-2.5">
+                  <p className="truncate text-xs font-semibold text-slate-900">{radiologyTitle(report)}</p>
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    {formatShortDate(report.report_date || report.created_at)}
+                  </p>
+                  {clip(report.summary, 100) ? (
+                    <p className="mt-1 text-[11px] leading-4 text-slate-600">{clip(report.summary, 100)}</p>
+                  ) : null}
+                </div>
+              ))}
+              {radiology.length > 4 ? (
+                <p className="text-[11px] font-semibold text-violet-700">+ {radiology.length - 4} kayıt daha</p>
+              ) : null}
+            </div>
           )}
         </div>
       </div>
 
-      {labOpen ? (
-        <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50/30 p-4">
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-sm font-semibold text-slate-900">Laboratuvar PDF&apos;leri</p>
-            <span className="text-xs font-semibold text-emerald-700">{labPdfs.length} PDF</span>
-          </div>
-
-          {labPdfs.length === 0 ? (
-            <p className="mt-3 text-sm text-slate-500">Bu hasta kaydında açılabilir laboratuvar PDF&apos;i yok.</p>
-          ) : (
-            <div className="mt-3 space-y-2">
-              {labPdfs.map((report) => {
-                const canOpen = report.metadata_json?.original_file_stored === true;
-                return (
-                  <div
-                    key={report.id}
-                    className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-white px-3 py-3 sm:flex-row sm:items-center sm:justify-between"
-                  >
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium text-slate-900">
-                        📄 {report.file_name || 'Laboratuvar raporu.pdf'}
-                      </p>
-                      <p className="mt-1 text-xs text-slate-500">
-                        {formatPdfDate(report.report_date || report.created_at)}
-                        {!canOpen ? ' · Özgün PDF saklanmamış' : ''}
-                      </p>
-                    </div>
-                    {canOpen ? (
-                      <button
-                        type="button"
-                        onClick={() => void handleOpenLabPdf(report)}
-                        disabled={openingLabId === report.id}
-                        className="shrink-0 rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-800 disabled:opacity-50"
-                      >
-                        {openingLabId === report.id ? 'Açılıyor…' : 'PDF’yi aç'}
-                      </button>
-                    ) : (
-                      <span className="shrink-0 text-xs font-semibold text-slate-400">Dosya yok</span>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
-          {labOpenError ? (
-            <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
-              {labOpenError}
-            </div>
-          ) : null}
+      {labError ? (
+        <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+          {labError}
         </div>
       ) : null}
     </article>
@@ -296,7 +335,6 @@ export default function PatientHistoryPage() {
 
   useEffect(() => {
     let cancelled = false;
-
     async function loadRecords() {
       try {
         setLoading(true);
@@ -305,17 +343,12 @@ export default function PatientHistoryPage() {
         if (!cancelled) setRecords(response);
       } catch (loadError) {
         if (!cancelled) {
-          setError(
-            loadError instanceof Error
-              ? loadError.message
-              : 'Hasta kayıtları yüklenemedi.',
-          );
+          setError(loadError instanceof Error ? loadError.message : 'Hasta kayıtları yüklenemedi.');
         }
       } finally {
         if (!cancelled) setLoading(false);
       }
     }
-
     void loadRecords();
     return () => {
       cancelled = true;
@@ -326,8 +359,7 @@ export default function PatientHistoryPage() {
     const normalizedQuery = query.trim().toLocaleLowerCase('tr-TR');
     return records.filter((record) => {
       if (sexFilter !== 'all' && record.sex !== sexFilter) return false;
-      if (!normalizedQuery) return true;
-      return recordSearchText(record).includes(normalizedQuery);
+      return !normalizedQuery || recordSearchText(record).includes(normalizedQuery);
     });
   }, [query, records, sexFilter]);
 
@@ -339,18 +371,16 @@ export default function PatientHistoryPage() {
   }, [currentPage, filteredRecords]);
   const visibleRecordIds = pageRecords.map((record) => record.id).join('|');
 
-  useEffect(() => {
-    setPage(1);
-  }, [query, sexFilter]);
+  useEffect(() => setPage(1), [query, sexFilter]);
 
   useEffect(() => {
     let cancelled = false;
-    const recordsNeedingSummary = pageRecords.filter((record) => !attachments[record.id]);
-    if (recordsNeedingSummary.length === 0) return;
+    const missing = pageRecords.filter((record) => !attachments[record.id]);
+    if (missing.length === 0) return;
 
-    async function loadVisibleAttachmentSummaries() {
+    async function loadLinkedRecords() {
       const summaries = await Promise.all(
-        recordsNeedingSummary.map(async (record) => {
+        missing.map(async (record) => {
           const [labs, radiology] = await Promise.all([
             listPatientLabReports(record.id).catch(() => []),
             listPatientRadiologyReports(record.id, { includeUnanalyzed: true }).catch(() => []),
@@ -360,28 +390,22 @@ export default function PatientHistoryPage() {
             {
               labCount: labs.length,
               radiologyCount: radiology.length,
-              latestLabFile: labs[0]?.file_name ?? null,
-              latestRadiologyFile: radiology[0]?.file_name ?? null,
               labReports: labs,
+              radiologyReports: radiology,
             } satisfies AttachmentSummary,
           ] as const;
         }),
       );
 
       if (!cancelled) {
-        setAttachments((current) => ({
-          ...current,
-          ...Object.fromEntries(summaries),
-        }));
+        setAttachments((current) => ({ ...current, ...Object.fromEntries(summaries) }));
       }
     }
 
-    void loadVisibleAttachmentSummaries();
+    void loadLinkedRecords();
     return () => {
       cancelled = true;
     };
-    // visibleRecordIds intentionally represents the current page; existing
-    // attachment summaries are cached in state and are not re-requested.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visibleRecordIds]);
 
@@ -390,22 +414,18 @@ export default function PatientHistoryPage() {
     navigate('/patients/demo?new=1');
   }
 
-  function handleOpen(record: PatientRecord) {
+  function openRecord(record: PatientRecord, target: '/patients/demo' | '/analysis/mock' | '/radiology') {
     activatePatientRecord(record);
-    navigate('/patients/demo');
+    navigate(target);
   }
 
   async function handleDelete(record: PatientRecord) {
     const summary = attachments[record.id];
-    const recordCount = (summary?.labCount ?? 0) + (summary?.radiologyCount ?? 0);
-    const warning =
-      recordCount > 0
-        ? `Bu hastaya bağlı ${recordCount} laboratuvar/radyoloji kaydı da birlikte silinecek. `
-        : '';
-    const confirmed = window.confirm(
-      `${warning}Bu hasta kaydı kalıcı olarak silinsin mi? Bu işlem geri alınamaz.`,
-    );
-    if (!confirmed) return;
+    const linkedCount = (summary?.labCount ?? 0) + (summary?.radiologyCount ?? 0);
+    const warning = linkedCount > 0
+      ? `Bu hastaya bağlı ${linkedCount} laboratuvar/radyoloji kaydı da birlikte silinecek. `
+      : '';
+    if (!window.confirm(`${warning}Bu hasta kaydı kalıcı olarak silinsin mi? Bu işlem geri alınamaz.`)) return;
 
     setDeletingId(record.id);
     setError('');
@@ -418,17 +438,15 @@ export default function PatientHistoryPage() {
         return next;
       });
     } catch (deleteError) {
-      setError(
-        deleteError instanceof Error ? deleteError.message : 'Hasta kaydı silinemedi.',
-      );
+      setError(deleteError instanceof Error ? deleteError.message : 'Hasta kaydı silinemedi.');
     } finally {
       setDeletingId(null);
     }
   }
 
-  const knownAttachmentSummaries = Object.values(attachments);
-  const knownLabCount = knownAttachmentSummaries.reduce((sum, item) => sum + item.labCount, 0);
-  const knownRadiologyCount = knownAttachmentSummaries.reduce((sum, item) => sum + item.radiologyCount, 0);
+  const loadedSummaries = Object.values(attachments);
+  const loadedLabCount = loadedSummaries.reduce((sum, item) => sum + item.labCount, 0);
+  const loadedRadiologyCount = loadedSummaries.reduce((sum, item) => sum + item.radiologyCount, 0);
 
   return (
     <div className="space-y-6">
@@ -437,7 +455,7 @@ export default function PatientHistoryPage() {
           <p className="text-sm font-semibold uppercase tracking-wide text-cyan-700">Hasta Arşivi</p>
           <h1 className="mt-2 text-3xl font-semibold text-slate-950">Hasta kayıtları</h1>
           <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-500">
-            Birden fazla hastayı ayrı kayıtlar halinde yönetin. Her hastanın klinik bilgileri, laboratuvar sonuçları, radyoloji/ultrason raporları ve dosyaları kendi protokolü altında tutulur.
+            Hasta bilgileri, klinik öykü, laboratuvar sonuçları ve radyoloji/ultrason kayıtları artık aynı arşiv kartında birlikte görünür.
           </p>
         </div>
         <button
@@ -460,13 +478,11 @@ export default function PatientHistoryPage() {
         </div>
         <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-4 shadow-sm">
           <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">Yüklenen lab kayıtları</p>
-          <p className="mt-2 text-2xl font-semibold text-slate-950">{knownLabCount}</p>
-          <p className="mt-1 text-xs text-slate-500">Görüntülenen hasta sayfaları için</p>
+          <p className="mt-2 text-2xl font-semibold text-slate-950">{loadedLabCount}</p>
         </div>
         <div className="rounded-xl border border-violet-200 bg-violet-50/50 p-4 shadow-sm">
           <p className="text-xs font-semibold uppercase tracking-wide text-violet-700">Yüklenen tetkikler</p>
-          <p className="mt-2 text-2xl font-semibold text-slate-950">{knownRadiologyCount}</p>
-          <p className="mt-1 text-xs text-slate-500">Görüntülenen hasta sayfaları için</p>
+          <p className="mt-2 text-2xl font-semibold text-slate-950">{loadedRadiologyCount}</p>
         </div>
       </div>
 
@@ -510,9 +526,7 @@ export default function PatientHistoryPage() {
       </section>
 
       {error ? (
-        <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
-          {error}
-        </div>
+        <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">{error}</div>
       ) : null}
 
       {loading ? (
@@ -524,9 +538,7 @@ export default function PatientHistoryPage() {
       {!loading && !error && records.length === 0 ? (
         <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-10 text-center">
           <p className="font-semibold text-slate-900">Henüz hasta kaydı yok</p>
-          <p className="mt-2 text-sm text-slate-500">
-            İlk hastayı oluşturmak için Yeni Hasta Kaydı düğmesini kullanın.
-          </p>
+          <p className="mt-2 text-sm text-slate-500">İlk hastayı oluşturmak için Yeni Hasta Kaydı düğmesini kullanın.</p>
           <button
             type="button"
             onClick={handleNewPatient}
@@ -550,9 +562,11 @@ export default function PatientHistoryPage() {
             record={record}
             attachments={attachments[record.id]}
             active={getActivePatientId() === record.id}
-            onOpen={handleOpen}
-            onDelete={(item) => void handleDelete(item)}
             deleting={deletingId === record.id}
+            onOpen={(item) => openRecord(item, '/patients/demo')}
+            onAddLab={(item) => openRecord(item, '/analysis/mock')}
+            onAddRadiology={(item) => openRecord(item, '/radiology')}
+            onDelete={(item) => void handleDelete(item)}
           />
         ))}
       </div>
@@ -571,9 +585,7 @@ export default function PatientHistoryPage() {
             >
               Önceki
             </button>
-            <span className="px-2 text-sm font-semibold text-slate-700">
-              {currentPage} / {totalPages}
-            </span>
+            <span className="px-2 text-sm font-semibold text-slate-700">{currentPage} / {totalPages}</span>
             <button
               type="button"
               onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
