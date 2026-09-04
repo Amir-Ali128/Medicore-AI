@@ -335,3 +335,13 @@ def test_duplicate_direct_signal_ids_fail_case_validation() -> None:
                 }
             ],
         )
+
+
+def test_duplicate_candidate_codes_fail_case_validation() -> None:
+    with pytest.raises(ValidationError):
+        _base(
+            candidates=[
+                {"code": "same", "display_name": "A"},
+                {"code": "SAME", "display_name": "B"},
+            ]
+        )
