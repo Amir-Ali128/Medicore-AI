@@ -64,6 +64,14 @@ class Settings(BaseSettings):
     # deployments do not require a new environment variable.
     claude_vision_model: str | None = None
 
+    # --- OpenAI independent radiology second reader ----------------------
+    # The key is injected only through runtime environment configuration and must
+    # never be committed. The second reader gets the original image independently,
+    # not Claude output. GPT-5.6 Terra is the default cost/performance vision model.
+    openai_api_key: str | None = None
+    openai_vision_model: str = "gpt-5.6-terra"
+    openai_radiology_second_reader_enabled: bool = True
+
     # --- Production hardening -------------------------------------------
     # External AI calls are optional dependencies. Bound both the number of
     # concurrent requests and the amount of time any request may occupy a worker.
