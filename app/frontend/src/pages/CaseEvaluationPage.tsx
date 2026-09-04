@@ -2,30 +2,24 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 
 import ClaudeEvaluationCard from '../components/clinical/ClaudeEvaluationCard';
+import { clearAccessToken } from '../services/authClient';
+import {
+  evaluateClinicalBrain,
+  type ClinicalBrainResult,
+} from '../services/clinicalBrainClient';
 import type {
   ClaudeEvaluationHypothesis,
   ClaudeReviewGenerationResult,
 } from '../services/claudeReviewClient';
-import { clearAccessToken } from '../services/authClient';
-import {
-  buildClinicalAiSummary,
-  buildClinicalSummary,
-  buildLaboratoryAiSummary,
-  buildLaboratorySummary,
-  buildPerformedStudies,
-  buildSourceDates,
-  buildUltrasoundContextFlags,
-  buildUltrasoundSummary,
-  getLatestUltrasoundReport,
-  temporalGapDays,
-  type CaseSourceSummaries,
-} from '../services/caseEvaluationSummary';
 import { deleteCompactEvaluation } from '../services/evaluationDeleteClient';
+import {
+  getClinicalHypothesesForAnalysisRun,
+  type ClinicalHypothesis,
+} from '../services/clinicalHypothesesClient';
 import {
   getAnalysisRunResults,
   LAST_ANALYSIS_RUN_ID_KEY,
   type ClinicalIntakeInput,
-  type LabAnalysisResult,
 } from '../services/labAnalysisClient';
 import {
   evaluateMultisourceCase,
@@ -36,10 +30,6 @@ import {
   listPatientRadiologyReports,
   type RadiologyReport,
 } from '../services/radiologyClient';
-import {
-  getClinicalHypothesesForAnalysisRun,
-  type ClinicalHypothesis,
-} from '../services/clinicalHypothesesClient';
 import {
   deleteSourceOnlyEvaluationsForPatient,
   getSourceOnlyEvaluationsForPatient,
@@ -55,28 +45,6 @@ function readClinicalIntake(): ClinicalIntakeInput | null {
   } catch {
     return null;
   }
-}
-
-function hasMeaningfulValue(value: unknown): boolean {
-  if (value === null || value === undefined) return false;
-  if (typeof value === 'string') return Boolean(value.trim());
-  if (typeof value === 'number') return Number.isFinite(value);
-  if (typeof value === 'boolean') return value;
-  if (Array.isArray(value)) return value.some(hasMeaningfulValue);
-  if (typeof value === 'object') {
-    return Object.values(value as Record<string, unknown>).some(hasMeaningfulValue);
-  }
-  return false;
-}
-
-function hasClinicalData(value: ClinicalIntakeInput | null) {
-  if (!value) return false;
-  // Patient demographics alone are not a clinical evidence source. Readiness follows
-  // the same complaint/exam fields that are actually included in the bounded summary.
-  return (
-    hasMeaningfulValue(value.presenting_complaint) ||
-    hasMeaningfulValue(value.physical_exam)
-  );
 }
 
 function errorMessage(value: unknown): string {
@@ -187,10 +155,8 @@ function SummaryCard({
 export default function CaseEvaluationPage() {
   const navigate = useNavigate();
   const [clinicalIntake, setClinicalIntake] = useState<ClinicalIntakeInput | null>(null);
-  const [labResults, setLabResults] = useState<LabAnalysisResult[]>([]);
   const [radiologyReports, setRadiologyReports] = useState<RadiologyReport[]>([]);
-  const [labReady, setLabReady] = useState(false);
-  const [ultrasoundReady, setUltrasoundReady] = useState(false);
+  const [brain, setBrain] = useState<ClinicalBrainResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [evaluating, setEvaluating] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -200,7 +166,6 @@ export default function CaseEvaluationPage() {
 
   const analysisRunId = localStorage.getItem(LAST_ANALYSIS_RUN_ID_KEY);
   const activePatientId = localStorage.getItem(ACTIVE_PATIENT_ID_KEY);
-  const clinicalReady = hasClinicalData(clinicalIntake);
 
   useEffect(() => {
     let cancelled = false;
@@ -208,6 +173,7 @@ export default function CaseEvaluationPage() {
     async function loadSources() {
       setLoading(true);
       setError('');
+      setBrain(null);
 
       const intake = readClinicalIntake();
       if (!cancelled) setClinicalIntake(intake);
@@ -223,18 +189,38 @@ export default function CaseEvaluationPage() {
 
       const labs = labsResult.status === 'fulfilled' ? labsResult.value : [];
       const reports = reportsResult.status === 'fulfilled' ? reportsResult.value : [];
-      const latestReport = getLatestUltrasoundReport(reports);
-      const patientId = activePatientId ?? latestReport?.patient_id ?? null;
-
-      setLabResults(labs);
       setRadiologyReports(reports);
-      setLabReady(labs.length > 0);
-      setUltrasoundReady(Boolean(latestReport));
+
+      let brainResult: ClinicalBrainResult | null = null;
+      let brainFailure: unknown = null;
+      try {
+        brainResult = await evaluateClinicalBrain({
+          clinical_context: intake,
+          lab_results: labs,
+          radiology_reports: reports,
+          language: 'tr',
+        });
+      } catch (brainError) {
+        brainFailure = brainError;
+      }
+      if (cancelled) return;
+      setBrain(brainResult);
+
+      const selectedUltrasound = brainResult?.selected_ultrasound_report_id
+        ? reports.find(
+            (report) => report.id === brainResult?.selected_ultrasound_report_id,
+          ) ?? null
+        : null;
+      const patientId =
+        activePatientId ?? selectedUltrasound?.patient_id ?? reports[0]?.patient_id ?? null;
 
       let hypotheses: ClinicalHypothesis[] = [];
       let hypothesisFailure: unknown = null;
       try {
-        if (analysisRunId && labs.length > 0) {
+        if (
+          analysisRunId &&
+          brainResult?.source_availability.laboratory === true
+        ) {
           hypotheses = await getClinicalHypothesesForAnalysisRun(analysisRunId);
         } else if (patientId) {
           hypotheses = await getSourceOnlyEvaluationsForPatient(patientId);
@@ -250,6 +236,7 @@ export default function CaseEvaluationPage() {
           (entry): entry is PromiseRejectedResult => entry.status === 'rejected',
         )
         .map((entry) => entry.reason);
+      if (brainFailure) failures.push(brainFailure);
       if (hypothesisFailure) failures.push(hypothesisFailure);
 
       if (failures.some(isAuthSessionError)) {
@@ -258,10 +245,15 @@ export default function CaseEvaluationPage() {
         return;
       }
 
-      const hasAnyReadySource =
-        hasClinicalData(intake) || labs.length > 0 || Boolean(latestReport);
+      const hasAnyReadySource = brainResult
+        ? Object.values(brainResult.source_availability).some(Boolean)
+        : false;
       if (failures.length > 0 && !hasAnyReadySource) {
-        setError(errorMessage(failures[0]) || 'Kayıtlı bilgiler yüklenemedi.');
+        setError(
+          brainFailure
+            ? 'Klinik Brain hazırlanamadı. Tarayıcı yerel klinik karar mantığına geri dönmedi; lütfen tekrar dene.'
+            : errorMessage(failures[0]) || 'Kayıtlı bilgiler yüklenemedi.',
+        );
       }
 
       setLoading(false);
@@ -274,45 +266,50 @@ export default function CaseEvaluationPage() {
   }, [activePatientId, analysisRunId, navigate]);
 
   const latestUltrasound = useMemo(
-    () => getLatestUltrasoundReport(radiologyReports),
-    [radiologyReports],
+    () =>
+      brain?.selected_ultrasound_report_id
+        ? radiologyReports.find(
+            (report) => report.id === brain.selected_ultrasound_report_id,
+          ) ?? null
+        : null,
+    [brain?.selected_ultrasound_report_id, radiologyReports],
   );
 
-  const patientId = activePatientId ?? latestUltrasound?.patient_id ?? null;
   const sourceAvailability = useMemo<CaseSourceAvailability>(
-    () => ({
-      clinical: clinicalReady,
-      laboratory: labReady,
-      ultrasound: ultrasoundReady,
-    }),
-    [clinicalReady, labReady, ultrasoundReady],
+    () =>
+      brain?.source_availability ?? {
+        clinical: false,
+        laboratory: false,
+        ultrasound: false,
+      },
+    [brain?.source_availability],
   );
+  const clinicalReady = sourceAvailability.clinical;
+  const labReady = sourceAvailability.laboratory;
+  const ultrasoundReady = sourceAvailability.ultrasound;
   const availableSourceCount = useMemo(
     () => Object.values(sourceAvailability).filter(Boolean).length,
     [sourceAvailability],
   );
+  const patientId =
+    activePatientId ?? latestUltrasound?.patient_id ?? radiologyReports[0]?.patient_id ?? null;
   const evaluationAnalysisRunId = labReady ? analysisRunId : null;
   const canEvaluate =
-    availableSourceCount > 0 && Boolean(evaluationAnalysisRunId || patientId);
+    Boolean(brain) &&
+    availableSourceCount > 0 &&
+    Boolean(evaluationAnalysisRunId || patientId);
 
-  const sourceDates = useMemo(
-    () => buildSourceDates(labResults, latestUltrasound),
-    [labResults, latestUltrasound],
-  );
-  const sourceGapDays = useMemo(() => temporalGapDays(sourceDates), [sourceDates]);
-  const performedStudies = useMemo(
-    () => buildPerformedStudies(latestUltrasound ? [latestUltrasound] : []),
-    [latestUltrasound],
-  );
-
-  const sourceSummaries = useMemo<CaseSourceSummaries>(
-    () => ({
-      clinical: buildClinicalSummary(clinicalIntake),
-      laboratory: buildLaboratorySummary(labResults),
-      ultrasound: buildUltrasoundSummary(latestUltrasound),
-    }),
-    [clinicalIntake, labResults, latestUltrasound],
-  );
+  const sourceDates = brain?.source_dates ?? {
+    laboratory: null,
+    ultrasound: null,
+  };
+  const sourceGapDays = brain?.temporal_gap_days ?? null;
+  const performedStudies = brain?.performed_studies ?? [];
+  const sourceSummaries = brain?.source_summaries ?? {
+    clinical: 'Python Clinical Brain bekleniyor.',
+    laboratory: 'Python Clinical Brain bekleniyor.',
+    ultrasound: 'Python Clinical Brain bekleniyor.',
+  };
 
   const findings = useMemo<
     Array<ClinicalHypothesis | ClaudeEvaluationHypothesis>
@@ -327,33 +324,19 @@ export default function CaseEvaluationPage() {
   }, [result, storedHypotheses]);
 
   async function handleEvaluate() {
-    if (!canEvaluate) return;
+    if (!canEvaluate || !brain) return;
 
     try {
       setEvaluating(true);
       setError('');
       setResult(null);
 
-      const aiSummaries: CaseSourceSummaries = {
-        clinical:
-          sourceAvailability.clinical && clinicalIntake
-            ? buildClinicalAiSummary(clinicalIntake)
-            : '',
-        laboratory: sourceAvailability.laboratory
-          ? buildLaboratoryAiSummary(labResults)
-          : '',
-        ultrasound: sourceAvailability.ultrasound
-          ? sourceSummaries.ultrasound
-          : '',
-      };
       const nextResult = await evaluateMultisourceCase(
         evaluationAnalysisRunId,
         patientId,
         clinicalIntake,
-        aiSummaries,
-        sourceAvailability.ultrasound
-          ? buildUltrasoundContextFlags(latestUltrasound)
-          : [],
+        brain.ai_source_summaries,
+        sourceAvailability.ultrasound ? brain.ultrasound_context_flags : [],
         {
           performedStudies,
           sourceDates,
@@ -413,8 +396,8 @@ export default function CaseEvaluationPage() {
       <header>
         <h1 className="text-2xl font-bold text-slate-950">Bulguları Değerlendir</h1>
         <p className="mt-2 text-sm leading-6 text-slate-500">
-          Mevcut klinik, laboratuvar ve ultrason kaynakları ayrı ayrı veya birlikte
-          kısa vaka özetlerine dönüştürülür; eksik kaynaklar varsayılmaz.
+          Mevcut klinik, laboratuvar ve ultrason kaynakları Python Clinical Brain
+          tarafından tek kuralla hazırlanır; eksik kaynaklar varsayılmaz.
         </p>
       </header>
 
@@ -445,8 +428,8 @@ export default function CaseEvaluationPage() {
         <div>
           <h2 className="text-lg font-bold text-slate-950">Vaka Özeti</h2>
           <p className="mt-1 text-xs leading-5 text-slate-500">
-            Yalnızca hazır kaynaklar değerlendirmeye dahil edilir. Tam dosya AI'ya
-            gönderilmez; normal laboratuvar sonuçları kompakt AI özetine dahil edilmez.
+            Özet, kaynak seçimi ve zaman uyumu backend Python tarafından hazırlanır.
+            Normal laboratuvar sonuçları kompakt AI özetine dahil edilmez.
           </p>
         </div>
 

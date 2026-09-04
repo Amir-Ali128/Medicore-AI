@@ -3,7 +3,10 @@ import { Link } from 'react-router-dom';
 
 import DoctorLanguageSummary from '../components/DoctorLanguageSummary';
 import SectionCard from '../components/ui/SectionCard';
-import { buildDoctorInterpretation } from '../services/clinicalInterpreter';
+import {
+  buildDoctorInterpretation,
+  type DoctorInterpretationSummary,
+} from '../services/clinicalInterpreter';
 import {
   getAnalysisRunResults,
   LAST_ANALYSIS_RUN_ID_KEY,
@@ -20,6 +23,15 @@ const STATUS_LABELS: Record<string, string> = {
   ready: 'Değerlendirmeye hazır',
   completed: 'Tamamlandı',
   waiting: 'Sonuç bekleniyor',
+};
+
+const EMPTY_DOCTOR_INTERPRETATION: DoctorInterpretationSummary = {
+  abnormalCount: 0,
+  lowCount: 0,
+  highCount: 0,
+  items: [],
+  safetyNote:
+    'Bu bölüm klinik karar destek amaçlı ön yorumdur; tanı, tedavi veya nihai karar yerine geçmez. Son değerlendirme hekim tarafından yapılmalıdır.',
 };
 
 function statusLabel(status: string) {
@@ -86,6 +98,10 @@ function resultReviewStatus(result: LabAnalysisResult) {
 export default function ExtractionReviewPage() {
   const [analysisRunId, setAnalysisRunId] = useState<string | null>(null);
   const [results, setResults] = useState<LabAnalysisResult[]>([]);
+  const [doctorInterpretation, setDoctorInterpretation] =
+    useState<DoctorInterpretationSummary>(EMPTY_DOCTOR_INTERPRETATION);
+  const [interpretationLoading, setInterpretationLoading] = useState(false);
+  const [interpretationError, setInterpretationError] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -119,6 +135,40 @@ export default function ExtractionReviewPage() {
     void loadResults();
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadDoctorInterpretation() {
+      if (results.length === 0) {
+        setDoctorInterpretation(EMPTY_DOCTOR_INTERPRETATION);
+        setInterpretationError('');
+        return;
+      }
+      try {
+        setInterpretationLoading(true);
+        setInterpretationError('');
+        const next = await buildDoctorInterpretation(results);
+        if (!cancelled) setDoctorInterpretation(next);
+      } catch (interpretationFailure) {
+        if (!cancelled) {
+          setDoctorInterpretation(EMPTY_DOCTOR_INTERPRETATION);
+          setInterpretationError(
+            interpretationFailure instanceof Error
+              ? interpretationFailure.message
+              : 'Python klinik yorum servisi kullanılamadı.',
+          );
+        }
+      } finally {
+        if (!cancelled) setInterpretationLoading(false);
+      }
+    }
+
+    void loadDoctorInterpretation();
+    return () => {
+      cancelled = true;
+    };
+  }, [results]);
+
   const summary = useMemo(() => {
     const needsReview = results.filter(
       (result) =>
@@ -146,11 +196,6 @@ export default function ExtractionReviewPage() {
       : summary.needsReview > 0 || summary.unknown > 0
         ? 'needs_review'
         : 'completed';
-
-  const doctorInterpretation = useMemo(
-    () => buildDoctorInterpretation(results),
-    [results],
-  );
 
   return (
     <div className="space-y-8">
@@ -242,9 +287,17 @@ export default function ExtractionReviewPage() {
 
           <SectionCard
             title="Sonuçların klinik özeti"
-            description="Düşük ve yüksek sonuçlardan oluşturulan, hekim incelemesine yardımcı açıklama."
+            description="Düşük ve yüksek sonuçlardan Python Clinical Brain tarafından oluşturulan, hekim incelemesine yardımcı açıklama."
           >
-            <DoctorLanguageSummary summary={doctorInterpretation} />
+            {interpretationLoading ? (
+              <p className="text-sm text-slate-500">Klinik özet hazırlanıyor…</p>
+            ) : interpretationError ? (
+              <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                {interpretationError}
+              </div>
+            ) : (
+              <DoctorLanguageSummary summary={doctorInterpretation} />
+            )}
           </SectionCard>
 
           <SectionCard

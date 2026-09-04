@@ -1,10 +1,10 @@
 import { getAccessToken } from './authClient';
 import type { ClaudeReviewGenerationResult } from './claudeReviewClient';
 import type {
-  CaseSourceDates,
-  CaseSourceSummaries,
-  PerformedStudy,
-} from './caseEvaluationSummary';
+  ClinicalBrainPerformedStudy,
+  ClinicalBrainSourceDates,
+  ClinicalBrainSourceSummaries,
+} from './clinicalBrainClient';
 import type { ClinicalIntakeInput } from './labAnalysisClient';
 
 const API_BASE_URL =
@@ -17,8 +17,8 @@ export type CaseSourceAvailability = {
 };
 
 export type MultisourceQualityContext = {
-  performedStudies: PerformedStudy[];
-  sourceDates: CaseSourceDates;
+  performedStudies: ClinicalBrainPerformedStudy[];
+  sourceDates: ClinicalBrainSourceDates;
   sourceAvailability: CaseSourceAvailability;
 };
 
@@ -60,10 +60,7 @@ function sourceCount(availability: CaseSourceAvailability) {
   return Object.values(availability).filter(Boolean).length;
 }
 
-function boundedSummary(
-  summary: string,
-  available: boolean,
-) {
+function boundedSummary(summary: string, available: boolean) {
   return available ? summary.slice(0, 320) : '';
 }
 
@@ -85,7 +82,7 @@ export async function evaluateMultisourceCase(
   analysisRunId: string | null,
   patientId: string | null,
   clinicalContext: ClinicalIntakeInput | null,
-  sourceSummaries: CaseSourceSummaries,
+  sourceSummaries: ClinicalBrainSourceSummaries,
   contextFlags: string[],
   qualityContext: MultisourceQualityContext,
 ): Promise<ClaudeReviewGenerationResult> {
