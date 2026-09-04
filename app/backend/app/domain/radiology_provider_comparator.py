@@ -172,3 +172,108 @@ def compare_radiology_readers(
         or not same_region,
         "agreement_is_not_validation": True,
     }
+
+
+def compare_radiology_reader_set(
+    readers: dict[str, RadiologyMediaReview],
+) -> dict[str, object]:
+    """Summarize 2+ independent readers without converting votes to probability.
+
+    A provider that does not mention a concept is recorded as ``unmentioned`` rather
+    than as a negative vote. Two positive/uncertain mentions are called corroborated,
+    but never ground truth. Any explicit positive-vs-negative split is surfaced as a
+    polarity conflict.
+    """
+
+    clean_readers = {
+        str(provider).strip(): review
+        for provider, review in readers.items()
+        if str(provider).strip() and review is not None
+    }
+    provider_names = sorted(clean_readers)
+    mentions = {
+        provider: _concept_polarities(review)
+        for provider, review in clean_readers.items()
+    }
+    all_concepts = sorted(
+        {concept for provider_mentions in mentions.values() for concept in provider_mentions}
+    )
+
+    concept_votes: dict[str, dict[str, list[str]]] = {}
+    corroborated: list[str] = []
+    corroborated_negative: list[str] = []
+    polarity_conflicts: list[str] = []
+    high_attention_asymmetry: list[str] = []
+
+    for concept in all_concepts:
+        positive = sorted(
+            provider
+            for provider, provider_mentions in mentions.items()
+            if "positive_or_uncertain" in provider_mentions.get(concept, set())
+        )
+        negative = sorted(
+            provider
+            for provider, provider_mentions in mentions.items()
+            if "negative" in provider_mentions.get(concept, set())
+        )
+        mentioned = set(positive) | set(negative)
+        unmentioned = sorted(set(provider_names) - mentioned)
+        concept_votes[concept] = {
+            "positive_or_uncertain": positive,
+            "negative": negative,
+            "unmentioned": unmentioned,
+        }
+
+        if len(positive) >= 2:
+            corroborated.append(concept)
+        if len(negative) >= 2:
+            corroborated_negative.append(concept)
+        if positive and negative:
+            polarity_conflicts.append(concept)
+        if (
+            concept in _HIGH_ATTENTION_CONCEPTS
+            and len(provider_names) >= 2
+            and (
+                (positive and len(positive) < len(provider_names))
+                or (negative and len(negative) < len(provider_names))
+            )
+        ):
+            high_attention_asymmetry.append(concept)
+
+    document_kinds = {
+        review.document_kind for review in clean_readers.values() if review.document_kind != "OTHER"
+    }
+    modalities = {
+        review.detected_modality
+        for review in clean_readers.values()
+        if review.detected_modality != "UNKNOWN"
+    }
+    body_parts = {
+        review.detected_body_part
+        for review in clean_readers.values()
+        if review.detected_body_part != "OTHER"
+    }
+
+    document_kind_compatible = len(document_kinds) <= 1
+    modality_compatible = len(modalities) <= 1
+    body_part_compatible = len(body_parts) <= 1
+
+    return {
+        "mode": "deterministic_multi_provider_concept_polarity_not_ground_truth",
+        "reader_count": len(provider_names),
+        "providers": provider_names,
+        "concept_votes": concept_votes,
+        "corroborated_concepts": sorted(corroborated),
+        "corroborated_negative_concepts": sorted(corroborated_negative),
+        "polarity_conflicts": sorted(polarity_conflicts),
+        "high_attention_asymmetry": sorted(set(high_attention_asymmetry)),
+        "document_kind_compatible": document_kind_compatible,
+        "modality_compatible": modality_compatible,
+        "body_part_compatible": body_part_compatible,
+        "requires_physician_attention": bool(polarity_conflicts)
+        or bool(high_attention_asymmetry)
+        or not document_kind_compatible
+        or not modality_compatible
+        or not body_part_compatible,
+        "agreement_is_not_validation": True,
+    }

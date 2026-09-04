@@ -8,6 +8,7 @@ are retained. True medical images remain assistive and non-diagnostic.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import date
 from pathlib import Path
@@ -19,6 +20,7 @@ from app.api.dependencies import SessionDep
 from app.api.routes import radiology_reports
 from app.api.routes.auth import get_current_active_user
 from app.core.config import get_settings
+from app.domain.gemini_radiology_third_reader import review_radiology_media_gemini
 from app.domain.openai_radiology_second_reader import review_radiology_media_openai
 from app.domain.radiology_image_ai import (
     SUPPORTED_IMAGE_MEDIA_TYPES,
@@ -26,14 +28,18 @@ from app.domain.radiology_image_ai import (
     normalize_body_part,
     normalize_image_modality,
 )
-from app.domain.radiology_provider_comparator import compare_radiology_readers
+from app.domain.radiology_provider_comparator import compare_radiology_reader_set
 from app.domain.report_document_image_ai import RadiologyMediaReview, review_radiology_media
 from app.infrastructure.database.models.radiology_report import RadiologyReport
 from app.infrastructure.database.models.user import User
 from app.infrastructure.database.repositories.radiology_report_repository import (
     RadiologyReportRepository,
 )
-from app.infrastructure.runtime_resilience import get_anthropic_guard, get_openai_guard
+from app.infrastructure.runtime_resilience import (
+    get_anthropic_guard,
+    get_gemini_guard,
+    get_openai_guard,
+)
 from app.schemas.radiology_report import RadiologyReportResponse
 
 router = APIRouter(prefix="/radiology-reports", tags=["radiology-image-review"])
@@ -158,6 +164,35 @@ async def _try_openai_review(
     return review, None if review is not None else "not_configured"
 
 
+async def _try_gemini_review(
+    *,
+    content: bytes,
+    media_type: str,
+    modality: str,
+    body_part: str | None,
+) -> tuple[RadiologyMediaReview | None, str | None]:
+    settings = get_settings()
+    if (
+        not settings.gemini_radiology_third_reader_enabled
+        or not settings.gemini_api_key
+        or not settings.gemini_vision_model
+    ):
+        return None, "not_configured"
+
+    try:
+        review = await get_gemini_guard("radiology-media").call(
+            lambda: review_radiology_media_gemini(
+                content=content,
+                media_type=media_type,
+                modality=modality,
+                body_part=body_part,
+            )
+        )
+    except Exception as exc:
+        return None, exc.__class__.__name__
+    return review, None if review is not None else "not_configured"
+
+
 async def _save_ai_fallback(
     *,
     patient_id: uuid.UUID,
@@ -245,7 +280,8 @@ async def create_radiology_image_review(
             detail="Görüntü/rapor incelemesi için JPG, PNG veya WEBP yükleyin. DICOM ve diğer formatlar normal dosya yükleme ile arşivlenebilir.",
         )
 
-    max_image_bytes = get_settings().radiology_image_max_bytes
+    settings = get_settings()
+    max_image_bytes = settings.radiology_image_max_bytes
     content = await file.read(max_image_bytes + 1)
     if not content:
         raise HTTPException(status_code=400, detail="Boş görüntü yüklenemez.")
@@ -277,47 +313,43 @@ async def create_radiology_image_review(
 
     review = anthropic_review
     primary_provider = "anthropic"
-    second_reader: RadiologyMediaReview | None = None
+    openai_review: RadiologyMediaReview | None = None
+    gemini_review: RadiologyMediaReview | None = None
     openai_error: str | None = None
-    provider_comparison: dict[str, Any] | None = None
+    gemini_error: str | None = None
+
+    should_call_independent_readers = review is None or review.document_kind == "MEDICAL_IMAGE"
+    if should_call_independent_readers:
+        openai_result, gemini_result = await asyncio.gather(
+            _try_openai_review(
+                content=content,
+                media_type=media_type,
+                modality=normalized_modality,
+                body_part=requested_body_part,
+            ),
+            _try_gemini_review(
+                content=content,
+                media_type=media_type,
+                modality=normalized_modality,
+                body_part=requested_body_part,
+            ),
+        )
+        openai_review, openai_error = openai_result
+        gemini_review, gemini_error = gemini_result
 
     if review is None:
-        # Provider failover: a Claude outage/unconfigured deployment must not prevent
-        # an independently configured OpenAI reader from preserving useful review.
-        openai_review, openai_error = await _try_openai_review(
-            content=content,
-            media_type=media_type,
-            modality=normalized_modality,
-            body_part=requested_body_part,
-        )
         if openai_review is not None:
             review = openai_review
             primary_provider = "openai_failover"
-    elif review.document_kind == "MEDICAL_IMAGE":
-        # Cost-aware second reader: written report photos stay on the primary OCR /
-        # extraction path. True medical images receive an independent GPT review.
-        second_reader, openai_error = await _try_openai_review(
-            content=content,
-            media_type=media_type,
-            modality=normalized_modality,
-            body_part=requested_body_part,
-        )
-        if second_reader is not None:
-            if second_reader.document_kind == "MEDICAL_IMAGE":
-                provider_comparison = compare_radiology_readers(review, second_reader)
-            else:
-                provider_comparison = {
-                    "mode": "document_kind_mismatch",
-                    "primary_document_kind": review.document_kind,
-                    "second_reader_document_kind": second_reader.document_kind,
-                    "requires_physician_attention": True,
-                    "agreement_is_not_validation": True,
-                }
+        elif gemini_review is not None:
+            review = gemini_review
+            primary_provider = "gemini_failover"
 
     if review is None:
         fallback_reasons = [
             f"anthropic:{anthropic_error or 'not_configured'}",
             f"openai:{openai_error or 'not_configured'}",
+            f"gemini:{gemini_error or 'not_configured'}",
         ]
         return await _save_ai_fallback(
             patient_id=patient_id,
@@ -331,6 +363,18 @@ async def create_radiology_image_review(
             current_user=current_user,
             reason="; ".join(fallback_reasons),
         )
+
+    provider_readers: dict[str, RadiologyMediaReview] = {}
+    if anthropic_review is not None:
+        provider_readers["anthropic"] = anthropic_review
+    if openai_review is not None:
+        provider_readers["openai"] = openai_review
+    if gemini_review is not None:
+        provider_readers["gemini"] = gemini_review
+
+    provider_comparison: dict[str, Any] | None = None
+    if len(provider_readers) >= 2:
+        provider_comparison = compare_radiology_reader_set(provider_readers)
 
     is_document = review.document_kind == "REPORT_DOCUMENT"
     finding_texts = _dedupe(
@@ -365,19 +409,41 @@ async def create_radiology_image_review(
         else "multimodal_dl_ml_assistive"
     )
 
-    second_reader_metadata: dict[str, Any] = {
-        "enabled": get_settings().openai_radiology_second_reader_enabled,
-        "status": "available" if second_reader is not None else (
-            "primary_failover" if primary_provider == "openai_failover" else (
-                "not_configured" if openai_error == "not_configured" else "unavailable"
-            )
+    openai_reader_metadata: dict[str, Any] = {
+        "enabled": settings.openai_radiology_second_reader_enabled,
+        "status": (
+            "primary_failover"
+            if primary_provider == "openai_failover"
+            else "available"
+            if openai_review is not None
+            else "not_configured"
+            if openai_error == "not_configured"
+            else "unavailable"
         ),
         "provider": "openai",
     }
-    if second_reader is not None:
-        second_reader_metadata["review"] = _review_metadata(second_reader)
+    if openai_review is not None:
+        openai_reader_metadata["review"] = _review_metadata(openai_review)
     if openai_error and openai_error != "not_configured":
-        second_reader_metadata["error_type"] = openai_error
+        openai_reader_metadata["error_type"] = openai_error
+
+    gemini_reader_metadata: dict[str, Any] = {
+        "enabled": settings.gemini_radiology_third_reader_enabled,
+        "status": (
+            "primary_failover"
+            if primary_provider == "gemini_failover"
+            else "available"
+            if gemini_review is not None
+            else "not_configured"
+            if gemini_error == "not_configured"
+            else "unavailable"
+        ),
+        "provider": "gemini",
+    }
+    if gemini_review is not None:
+        gemini_reader_metadata["review"] = _review_metadata(gemini_review)
+    if gemini_error and gemini_error != "not_configured":
+        gemini_reader_metadata["error_type"] = gemini_error
 
     report = RadiologyReport(
         patient_id=patient_id,
@@ -422,7 +488,10 @@ async def create_radiology_image_review(
             "requested_body_part": requested_body_part,
             "detected_body_part": review.detected_body_part,
             "supported_body_part": stored_body_part,
-            "openai_second_reader": second_reader_metadata,
+            "openai_second_reader": openai_reader_metadata,
+            "gemini_third_reader": gemini_reader_metadata,
+            "provider_reader_count": len(provider_readers),
+            "provider_readers_available": sorted(provider_readers),
             "provider_comparison": provider_comparison,
             "anthropic_primary_error_type": anthropic_error,
             "provider_agreement_is_not_ground_truth": True,
