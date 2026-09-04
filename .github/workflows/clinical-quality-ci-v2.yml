@@ -14,6 +14,7 @@ on:
       - feature/vision-postprocessing
       - feature/clinical-fusion-brain
       - feature/clinical-fusion-brain-v2
+      - feature/typescript-python-brain-migration
   pull_request:
     branches:
       - main
@@ -53,7 +54,8 @@ jobs:
             tests/test_onnx_inference_engine.py \
             tests/test_clinical_fusion_brain.py \
             tests/test_clinical_fusion_case_adapter.py \
-            tests/test_clinical_fusion_onnx_bridge.py
+            tests/test_clinical_fusion_onnx_bridge.py \
+            tests/test_clinical_brain.py
 
   native-vision-build:
     runs-on: ubuntu-latest
