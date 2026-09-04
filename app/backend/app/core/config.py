@@ -59,10 +59,9 @@ class Settings(BaseSettings):
     claude_hypothesis_model: str | None = None
 
     # --- Experimental X-ray / ultrasound image review -------------------
-    # Optional override. When unset, the image-review service falls back to the
-    # already configured hypothesis or extraction model so existing Render
-    # deployments do not require a new environment variable.
-    claude_vision_model: str | None = None
+    # Maximum-quality Claude vision profile. Runtime deployments can override this
+    # with CLAUDE_VISION_MODEL without changing code.
+    claude_vision_model: str = "claude-opus-5"
 
     # --- OpenAI independent radiology second reader ----------------------
     # Runtime-only secret; the original image is read independently. Prefer the
