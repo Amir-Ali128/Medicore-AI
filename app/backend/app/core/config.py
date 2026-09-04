@@ -72,6 +72,13 @@ class Settings(BaseSettings):
     openai_vision_model: str = "gpt-5.6-terra"
     openai_radiology_second_reader_enabled: bool = True
 
+    # --- Gemini independent radiology third reader -----------------------
+    # Same isolation rule as OpenAI: only runtime secrets, original image input,
+    # no other provider prose. The model can be overridden without code changes.
+    gemini_api_key: str | None = None
+    gemini_vision_model: str = "gemini-3.7-flash"
+    gemini_radiology_third_reader_enabled: bool = True
+
     # --- Production hardening -------------------------------------------
     # External AI calls are optional dependencies. Bound both the number of
     # concurrent requests and the amount of time any request may occupy a worker.
