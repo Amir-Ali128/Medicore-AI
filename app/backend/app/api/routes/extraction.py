@@ -18,8 +18,13 @@ from app.api.dependencies import (
     ClaudeLabExtractionServiceDep,
 )
 from app.api.routes import lab_analysis
-from app.domain.claude_lab_extraction_service import (
-    SUPPORTED_CONTENT_TYPES,
+from app.core.config import get_settings
+from app.domain.claude_lab_extraction_service import SUPPORTED_CONTENT_TYPES
+from app.infrastructure.runtime_resilience import (
+    DependencyBusyError,
+    DependencyCircuitOpenError,
+    DependencyGuardError,
+    DependencyTimeoutError,
 )
 from app.schemas.extraction import (
     ExtractionAndAnalysisResult,
@@ -30,7 +35,6 @@ from app.schemas.lab_analysis import MockLabReportInput, RawLabValue
 router = APIRouter(prefix="/extraction", tags=["extraction"])
 
 _PATIENT_NOT_FOUND = "Patient not found."
-_MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 
 
 def _resolve_content_type(file: UploadFile) -> str | None:
@@ -49,18 +53,33 @@ async def _read_supported_upload(file: UploadFile) -> tuple[bytes, str]:
             detail="Laboratuvar analizi için PDF, JPG/JPEG, PNG veya WEBP yükleyin.",
         )
 
-    data = await file.read(_MAX_UPLOAD_BYTES + 1)
+    max_upload_bytes = get_settings().lab_extraction_max_bytes
+    data = await file.read(max_upload_bytes + 1)
     if not data:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Boş laboratuvar dosyası analiz edilemez.",
         )
-    if len(data) > _MAX_UPLOAD_BYTES:
+    if len(data) > max_upload_bytes:
+        max_megabytes = max_upload_bytes // (1024 * 1024)
         raise HTTPException(
             status_code=413,
-            detail="Laboratuvar dosyası 10 MB sınırını aşıyor.",
+            detail=f"Laboratuvar dosyası {max_megabytes} MB sınırını aşıyor.",
         )
     return data, content_type
+
+
+def _dependency_http_error(exc: DependencyGuardError) -> HTTPException:
+    if isinstance(exc, DependencyTimeoutError):
+        return HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="Laboratuvar AI çıkarımı zaman aşımına uğradı. Dosya daha sonra yeniden denenebilir veya sonuçlar manuel girilebilir.",
+        )
+    if isinstance(exc, (DependencyBusyError, DependencyCircuitOpenError)):
+        detail = "Laboratuvar AI çıkarımı geçici olarak yoğun veya koruma devresi açık. Kısa süre sonra yeniden deneyin."
+    else:
+        detail = "Laboratuvar AI çıkarım servisi geçici olarak kullanılamıyor."
+    return HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail)
 
 
 @router.post("/lab-report", response_model=LabExtractionResult)
@@ -71,6 +90,8 @@ async def extract_lab_report(
     data, content_type = await _read_supported_upload(file)
     try:
         return await service.extract_from_bytes(data, file.filename, content_type)
+    except DependencyGuardError as exc:
+        raise _dependency_http_error(exc) from None
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
@@ -97,6 +118,8 @@ async def extract_and_analyze_lab_report(
 
     try:
         extraction = await service.extract_from_bytes(data, file.filename, content_type)
+    except DependencyGuardError as exc:
+        raise _dependency_http_error(exc) from None
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
