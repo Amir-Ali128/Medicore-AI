@@ -16,6 +16,7 @@ on:
       - feature/clinical-fusion-brain-v2
       - feature/typescript-python-brain-migration
       - feature/production-hardening
+      - feature/openai-radiology-second-reader
   pull_request:
     branches:
       - main
@@ -46,6 +47,7 @@ jobs:
         run: |
           PYTHONPATH=. python -m pytest -q \
             tests/test_radiology_image_review.py \
+            tests/test_openai_radiology_second_reader.py \
             tests/test_source_only_case_evaluation.py \
             tests/test_clinical_domain_router_runtime.py \
             tests/test_clinical_quality_runtime.py \
