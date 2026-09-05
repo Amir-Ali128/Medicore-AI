@@ -45,6 +45,12 @@ function formatShortDate(value: string | null | undefined) {
   return new Intl.DateTimeFormat('tr-TR', { dateStyle: 'medium' }).format(parsed);
 }
 
+function historyTime(value: string | null | undefined) {
+  if (!value) return 0;
+  const parsed = new Date(value).getTime();
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
 function sexLabel(value: string | null | undefined) {
   switch (value) {
     case 'male': return 'Erkek';
@@ -133,14 +139,26 @@ function RecordCard({
 }) {
   const [openingLabId, setOpeningLabId] = useState<string | null>(null);
   const [labError, setLabError] = useState('');
+  const [showAllLabs, setShowAllLabs] = useState(false);
+  const [showAllRadiology, setShowAllRadiology] = useState(false);
   const context = record.metadata_json?.clinical_context;
   const patient = context?.patient_information;
   const age = patient?.age ?? record.metadata_json?.age ?? null;
   const height = patient?.height_cm ?? record.metadata_json?.height_cm ?? null;
   const weight = patient?.weight_kg ?? record.metadata_json?.weight_kg ?? null;
   const clinical = clinicalRows(record);
-  const labs = attachments?.labReports ?? [];
-  const radiology = attachments?.radiologyReports ?? [];
+  const labs = [...(attachments?.labReports ?? [])].sort(
+    (first, second) =>
+      historyTime(second.report_date || second.created_at) -
+      historyTime(first.report_date || first.created_at),
+  );
+  const radiology = [...(attachments?.radiologyReports ?? [])].sort(
+    (first, second) =>
+      historyTime(second.report_date || second.created_at) -
+      historyTime(first.report_date || first.created_at),
+  );
+  const visibleLabs = showAllLabs ? labs : labs.slice(0, 4);
+  const visibleRadiology = showAllRadiology ? radiology : radiology.slice(0, 4);
 
   async function handleOpenLab(report: LabReportSummary) {
     if (report.metadata_json?.original_file_stored !== true) return;
@@ -251,7 +269,7 @@ function RecordCard({
             <p className="mt-3 text-sm text-slate-500">Henüz laboratuvar kaydı yok.</p>
           ) : (
             <div className="mt-3 space-y-2">
-              {labs.slice(0, 4).map((report) => {
+              {visibleLabs.map((report) => {
                 const canOpen = report.metadata_json?.original_file_stored === true;
                 return (
                   <div key={report.id} className="rounded-lg border border-emerald-100 bg-white p-2.5">
@@ -259,7 +277,7 @@ function RecordCard({
                       <div className="min-w-0">
                         <p className="truncate text-xs font-semibold text-slate-900">{labTitle(report)}</p>
                         <p className="mt-1 text-[11px] text-slate-500">
-                          {formatShortDate(report.report_date || report.created_at)}
+                          Tahlil tarihi: {formatShortDate(report.report_date || report.created_at)}
                         </p>
                       </div>
                       {canOpen ? (
@@ -277,7 +295,13 @@ function RecordCard({
                 );
               })}
               {labs.length > 4 ? (
-                <p className="text-[11px] font-semibold text-emerald-700">+ {labs.length - 4} kayıt daha</p>
+                <button
+                  type="button"
+                  onClick={() => setShowAllLabs((current) => !current)}
+                  className="text-[11px] font-semibold text-emerald-700 hover:text-emerald-900"
+                >
+                  {showAllLabs ? 'Geçmişi daralt' : `Tüm geçmişi göster (+${labs.length - 4})`}
+                </button>
               ) : null}
             </div>
           )}
@@ -294,11 +318,11 @@ function RecordCard({
             <p className="mt-3 text-sm text-slate-500">Henüz tetkik kaydı yok.</p>
           ) : (
             <div className="mt-3 space-y-2">
-              {radiology.slice(0, 4).map((report) => (
+              {visibleRadiology.map((report) => (
                 <div key={report.id} className="rounded-lg border border-violet-100 bg-white p-2.5">
                   <p className="truncate text-xs font-semibold text-slate-900">{radiologyTitle(report)}</p>
                   <p className="mt-1 text-[11px] text-slate-500">
-                    {formatShortDate(report.report_date || report.created_at)}
+                    Tetkik tarihi: {formatShortDate(report.report_date || report.created_at)}
                   </p>
                   {clip(report.summary, 100) ? (
                     <p className="mt-1 text-[11px] leading-4 text-slate-600">{clip(report.summary, 100)}</p>
@@ -306,7 +330,15 @@ function RecordCard({
                 </div>
               ))}
               {radiology.length > 4 ? (
-                <p className="text-[11px] font-semibold text-violet-700">+ {radiology.length - 4} kayıt daha</p>
+                <button
+                  type="button"
+                  onClick={() => setShowAllRadiology((current) => !current)}
+                  className="text-[11px] font-semibold text-violet-700 hover:text-violet-900"
+                >
+                  {showAllRadiology
+                    ? 'Geçmişi daralt'
+                    : `Tüm geçmişi göster (+${radiology.length - 4})`}
+                </button>
               ) : null}
             </div>
           )}
@@ -455,7 +487,7 @@ export default function PatientHistoryPage() {
           <p className="text-sm font-semibold uppercase tracking-wide text-cyan-700">Hasta Arşivi</p>
           <h1 className="mt-2 text-3xl font-semibold text-slate-950">Hasta kayıtları</h1>
           <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-500">
-            Hasta bilgileri, klinik öykü, laboratuvar sonuçları ve radyoloji/ultrason kayıtları artık aynı arşiv kartında birlikte görünür.
+            Hasta bilgileri, klinik öykü, laboratuvar sonuçları ve radyoloji/ultrason kayıtları aynı arşiv kartında tarihleriyle birlikte görünür. Yeni tetkikler eski kayıtların üzerine yazılmaz; aynı hastanın geçmişine eklenir.
           </p>
         </div>
         <button
@@ -463,7 +495,7 @@ export default function PatientHistoryPage() {
           onClick={handleNewPatient}
           className="rounded-lg bg-blue-700 px-5 py-3 text-sm font-semibold text-white shadow-sm hover:bg-blue-800"
         >
-          + Yeni Hasta Kaydı
+          + Yeni Kayıt
         </button>
       </header>
 
@@ -538,13 +570,13 @@ export default function PatientHistoryPage() {
       {!loading && !error && records.length === 0 ? (
         <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-10 text-center">
           <p className="font-semibold text-slate-900">Henüz hasta kaydı yok</p>
-          <p className="mt-2 text-sm text-slate-500">İlk hastayı oluşturmak için Yeni Hasta Kaydı düğmesini kullanın.</p>
+          <p className="mt-2 text-sm text-slate-500">İlk kaydı oluşturmak için Yeni Kayıt düğmesini kullanın.</p>
           <button
             type="button"
             onClick={handleNewPatient}
             className="mt-5 rounded-lg bg-blue-700 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-800"
           >
-            + İlk hastayı oluştur
+            + İlk kaydı oluştur
           </button>
         </div>
       ) : null}
