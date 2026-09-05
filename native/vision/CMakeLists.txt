@@ -16,6 +16,7 @@ add_library(
     src/inference_contract.cpp
     src/dicom_engine.cpp
     src/postprocessing.cpp
+    src/anatomy_gate.cpp
 )
 set_target_properties(medicore_vision_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(
@@ -44,6 +45,21 @@ target_compile_definitions(
     medicore_vision
     PRIVATE
         MEDICORE_VISION_VERSION="0.5.0"
+)
+
+pybind11_add_module(
+    medicore_anatomy
+    src/anatomy_bindings.cpp
+)
+target_link_libraries(
+    medicore_anatomy
+    PRIVATE
+        medicore_vision_core
+)
+target_compile_definitions(
+    medicore_anatomy
+    PRIVATE
+        MEDICORE_ANATOMY_VERSION="0.1.0"
 )
 
 enable_testing()
@@ -90,3 +106,14 @@ target_link_libraries(
         medicore_vision_core
 )
 add_test(NAME vision_postprocessing COMMAND medicore_vision_postprocessing_tests)
+
+add_executable(
+    medicore_vision_anatomy_gate_tests
+    tests/test_anatomy_gate.cpp
+)
+target_link_libraries(
+    medicore_vision_anatomy_gate_tests
+    PRIVATE
+        medicore_vision_core
+)
+add_test(NAME anatomy_confidence_gate COMMAND medicore_vision_anatomy_gate_tests)
