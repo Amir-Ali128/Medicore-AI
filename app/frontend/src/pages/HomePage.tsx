@@ -1,6 +1,11 @@
 import { useState } from 'react';
+import { useLocation } from 'react-router-dom';
 
 const LEGAL_ACK_KEY = 'medicore:legalWarningsAcknowledged:v1';
+
+type HomeLocationState = {
+  acknowledgementRequired?: boolean;
+};
 
 function readAcknowledged() {
   try {
@@ -11,6 +16,8 @@ function readAcknowledged() {
 }
 
 export default function HomePage() {
+  const location = useLocation();
+  const state = location.state as HomeLocationState | null;
   const [acknowledged, setAcknowledged] = useState(readAcknowledged);
 
   function acknowledgeWarnings() {
@@ -38,6 +45,12 @@ export default function HomePage() {
           İşleme başlamak için soldaki ilgili bölüme tıklayın.
         </p>
       </header>
+
+      {state?.acknowledgementRequired && !acknowledged ? (
+        <div className="rounded-xl border border-amber-300 bg-amber-100 px-5 py-4 text-sm font-semibold text-amber-950">
+          Klinik bölümlerde işlem yapabilmek için önce aşağıdaki önemli uyarıları okuyup “Okudum ve anladım” düğmesine basmanız gerekir.
+        </div>
+      ) : null}
 
       <section className="rounded-xl border border-amber-200 bg-amber-50 p-5">
         <h2 className="text-base font-semibold text-amber-950">Önemli Uyarılar</h2>
