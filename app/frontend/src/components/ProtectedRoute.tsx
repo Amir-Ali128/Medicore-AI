@@ -6,8 +6,18 @@ import {
   type SessionWorkspace,
 } from '../services/authClient';
 
+const LEGAL_ACK_KEY = 'medicore:legalWarningsAcknowledged:v1';
+
 function clinicalHome(role: string | null) {
   return role === 'patient' ? '/patients/demo' : '/analysis/mock';
+}
+
+function hasAcknowledgedClinicalWarnings() {
+  try {
+    return localStorage.getItem(LEGAL_ACK_KEY) === 'true';
+  } catch {
+    return false;
+  }
 }
 
 export default function ProtectedRoute() {
@@ -28,6 +38,23 @@ export default function ProtectedRoute() {
 
   if (workspace === 'clinical' && role === 'admin') {
     return <Navigate to="/admin/analytics" replace />;
+  }
+
+  // The warning screen itself must remain reachable. Every other clinical route
+  // is blocked until the user explicitly acknowledges the safety information.
+  // This also covers direct/hash URL navigation, not just sidebar button clicks.
+  if (
+    workspace === 'clinical' &&
+    location.pathname !== '/' &&
+    !hasAcknowledgedClinicalWarnings()
+  ) {
+    return (
+      <Navigate
+        to="/"
+        replace
+        state={{ acknowledgementRequired: true, from: location }}
+      />
+    );
   }
 
   if (workspace === 'clinical' && role === null) {
