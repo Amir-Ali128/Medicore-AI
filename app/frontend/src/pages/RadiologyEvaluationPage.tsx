@@ -26,6 +26,10 @@ type FileUploadResult = {
   error?: string;
 };
 
+function todayValue() {
+  return new Date().toISOString().slice(0, 10);
+}
+
 function fileKey(file: File) {
   return `${file.name}:${file.size}:${file.lastModified}`;
 }
@@ -33,6 +37,12 @@ function fileKey(file: File) {
 function formatDate(value: string | null) {
   if (!value) return 'Tarih yok';
   return new Intl.DateTimeFormat('tr-TR', { dateStyle: 'medium' }).format(new Date(value));
+}
+
+function reportTime(report: RadiologyReport) {
+  const value = report.report_date || report.created_at || '';
+  const timestamp = Date.parse(value);
+  return Number.isNaN(timestamp) ? 0 : timestamp;
 }
 
 function isSupportedVisualImage(file: File) {
@@ -65,6 +75,7 @@ function metadataStringList(report: RadiologyReport, key: string) {
 export default function RadiologyEvaluationPage() {
   const [mode, setMode] = useState<'manual' | 'file'>('manual');
   const [filePurpose, setFilePurpose] = useState<FilePurpose>('report');
+  const [reportDate, setReportDate] = useState(todayValue());
   const [reportText, setReportText] = useState('');
   const [files, setFiles] = useState<File[]>([]);
   const [uploadResults, setUploadResults] = useState<FileUploadResult[]>([]);
@@ -79,11 +90,7 @@ export default function RadiologyEvaluationPage() {
 
   async function loadReports() {
     const stored = await listPatientRadiologyReports(null, { includeUnanalyzed: true });
-    setReports(
-      [...stored].sort(
-        (a, b) => Date.parse(b.created_at ?? '') - Date.parse(a.created_at ?? ''),
-      ),
-    );
+    setReports([...stored].sort((a, b) => reportTime(b) - reportTime(a)));
   }
 
   useEffect(() => {
@@ -95,11 +102,7 @@ export default function RadiologyEvaluationPage() {
         setError('');
         const stored = await listPatientRadiologyReports(null, { includeUnanalyzed: true });
         if (!cancelled) {
-          setReports(
-            [...stored].sort(
-              (a, b) => Date.parse(b.created_at ?? '') - Date.parse(a.created_at ?? ''),
-            ),
-          );
+          setReports([...stored].sort((a, b) => reportTime(b) - reportTime(a)));
         }
       } catch (loadError) {
         if (!cancelled) {
@@ -140,19 +143,23 @@ export default function RadiologyEvaluationPage() {
     setUploadResults([]);
 
     try {
+      if (!reportDate) {
+        throw new Error('Tetkik / rapor tarihi seçilmelidir.');
+      }
+
       if (mode === 'manual') {
         if (reportText.trim().length < 10) {
           throw new Error('Rapor metni en az 10 karakter olmalıdır.');
         }
 
         await createManualRadiologyReport({
-          reportDate: new Date().toISOString().slice(0, 10),
+          reportDate,
           modality: null,
           bodyPart: null,
           reportText,
         });
         setReportText('');
-        setStatus('Rapor değerlendirildi ve aktif hastanın kaydına eklendi.');
+        setStatus('Rapor değerlendirildi ve tarihli olarak aktif hastanın geçmişine eklendi.');
       } else {
         if (files.length === 0) {
           throw new Error('Önce en az bir dosya seçmelisin.');
@@ -172,9 +179,9 @@ export default function RadiologyEvaluationPage() {
 
           try {
             const report = wantsVisualAi
-              ? await uploadRadiologyImageReview(file, visualModality)
+              ? await uploadRadiologyImageReview(file, visualModality, reportDate)
               : await uploadRadiologyReportFile(file, {
-                  reportDate: new Date().toISOString().slice(0, 10),
+                  reportDate,
                   modality: explicitModality,
                   bodyPart: null,
                 });
@@ -200,7 +207,7 @@ export default function RadiologyEvaluationPage() {
         setFiles(failed);
         const successful = results.filter((item) => !item.error).length;
         if (successful > 0) {
-          setStatus(`${successful} dosya aktif hastanın kaydına eklendi.`);
+          setStatus(`${successful} dosya tarihli olarak aktif hastanın geçmişine eklendi.`);
         }
         if (failed.length > 0) {
           setError(`${failed.length} dosya işlenemedi; listede kalanları tekrar deneyebilirsin.`);
@@ -265,7 +272,7 @@ export default function RadiologyEvaluationPage() {
           Radyoloji ve Diğer Tetkik Raporları
         </h1>
         <p className="mt-2 text-sm leading-6 text-slate-500">
-          PDF/metin raporu, rapor fotoğrafı veya röntgen/ultrason görüntüsü ekleyebilirsin.
+          PDF/metin raporu, rapor fotoğrafı veya röntgen/ultrason görüntüsü ekleyebilirsin. Yeni kayıtlar eski tetkiklerin üzerine yazılmaz; seçilen tarihle aynı hastanın geçmişine eklenir.
         </p>
       </header>
 
@@ -294,6 +301,17 @@ export default function RadiologyEvaluationPage() {
             Dosya / görüntü yükle
           </button>
         </div>
+
+        <label className="mt-4 block max-w-sm text-sm font-medium text-slate-800">
+          Tetkik / rapor tarihi
+          <input
+            type="date"
+            required
+            value={reportDate}
+            onChange={(event) => setReportDate(event.target.value)}
+            className={`${INPUT_CLASS} mt-2`}
+          />
+        </label>
 
         {mode === 'manual' ? (
           <textarea
