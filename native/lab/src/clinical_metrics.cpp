@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
-#include <limits>
 #include <optional>
 #include <string>
 #include <unordered_set>
@@ -32,15 +31,6 @@ std::string compact_key(const std::string& value) {
         }
     }
     return out;
-}
-
-std::string row_key(const ProcessedLabRow& row) {
-    std::string merged = row.source.canonical_name;
-    merged += " ";
-    merged += row.display_name;
-    merged += " ";
-    merged += row.source.raw_parameter_name;
-    return compact_key(merged);
 }
 
 bool matches_alias(const ProcessedLabRow& row, const std::unordered_set<std::string>& aliases) {
@@ -91,6 +81,27 @@ std::string label_for(const Candidate& candidate) {
         return candidate.row->display_name;
     }
     return candidate.row->source.raw_parameter_name;
+}
+
+bool measurement_dates_compatible(const std::vector<const Candidate*>& candidates) {
+    std::string known_date;
+    for (const Candidate* candidate : candidates) {
+        if (candidate == nullptr) {
+            return false;
+        }
+        const std::string date = normalize_whitespace(candidate->row->source.measured_at);
+        if (date.empty()) {
+            continue;
+        }
+        if (known_date.empty()) {
+            known_date = date;
+            continue;
+        }
+        if (date != known_date) {
+            return false;
+        }
+    }
+    return true;
 }
 
 std::optional<double> creatinine_mg_dl(const Candidate& candidate) {
@@ -191,7 +202,7 @@ std::vector<DerivedMetric> compute_derived_metrics(
         "totalcholesterol", "cholesteroltotal", "totalkolesterol", "kolesteroltotal"
     };
     static const std::unordered_set<std::string> kHdl = {
-        "hdl", "hdlcholesterol", "hdlkolesterol", "hdl-c"
+        "hdl", "hdlc", "hdlcholesterol", "hdlkolesterol"
     };
     static const std::unordered_set<std::string> kAst = {
         "ast", "sgot", "aspartateaminotransferase", "aspartataminotransferaz"
@@ -255,7 +266,9 @@ std::vector<DerivedMetric> compute_derived_metrics(
 
     const auto total_cholesterol = best_candidate(rows, kTotalCholesterol);
     const auto hdl = best_candidate(rows, kHdl);
-    if (total_cholesterol && hdl && same_unit(*total_cholesterol, *hdl) && total_cholesterol->value >= hdl->value) {
+    if (total_cholesterol && hdl && same_unit(*total_cholesterol, *hdl) &&
+        measurement_dates_compatible({&*total_cholesterol, &*hdl}) &&
+        total_cholesterol->value >= hdl->value) {
         push_metric(
             output,
             "non_hdl_cholesterol",
@@ -264,7 +277,7 @@ std::vector<DerivedMetric> compute_derived_metrics(
             total_cholesterol->row->source.unit,
             "Total cholesterol - HDL cholesterol",
             {label_for(*total_cholesterol), label_for(*hdl)},
-            "Calculated lipid value using source results with matching units."
+            "Calculated lipid value using source results with matching units and compatible measurement dates."
         );
     }
 
@@ -272,6 +285,7 @@ std::vector<DerivedMetric> compute_derived_metrics(
     const auto alt = best_candidate(rows, kAlt);
     const auto platelets = best_candidate(rows, kPlatelets);
     if (patient_age && *patient_age >= 18 && *patient_age <= 120 && ast && alt && platelets &&
+        measurement_dates_compatible({&*ast, &*alt, &*platelets}) &&
         liver_enzyme_unit_ok(*ast) && liver_enzyme_unit_ok(*alt) && platelet_unit_ok(*platelets) &&
         ast->value >= 0.0 && alt->value > 0.0 && platelets->value > 0.0) {
         const double fib4 = static_cast<double>(*patient_age) * ast->value /
@@ -294,7 +308,9 @@ std::vector<DerivedMetric> compute_derived_metrics(
     const auto sodium = best_candidate(rows, kSodium);
     const auto chloride = best_candidate(rows, kChloride);
     const auto bicarbonate = best_candidate(rows, kBicarbonate);
-    if (sodium && chloride && bicarbonate && electrolyte_unit_ok(*sodium) && electrolyte_unit_ok(*chloride) &&
+    if (sodium && chloride && bicarbonate &&
+        measurement_dates_compatible({&*sodium, &*chloride, &*bicarbonate}) &&
+        electrolyte_unit_ok(*sodium) && electrolyte_unit_ok(*chloride) &&
         electrolyte_unit_ok(*bicarbonate)) {
         push_metric(
             output,
@@ -304,7 +320,7 @@ std::vector<DerivedMetric> compute_derived_metrics(
             "mmol/L",
             "Na - Cl - HCO3",
             {label_for(*sodium), label_for(*chloride), label_for(*bicarbonate)},
-            "Calculated without potassium and only when source electrolyte units are compatible."
+            "Calculated without potassium and only when source electrolyte units and measurement dates are compatible."
         );
     }
 
