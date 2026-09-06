@@ -18,6 +18,7 @@ on:
       - feature/production-hardening
       - feature/openai-radiology-second-reader
       - feature/gemini-radiology-third-reader
+      - feature/astra-native-lab-cpp
   pull_request:
     branches:
       - main
@@ -79,6 +80,22 @@ jobs:
       - name: Run native vision tests
         run: ctest --test-dir native/vision/build --output-on-failure
 
+  native-lab-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install native lab dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++ pybind11-dev
+      - name: Configure native lab engine
+        run: cmake -S native/lab -B native/lab/build -DCMAKE_BUILD_TYPE=Release
+      - name: Build native lab engine
+        run: cmake --build native/lab/build --config Release --parallel 2
+      - name: Run native lab tests
+        run: ctest --test-dir native/lab/build --output-on-failure
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:
@@ -88,7 +105,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '22'
           cache: npm
