@@ -19,6 +19,7 @@ on:
       - feature/openai-radiology-second-reader
       - feature/gemini-radiology-third-reader
       - feature/astra-native-lab-cpp
+      - feature/universal-page-analysis
   pull_request:
     branches:
       - main
@@ -52,6 +53,7 @@ jobs:
             tests/test_openai_radiology_second_reader.py \
             tests/test_openai_lab_extraction_service.py \
             tests/test_openai_lab_clinical_service.py \
+            tests/test_openai_case_document_service.py \
             tests/test_gemini_radiology_third_reader.py \
             tests/test_source_only_case_evaluation.py \
             tests/test_clinical_domain_router_runtime.py \
@@ -107,7 +109,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '22'
           cache: npm
