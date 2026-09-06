@@ -1,3 +1,5 @@
+import { getAccessToken } from './authClient';
+
 export const API_BASE_URL = (
   import.meta.env.VITE_API_BASE_URL ??
   import.meta.env.VITE_MEDICORE_API_BASE_URL ??
@@ -38,11 +40,13 @@ const parseResponseBody = async (response: Response) => {
 };
 
 const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
+  const token = getAccessToken();
   const response = await fetch(buildUrl(path), {
     ...init,
     headers: {
       Accept: 'application/json',
       ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...init?.headers,
     },
   });
