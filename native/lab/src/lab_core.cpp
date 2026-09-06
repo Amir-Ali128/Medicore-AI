@@ -21,11 +21,24 @@ bool finite_optional(const std::optional<double>& value) {
     return !value.has_value() || std::isfinite(*value);
 }
 
+std::string numeric_key(const std::optional<double>& value) {
+    if (!value) {
+        return "null";
+    }
+    std::ostringstream out;
+    out.precision(15);
+    out << *value;
+    return out.str();
+}
+
 std::string make_dedupe_key(const LabRow& row) {
     std::string name = row.canonical_name.empty() ? row.raw_parameter_name : row.canonical_name;
     name = lower_ascii(normalize_whitespace(name));
     const std::string unit = lower_ascii(normalize_unit(row.unit));
-    return name + "\x1f" + unit + "\x1f" + normalize_whitespace(row.measured_at);
+    return name + "\x1f" + unit + "\x1f" + normalize_whitespace(row.measured_at) +
+        "\x1f" + numeric_key(row.normalized_value) +
+        "\x1f" + numeric_key(row.reference_min) +
+        "\x1f" + numeric_key(row.reference_max);
 }
 
 }  // namespace
@@ -91,6 +104,7 @@ ProcessedLabRow process_row(const LabRow& input) {
     out.source.unit = normalize_unit(input.unit);
     out.source.reference_text = normalize_whitespace(input.reference_text);
     out.source.measured_at = normalize_whitespace(input.measured_at);
+    out.source.source_file_name = normalize_whitespace(input.source_file_name);
     out.source.extraction_confidence = clamp_confidence(input.extraction_confidence);
 
     out.display_name = out.source.canonical_name.empty()
@@ -175,15 +189,15 @@ std::vector<ProcessedLabRow> process_rows(const std::vector<LabRow>& rows) {
     std::vector<ProcessedLabRow> output;
     output.reserve(rows.size());
 
-    // Exact duplicate rows from repeated PDF headers/pages are collapsed. When the
-    // same test/date/unit appears more than once, keep the highest-confidence copy.
+    // Exact duplicate rows from overlapping images/PDF pages are collapsed. A
+    // genuinely repeated test with a different value/reference remains separate.
     std::unordered_map<std::string, std::size_t> index_by_key;
     for (const LabRow& row : rows) {
         ProcessedLabRow processed = process_row(row);
         const std::string key = make_dedupe_key(processed.source);
 
         auto found = index_by_key.find(key);
-        if (key.empty() || found == index_by_key.end()) {
+        if (found == index_by_key.end()) {
             index_by_key.emplace(key, output.size());
             output.push_back(std::move(processed));
             continue;
