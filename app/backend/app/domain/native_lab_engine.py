@@ -2,7 +2,8 @@
 
 The OpenAI model extracts structured rows from the original report. This module
 hands those rows to the native C++ core for deterministic normalization,
-reference-range classification, duplicate suppression and confidence gating.
+reference-range classification, duplicate suppression, confidence gating and
+selected non-diagnostic clinical calculations.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ from functools import lru_cache
 from typing import Any, Mapping, Sequence
 
 LAB_NATIVE_CONTRACT = "medicore-lab-v1"
+LAB_METRICS_CONTRACT = "medicore-lab-metrics-v1"
 
 
 class NativeLabUnavailable(RuntimeError):
@@ -29,6 +31,16 @@ def _load_native_module() -> Any | None:
 def native_lab_available() -> bool:
     module = _load_native_module()
     return bool(module is not None and getattr(module, "CONTRACT_VERSION", None) == LAB_NATIVE_CONTRACT)
+
+
+def native_lab_metrics_available() -> bool:
+    module = _load_native_module()
+    return bool(
+        module is not None
+        and getattr(module, "CONTRACT_VERSION", None) == LAB_NATIVE_CONTRACT
+        and getattr(module, "METRICS_VERSION", None) == LAB_METRICS_CONTRACT
+        and callable(getattr(module, "compute_derived_metrics", None))
+    )
 
 
 def _require_module() -> Any:
@@ -58,3 +70,42 @@ def process_astra_lab_rows(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, 
             raise RuntimeError("Native C++ lab satır contract sürümü uyumsuz.")
         processed.append(dict(item))
     return processed
+
+
+def compute_native_lab_metrics(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    patient_age: int | None,
+    patient_sex: str | None,
+) -> list[dict[str, Any]]:
+    """Compute deterministic derived metrics from the original extracted rows.
+
+    The native implementation performs unit/quality gates before any formula is
+    evaluated. Missing or incompatible inputs simply omit the affected metric.
+    """
+    if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes, bytearray)):
+        raise ValueError("Laboratuvar satırları bir liste olmalıdır.")
+
+    module = _require_module()
+    if getattr(module, "METRICS_VERSION", None) != LAB_METRICS_CONTRACT:
+        raise NativeLabUnavailable("MediCore native C++ clinical metrics contract sürümü uyumsuz.")
+    compute = getattr(module, "compute_derived_metrics", None)
+    if not callable(compute):
+        raise NativeLabUnavailable("MediCore native C++ clinical metrics modülü yüklü değil.")
+
+    native_output = compute(
+        [dict(row) for row in rows],
+        patient_age,
+        patient_sex or "",
+    )
+    if not isinstance(native_output, list):
+        raise RuntimeError("Native C++ clinical metrics geçersiz çıktı döndürdü.")
+
+    metrics: list[dict[str, Any]] = []
+    for item in native_output:
+        if not isinstance(item, dict):
+            raise RuntimeError("Native C++ clinical metric formatı geçersiz.")
+        if item.get("metrics_version") != LAB_METRICS_CONTRACT:
+            raise RuntimeError("Native C++ clinical metric contract sürümü uyumsuz.")
+        metrics.append(dict(item))
+    return metrics
