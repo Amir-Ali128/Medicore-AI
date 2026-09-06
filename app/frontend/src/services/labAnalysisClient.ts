@@ -31,6 +31,44 @@ export type PatientMetadata = {
   weight_kg?: number | string | null;
 };
 
+export type DerivedLabMetric = {
+  code: string;
+  name: string;
+  value: number | string;
+  unit: string;
+  formula: string;
+  input_labels: string[];
+  note: string;
+};
+
+export type LabClinicalPriorityFinding = {
+  title: string;
+  severity: 'critical' | 'high' | 'moderate' | 'info';
+  summary: string;
+  evidence: string[];
+  follow_up: string[];
+};
+
+export type LabClinicalSystemSection = {
+  title: string;
+  status: 'attention' | 'reassuring' | 'mixed' | 'uncertain';
+  summary: string;
+  evidence: string[];
+};
+
+export type LabClinicalAssessment = {
+  headline: string;
+  overview: string;
+  priority_findings: LabClinicalPriorityFinding[];
+  systems: LabClinicalSystemSection[];
+  reassuring_findings: string[];
+  priority_actions: string[];
+  limitations: string[];
+  narrative_tr: string;
+  model: string | null;
+  synthesis_source: string;
+};
+
 export type LabReportMetadata = {
   patient_display_name?: string | null;
   patient_age?: number | null;
@@ -40,6 +78,8 @@ export type LabReportMetadata = {
   chief_complaint?: string | null;
   clinical_history?: string | null;
   clinical_context?: ClinicalIntakeInput | null;
+  derived_metrics?: DerivedLabMetric[];
+  clinical_assessment?: LabClinicalAssessment | null;
   [key: string]: unknown;
 };
 
@@ -90,6 +130,8 @@ export type LabAnalysisResponse = {
     needs_review: number;
     unknown: number;
   };
+  derived_metrics?: DerivedLabMetric[];
+  clinical_assessment?: LabClinicalAssessment | null;
 };
 
 type AnalysisRunSummary = {
@@ -543,6 +585,14 @@ export async function getAnalysisRunResults(
   }));
 }
 
+async function getLabReportSummary(labReportId: string): Promise<LabReportSummary | null> {
+  const response = await fetch(`${API_BASE_URL}/lab-reports/${labReportId}`, {
+    headers: { ...authHeaders() },
+  });
+  if (!response.ok) return null;
+  return (await response.json()) as LabReportSummary;
+}
+
 export async function getLatestAnalysisForLabReport(
   labReportId: string,
   patientId: string,
@@ -568,11 +618,33 @@ export async function getLatestAnalysisForLabReport(
 
   if (!latestRun) return null;
 
-  const results = await getAnalysisRunResults(latestRun.id);
+  const [results, report] = await Promise.all([
+    getAnalysisRunResults(latestRun.id),
+    getLabReportSummary(labReportId),
+  ]);
+  const metadata = report?.metadata_json ?? {};
+  const derivedMetrics = Array.isArray(metadata.derived_metrics)
+    ? (metadata.derived_metrics as DerivedLabMetric[])
+    : [];
+  const clinicalAssessment =
+    metadata.clinical_assessment && typeof metadata.clinical_assessment === 'object'
+      ? (metadata.clinical_assessment as LabClinicalAssessment)
+      : null;
+  const restoredPatient: PatientMetadata | undefined =
+    metadata.patient_age !== undefined || metadata.patient_sex
+      ? {
+          display_name: null,
+          age: metadata.patient_age ?? null,
+          sex: metadata.patient_sex ?? null,
+          birth_date: null,
+        }
+      : undefined;
+
   const restored: LabAnalysisResponse = {
     analysis_run_id: latestRun.id,
     lab_report_id: latestRun.lab_report_id,
     patient_id: patientId,
+    patient: restoredPatient,
     results,
     counts: {
       total: latestRun.total_results,
@@ -582,6 +654,8 @@ export async function getLatestAnalysisForLabReport(
       needs_review: latestRun.needs_review_count,
       unknown: latestRun.unknown_count,
     },
+    derived_metrics: derivedMetrics,
+    clinical_assessment: clinicalAssessment,
   };
 
   rememberLatestAnalysis(restored);
