@@ -1,8 +1,8 @@
 """Astra-first laboratory document upload path.
 
-The original PDF/image is sent directly to the configured OpenAI multimodal model
-for document reading, preprocessing, extraction and semantic normalization. The
-returned rows are then validated/classified by MediCore's native C++ lab core
+The original PDF/image files are sent directly to the configured OpenAI multimodal
+model for document reading, preprocessing, extraction and semantic normalization.
+The returned rows are then validated/classified by MediCore's native C++ lab core
 before persistence. The legacy Python PDF parser is intentionally not part of this
 route anymore.
 """
@@ -24,7 +24,7 @@ from app.domain.native_lab_engine import NativeLabUnavailable, process_astra_lab
 from app.domain.openai_lab_extraction_service import (
     OpenAILabExtractionError,
     SUPPORTED_LAB_MEDIA_TYPES,
-    extract_lab_document_with_openai,
+    extract_lab_documents_with_openai,
 )
 from app.infrastructure.database.models.analysis_run import AnalysisRun
 from app.infrastructure.database.models.lab_report import LabReport
@@ -173,14 +173,43 @@ def _to_output(result: LabResult) -> StructuredLabResultOutput:
     )
 
 
-@router.post(
-    "/upload",
-    response_model=AnalysisPipelineResult,
-    status_code=status.HTTP_201_CREATED,
-)
-async def analyze_uploaded_pdf_direct(
+async def _prepare_uploads(files: list[UploadFile]) -> list[tuple[bytes, str, str]]:
+    settings = get_settings()
+    if not files:
+        raise HTTPException(status_code=400, detail="En az bir laboratuvar dosyası yüklenmelidir.")
+
+    prepared: list[tuple[bytes, str, str]] = []
+    total_bytes = 0
+    for file in files:
+        if not file.filename:
+            raise HTTPException(status_code=400, detail="Yüklenen dosyalardan birinin adı bulunmuyor.")
+        media_type = _media_type(file)
+        if media_type not in SUPPORTED_LAB_MEDIA_TYPES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Desteklenmeyen laboratuvar dosyası: {file.filename}",
+            )
+        file_bytes = await file.read()
+        if not file_bytes:
+            raise HTTPException(status_code=400, detail=f"Yüklenen dosya boş: {file.filename}")
+        total_bytes += len(file_bytes)
+        prepared.append((file_bytes, media_type, file.filename))
+
+    if total_bytes > settings.lab_extraction_max_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=(
+                "Laboratuvar dosyalarının toplamı "
+                f"{settings.lab_extraction_max_bytes // (1024 * 1024)} MB sınırını aşıyor."
+            ),
+        )
+    return prepared
+
+
+async def _analyze_prepared_documents(
+    *,
     session: SessionDep,
-    file: UploadFile = File(...),
+    documents: list[tuple[bytes, str, str]],
 ) -> AnalysisPipelineResult:
     settings = get_settings()
     if not settings.openai_lab_extraction_enabled:
@@ -188,31 +217,9 @@ async def analyze_uploaded_pdf_direct(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Direct OpenAI/Astra laboratuvar çıkarımı devre dışı.",
         )
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="Yüklenen dosyanın adı bulunmuyor.")
-
-    media_type = _media_type(file)
-    if media_type not in SUPPORTED_LAB_MEDIA_TYPES:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Laboratuvar yüklemesi PDF, PNG, JPEG veya WEBP olmalıdır.",
-        )
-
-    file_bytes = await file.read()
-    if not file_bytes:
-        raise HTTPException(status_code=400, detail="Yüklenen laboratuvar dosyası boş.")
-    if len(file_bytes) > settings.lab_extraction_max_bytes:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"Dosya {settings.lab_extraction_max_bytes // (1024 * 1024)} MB sınırını aşıyor.",
-        )
 
     try:
-        ai_payload = await extract_lab_document_with_openai(
-            content=file_bytes,
-            media_type=media_type,
-            file_name=file.filename,
-        )
+        ai_payload = await extract_lab_documents_with_openai(documents=documents)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except OpenAILabExtractionError as exc:
@@ -225,7 +232,7 @@ async def analyze_uploaded_pdf_direct(
     if not raw_rows:
         raise HTTPException(
             status_code=400,
-            detail="Astra/OpenAI dosyada güvenilir laboratuvar sonucu bulamadı.",
+            detail="Astra/OpenAI dosyalarda güvenilir laboratuvar sonucu bulamadı.",
         )
 
     try:
@@ -254,6 +261,8 @@ async def analyze_uploaded_pdf_direct(
     )
 
     model_name = settings.openai_lab_model
+    source_names = [name for _content, _media_type_value, name in documents]
+    report_file_name = source_names[0] if len(source_names) == 1 else f"batch:{len(source_names)}-files"
     now = datetime.now(timezone.utc)
     safe_ai_metadata = {
         "model": model_name,
@@ -268,11 +277,11 @@ async def analyze_uploaded_pdf_direct(
         patient_id=lab_analysis.DEMO_PATIENT_ID,
         uploaded_by_user_id=lab_analysis.DEMO_UPLOADED_BY_USER_ID,
         source_type="ai_document_upload",
-        file_name=file.filename,
+        file_name=report_file_name,
         report_date=report_date,
         raw_payload={
             "source": _PARSER_SOURCE,
-            "media_type": media_type,
+            "source_files": source_names,
             "processed_lab_count": len(rows),
             **safe_ai_metadata,
         },
@@ -280,6 +289,7 @@ async def analyze_uploaded_pdf_direct(
             "parser_source": _PARSER_SOURCE,
             "native_contract": rows[0].get("contract_version"),
             "reference_policy": "source_document_reference_first",
+            "source_file_count": len(source_names),
             **safe_ai_metadata,
         },
         status="analyzed",
@@ -296,6 +306,7 @@ async def analyze_uploaded_pdf_direct(
         metadata_json={
             "source": _PARSER_SOURCE,
             "model": model_name,
+            "source_file_count": len(source_names),
             "native_contract": rows[0].get("contract_version"),
         },
     )
@@ -359,6 +370,7 @@ async def analyze_uploaded_pdf_direct(
             measured_at=measured_at,
             metadata_json={
                 "source": _PARSER_SOURCE,
+                "source_file_name": row.get("source_file_name"),
                 "source_page": row.get("source_page"),
                 "reference_text": row.get("reference_text"),
                 "extraction_confidence": extraction_confidence,
@@ -395,3 +407,31 @@ async def analyze_uploaded_pdf_direct(
         results=[_to_output(item) for item in persisted],
         counts=counts,
     )
+
+
+@router.post(
+    "/upload",
+    response_model=AnalysisPipelineResult,
+    status_code=status.HTTP_201_CREATED,
+)
+async def analyze_uploaded_pdf_direct(
+    session: SessionDep,
+    file: UploadFile = File(...),
+) -> AnalysisPipelineResult:
+    """Backward-compatible single file endpoint; now Astra + C++ powered."""
+    documents = await _prepare_uploads([file])
+    return await _analyze_prepared_documents(session=session, documents=documents)
+
+
+@router.post(
+    "/upload-batch",
+    response_model=AnalysisPipelineResult,
+    status_code=status.HTTP_201_CREATED,
+)
+async def analyze_uploaded_lab_batch(
+    session: SessionDep,
+    files: list[UploadFile] = File(...),
+) -> AnalysisPipelineResult:
+    """Send up to the model's batch limit of lab PDFs/images as one case."""
+    documents = await _prepare_uploads(files)
+    return await _analyze_prepared_documents(session=session, documents=documents)
