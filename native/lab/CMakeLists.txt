@@ -34,6 +34,14 @@ target_compile_definitions(
         MEDICORE_LAB_VERSION="1.0.0"
 )
 
+# Installing with --prefix app/backend places the extension on FastAPI's normal
+# import path, so native_lab_engine can import `medicore_lab` without sys.path hacks.
+install(
+    TARGETS medicore_lab
+    LIBRARY DESTINATION .
+    RUNTIME DESTINATION .
+)
+
 enable_testing()
 add_executable(
     medicore_lab_core_tests
