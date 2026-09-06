@@ -1,8 +1,9 @@
 """Safety normalization for common Turkish e-Nabız laboratory PDFs.
 
 This layer runs after the existing parser. It fixes high-risk alias collisions,
-normalizes g/L protein results to g/dL, and adds common calculated/hemogram
-markers without replacing the core analysis pipeline.
+normalizes g/L protein results to g/dL, adds common calculated/hemogram markers,
+and tolerates common English/punctuated lipid and AST report spellings without
+replacing the core analysis pipeline.
 """
 
 from __future__ import annotations
@@ -34,6 +35,77 @@ EXTRA_PARAMETERS: dict[str, dict[str, Any]] = {
 
 for _name, _config in EXTRA_PARAMETERS.items():
     lab_analysis.LAB_PARAMETER_ALIASES.setdefault(_name, _config)
+
+
+def _extend_aliases(parameter_name: str, aliases: list[str]) -> None:
+    config = lab_analysis.LAB_PARAMETER_ALIASES.get(parameter_name)
+    if config is None:
+        return
+    target = config.setdefault("aliases", [])
+    for alias in aliases:
+        if alias not in target:
+            target.append(alias)
+
+
+# Real-world reports frequently punctuate HDL/LDL/SGOT or misspell cholesterol.
+# Canonicalizing these names lets the existing deterministic reference logic run
+# instead of turning otherwise-known markers into generic physician-review rows.
+_ALIAS_EXTENSIONS: dict[str, list[str]] = {
+    "Total Kolesterol": [
+        "CHOLESTEROL",
+        "CHOLESTROL",
+        "TOTAL CHOLESTEROL",
+        "TOTAL CHOLESTROL",
+        "TOTAL KOLESTEROL",
+    ],
+    "Non-HDL": [
+        "NON HDL",
+        "NON-HDL",
+        "NON HDL CHOLESTEROL",
+        "NON-HDL CHOLESTEROL",
+        "NON HDL CHOLESTROL",
+        "NON-HDL CHOLESTROL",
+        "NON HDL KOLESTEROL",
+        "NON-HDL KOLESTEROL",
+    ],
+    "TRIGLISERIT": [
+        "TRIGLYCERIDE",
+        "TRIGLYCERIDES",
+        "TRIGLISERIT",
+        "TRIGLISERID",
+    ],
+    "HDL": [
+        "HDL",
+        "HDL CHOLESTEROL",
+        "H.D.L CHOLESTEROL",
+        "HDL CHOLESTROL",
+        "H.D.L CHOLESTROL",
+        "HDL KOLESTEROL",
+        "H.D.L KOLESTEROL",
+    ],
+    "LDL": [
+        "LDL",
+        "LDL CHOLESTEROL",
+        "L.D.L CHOLESTEROL",
+        "LDL CHOLESTROL",
+        "L.D.L CHOLESTROL",
+        "LDL KOLESTEROL",
+        "L.D.L KOLESTEROL",
+    ],
+    "AST": [
+        "AST",
+        "SGOT",
+        "S.G.O.T",
+        "SGOT (AST)",
+        "S.G.O.T (AST)",
+        "ASPARTATE AMINOTRANSFERASE",
+        "ASPARTAT AMINOTRANSFERAZ",
+    ],
+}
+
+for _parameter_name, _aliases in _ALIAS_EXTENSIONS.items():
+    _extend_aliases(_parameter_name, _aliases)
+
 
 _original_parse = lab_analysis._parse_lab_values_from_text
 
