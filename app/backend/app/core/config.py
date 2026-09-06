@@ -71,6 +71,14 @@ class Settings(BaseSettings):
     openai_vision_model: str = "gpt-6-astra"
     openai_radiology_second_reader_enabled: bool = True
 
+    # --- Direct OpenAI/Astra laboratory document reader ------------------
+    # The original PDF/image is sent directly to the multimodal model. The model
+    # extracts and normalizes rows; the native C++ lab core performs deterministic
+    # reference-range classification before persistence.
+    openai_lab_model: str = "gpt-6-astra"
+    openai_lab_extraction_enabled: bool = True
+    native_lab_required: bool = True
+
     # --- Gemini independent radiology third reader -----------------------
     # Maximum-quality multimodal profile. Gemini 3.1 Pro is currently preview;
     # deployments that require GA-only models can override this with
