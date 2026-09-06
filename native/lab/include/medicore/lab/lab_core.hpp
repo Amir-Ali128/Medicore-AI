@@ -20,6 +20,7 @@ struct LabRow {
     std::string measured_at;
     bool ai_needs_review{false};
     double extraction_confidence{0.0};
+    std::string source_file_name;
     std::optional<int> source_page;
 };
 
