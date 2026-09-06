@@ -127,6 +127,107 @@ export type ClinicalBrainInput = {
   language?: string;
 };
 
+function sanitizeClinicalContext(
+  context: ClinicalIntakeInput | null,
+): ClinicalIntakeInput | null {
+  if (!context) return null;
+
+  const patient = context.patient_information ?? {
+    full_name: null,
+    age: null,
+    sex: null,
+    height_cm: null,
+    weight_kg: null,
+  };
+  const complaint = context.presenting_complaint ?? {
+    reason_for_visit: null,
+    chief_complaint: null,
+    complaint_duration: null,
+    severity_score: null,
+    associated_symptoms: null,
+  };
+  const history = context.clinical_history_details ?? {
+    history_of_present_illness: null,
+    current_medical_conditions: null,
+    past_medical_history: null,
+    family_history: null,
+    medications: null,
+    allergies: null,
+    tobacco_alcohol: null,
+    past_surgeries: null,
+  };
+  const exam = context.physical_exam ?? {
+    blood_pressure_systolic: null,
+    blood_pressure_diastolic: null,
+    pulse_bpm: null,
+    temperature_c: null,
+    respiratory_rate: null,
+    oxygen_saturation_percent: null,
+    examination_findings: null,
+  };
+  const imaging = context.imaging_results ?? {
+    xray: null,
+    ultrasound: null,
+    ct: null,
+    mri: null,
+    pet_ct: null,
+    pathology: null,
+  };
+
+  return {
+    patient_information: {
+      full_name: null,
+      age: patient.age ?? null,
+      sex: patient.sex ?? null,
+      height_cm: patient.height_cm ?? null,
+      weight_kg: patient.weight_kg ?? null,
+    },
+    presenting_complaint: {
+      reason_for_visit: complaint.reason_for_visit ?? null,
+      chief_complaint: complaint.chief_complaint ?? null,
+      complaint_duration: complaint.complaint_duration ?? null,
+      severity_score: complaint.severity_score ?? null,
+      associated_symptoms: complaint.associated_symptoms ?? null,
+    },
+    clinical_history_details: {
+      history_of_present_illness: history.history_of_present_illness ?? null,
+      current_medical_conditions: history.current_medical_conditions ?? null,
+      past_medical_history: history.past_medical_history ?? null,
+      family_history: history.family_history ?? null,
+      medications: history.medications ?? null,
+      allergies: history.allergies ?? null,
+      tobacco_alcohol: history.tobacco_alcohol ?? null,
+      past_surgeries: history.past_surgeries ?? null,
+    },
+    physical_exam: {
+      blood_pressure_systolic: exam.blood_pressure_systolic ?? null,
+      blood_pressure_diastolic: exam.blood_pressure_diastolic ?? null,
+      pulse_bpm: exam.pulse_bpm ?? null,
+      temperature_c: exam.temperature_c ?? null,
+      respiratory_rate: exam.respiratory_rate ?? null,
+      oxygen_saturation_percent: exam.oxygen_saturation_percent ?? null,
+      examination_findings: exam.examination_findings ?? null,
+    },
+    imaging_results: {
+      xray: imaging.xray ?? null,
+      ultrasound: imaging.ultrasound ?? null,
+      ct: imaging.ct ?? null,
+      mri: imaging.mri ?? null,
+      pet_ct: imaging.pet_ct ?? null,
+      pathology: imaging.pathology ?? null,
+    },
+    attachments: Array.isArray(context.attachments)
+      ? context.attachments.map((attachment) => ({
+          file_name: attachment.file_name,
+          category: attachment.category,
+          content_type: attachment.content_type ?? null,
+          size_bytes: attachment.size_bytes,
+          last_modified_ms: attachment.last_modified_ms ?? null,
+        }))
+      : [],
+  };
+}
+
 function compactRadiologySummary(report: RadiologyReport): string | null {
   const summary = report.summary?.replace(/\s+/g, ' ').trim();
   const impression = report.impression?.replace(/\s+/g, ' ').trim();
@@ -155,9 +256,14 @@ function reportTimestamp(report: RadiologyReport): number {
 export async function evaluateClinicalBrain(
   input: ClinicalBrainInput,
 ): Promise<ClinicalBrainResult> {
+  const payload: ClinicalBrainInput = {
+    ...input,
+    clinical_context: sanitizeClinicalContext(input.clinical_context),
+  };
+
   const result = await apiClient.post<ClinicalBrainResult>(
     '/clinical-brain/evaluate',
-    input,
+    payload,
   );
 
   const latestRadiology = [...input.radiology_reports]
