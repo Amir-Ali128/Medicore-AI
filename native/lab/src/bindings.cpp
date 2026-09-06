@@ -25,7 +25,7 @@ std::optional<double> optional_double(const py::dict& row, const char* key) {
         return std::nullopt;
     }
     try {
-        return py::float_(row[key]).cast<double>();
+        return py::cast<double>(row[key]);
     } catch (const py::cast_error&) {
         return std::nullopt;
     }
@@ -36,7 +36,7 @@ std::optional<int> optional_int(const py::dict& row, const char* key) {
         return std::nullopt;
     }
     try {
-        return py::int_(row[key]).cast<int>();
+        return py::cast<int>(row[key]);
     } catch (const py::cast_error&) {
         return std::nullopt;
     }
@@ -47,7 +47,7 @@ bool bool_value(const py::dict& row, const char* key, bool fallback = false) {
         return fallback;
     }
     try {
-        return py::bool_(row[key]).cast<bool>();
+        return py::cast<bool>(row[key]);
     } catch (const py::cast_error&) {
         return fallback;
     }
@@ -80,6 +80,7 @@ LabRow from_python(const py::dict& row) {
     if (value.extraction_confidence == 0.0) {
         value.extraction_confidence = confidence_value(row, "extraction_confidence");
     }
+    value.source_file_name = text_value(row, "source_file_name");
     value.source_page = optional_int(row, "source_page");
     return value;
 }
@@ -98,28 +99,26 @@ py::object optional_int_to_python(const std::optional<int>& value) {
     return py::int_(*value);
 }
 
+py::object text_or_none(const std::string& value) {
+    if (value.empty()) {
+        return py::none();
+    }
+    return py::str(value);
+}
+
 py::dict to_python(const ProcessedLabRow& row) {
     py::dict out;
     out["raw_parameter_name"] = row.source.raw_parameter_name;
-    out["canonical_name"] = row.source.canonical_name.empty()
-        ? py::object(py::none())
-        : py::object(py::str(row.source.canonical_name));
+    out["canonical_name"] = text_or_none(row.source.canonical_name);
     out["display_name"] = row.display_name;
-    out["raw_value"] = row.source.raw_value.empty()
-        ? py::object(py::none())
-        : py::object(py::str(row.source.raw_value));
+    out["raw_value"] = text_or_none(row.source.raw_value);
     out["normalized_value"] = optional_to_python(row.source.normalized_value);
-    out["unit"] = row.source.unit.empty()
-        ? py::object(py::none())
-        : py::object(py::str(row.source.unit));
+    out["unit"] = text_or_none(row.source.unit);
     out["reference_min"] = optional_to_python(row.source.reference_min);
     out["reference_max"] = optional_to_python(row.source.reference_max);
-    out["reference_text"] = row.source.reference_text.empty()
-        ? py::object(py::none())
-        : py::object(py::str(row.source.reference_text));
-    out["measured_at"] = row.source.measured_at.empty()
-        ? py::object(py::none())
-        : py::object(py::str(row.source.measured_at));
+    out["reference_text"] = text_or_none(row.source.reference_text);
+    out["measured_at"] = text_or_none(row.source.measured_at);
+    out["source_file_name"] = text_or_none(row.source.source_file_name);
     out["source_page"] = optional_int_to_python(row.source.source_page);
     out["extraction_confidence"] = row.source.extraction_confidence;
     out["result_status"] = row.status;
@@ -133,7 +132,7 @@ py::dict to_python(const ProcessedLabRow& row) {
 
 py::list process_python_rows(const py::list& rows) {
     std::vector<LabRow> native_rows;
-    native_rows.reserve(py::len(rows));
+    native_rows.reserve(static_cast<std::size_t>(py::len(rows)));
     for (const py::handle item : rows) {
         if (!py::isinstance<py::dict>(item)) {
             throw py::value_error("Her laboratuvar satırı bir dict olmalıdır.");
