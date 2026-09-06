@@ -1,6 +1,13 @@
 import { apiClient } from './apiClient';
-import type { ClinicalIntakeInput, LabAnalysisResult } from './labAnalysisClient';
+import { listPatientLabReports } from './labArchiveClient';
 import {
+  getLatestAnalysisForLabReport,
+  type ClinicalIntakeInput,
+  type LabAnalysisResult,
+} from './labAnalysisClient';
+import { getPatientRecord } from './patientClient';
+import {
+  ACTIVE_PATIENT_ID_KEY,
   isAnalyzableRadiologyReport,
   type RadiologyReport,
 } from './radiologyClient';
@@ -228,6 +235,70 @@ function sanitizeClinicalContext(
   };
 }
 
+function hasMeaningfulClinicalContext(context: ClinicalIntakeInput | null): boolean {
+  if (!context) return false;
+  const complaint = context.presenting_complaint;
+  const exam = context.physical_exam;
+  return [
+    complaint?.reason_for_visit,
+    complaint?.chief_complaint,
+    complaint?.complaint_duration,
+    complaint?.severity_score,
+    complaint?.associated_symptoms,
+    exam?.blood_pressure_systolic,
+    exam?.blood_pressure_diastolic,
+    exam?.pulse_bpm,
+    exam?.temperature_c,
+    exam?.respiratory_rate,
+    exam?.oxygen_saturation_percent,
+    exam?.examination_findings,
+  ].some((value) => value !== null && value !== undefined && value !== '');
+}
+
+async function restoreBackendSources(input: ClinicalBrainInput): Promise<ClinicalBrainInput> {
+  const activePatientId = localStorage.getItem(ACTIVE_PATIENT_ID_KEY);
+  if (!activePatientId) return input;
+
+  let clinicalContext = input.clinical_context;
+  let labResults = input.lab_results;
+
+  if (!hasMeaningfulClinicalContext(clinicalContext)) {
+    try {
+      const patient = await getPatientRecord(activePatientId);
+      clinicalContext = patient.metadata_json?.clinical_context ?? clinicalContext;
+    } catch {
+      // Keep the browser draft when the persistent patient record cannot be restored.
+    }
+  }
+
+  if (labResults.length === 0) {
+    try {
+      const reports = await listPatientLabReports(activePatientId);
+      const sortedReports = [...reports].sort(
+        (left, right) =>
+          Date.parse(right.updated_at || right.created_at || '') -
+          Date.parse(left.updated_at || left.created_at || ''),
+      );
+
+      for (const report of sortedReports) {
+        const analysis = await getLatestAnalysisForLabReport(report.id, activePatientId);
+        if (analysis?.results?.length) {
+          labResults = analysis.results;
+          break;
+        }
+      }
+    } catch {
+      // Empty lab input remains valid; Clinical Brain will mark laboratory unavailable.
+    }
+  }
+
+  return {
+    ...input,
+    clinical_context: clinicalContext,
+    lab_results: labResults,
+  };
+}
+
 function compactRadiologySummary(report: RadiologyReport): string | null {
   const summary = report.summary?.replace(/\s+/g, ' ').trim();
   const impression = report.impression?.replace(/\s+/g, ' ').trim();
@@ -256,9 +327,10 @@ function reportTimestamp(report: RadiologyReport): number {
 export async function evaluateClinicalBrain(
   input: ClinicalBrainInput,
 ): Promise<ClinicalBrainResult> {
+  const restoredInput = await restoreBackendSources(input);
   const payload: ClinicalBrainInput = {
-    ...input,
-    clinical_context: sanitizeClinicalContext(input.clinical_context),
+    ...restoredInput,
+    clinical_context: sanitizeClinicalContext(restoredInput.clinical_context),
   };
 
   const result = await apiClient.post<ClinicalBrainResult>(
@@ -266,7 +338,7 @@ export async function evaluateClinicalBrain(
     payload,
   );
 
-  const latestRadiology = [...input.radiology_reports]
+  const latestRadiology = [...restoredInput.radiology_reports]
     .filter(isAnalyzableRadiologyReport)
     .sort((left, right) => reportTimestamp(right) - reportTimestamp(left))
     .find((report) => compactRadiologySummary(report) !== null) ?? null;
