@@ -190,10 +190,10 @@ async def extract_lab_documents_with_openai(
     if not model:
         raise OpenAILabExtractionError("OPENAI_LAB_MODEL yapılandırılmamış.")
 
-    client = AsyncOpenAI(
-        api_key=settings.openai_api_key,
-        timeout=settings.ai_call_timeout_seconds,
-    )
+    # Keep provider construction minimal so this layer is easy to test and remains
+    # compatible with the project's existing OpenAI client shim. Request-level
+    # resilience is handled at the API/runtime boundary.
+    client = AsyncOpenAI(api_key=settings.openai_api_key)
     try:
         response = await client.responses.create(
             model=model,
