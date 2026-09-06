@@ -50,6 +50,7 @@ jobs:
           PYTHONPATH=. python -m pytest -q \
             tests/test_radiology_image_review.py \
             tests/test_openai_radiology_second_reader.py \
+            tests/test_openai_lab_extraction_service.py \
             tests/test_gemini_radiology_third_reader.py \
             tests/test_source_only_case_evaluation.py \
             tests/test_clinical_domain_router_runtime.py \
