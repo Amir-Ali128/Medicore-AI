@@ -1,37 +1,51 @@
-"""Fast, PDF-first laboratory upload path.
+"""Astra-first laboratory document upload path.
 
-This endpoint intentionally avoids per-test dictionary/reference/trend database
-round trips during initial PDF ingestion. Every blood-test row readable from the
-PDF is preserved and classified directly against the reference interval printed
-in that report. The result set is persisted in one transaction and can later be
-attached to the selected patient/archive through the existing lab-report routes.
+The original PDF/image is sent directly to the configured OpenAI multimodal model
+for document reading, preprocessing, extraction and semantic normalization. The
+returned rows are then validated/classified by MediCore's native C++ lab core
+before persistence. The legacy Python PDF parser is intentionally not part of this
+route anymore.
 """
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, File, HTTPException, UploadFile, status
 
 from app.api.dependencies import SessionDep
-from app.api.routes import lab_analysis, lab_pdf_system_extract
-# Import for side effects: fixes no-reference rows, CBC #/% keys and footer rows.
-from app.api.routes import lab_pdf_system_extract_runtime as _lab_pdf_runtime  # noqa: F401
+from app.api.routes import lab_analysis
+from app.core.config import get_settings
 from app.domain.enums import ResultStatus, TrendStatus
+from app.domain.native_lab_engine import NativeLabUnavailable, process_astra_lab_rows
+from app.domain.openai_lab_extraction_service import (
+    OpenAILabExtractionError,
+    SUPPORTED_LAB_MEDIA_TYPES,
+    extract_lab_document_with_openai,
+)
 from app.infrastructure.database.models.analysis_run import AnalysisRun
 from app.infrastructure.database.models.lab_report import LabReport
 from app.infrastructure.database.models.lab_result import LabResult
 from app.schemas.lab_analysis import (
     AnalysisCounts,
     AnalysisPipelineResult,
+    PatientMetadataOutput,
     StructuredLabResultOutput,
 )
 
 router = APIRouter(prefix="/lab-analysis", tags=["lab-analysis"])
 
-_PARSER_SOURCE = "pdf_direct_upload_v1"
+_PARSER_SOURCE = "astra_native_cpp_lab_v1"
+_EXTENSION_MEDIA_TYPES = {
+    ".pdf": "application/pdf",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+}
 
 
 def _decimal(value: Any) -> Decimal | None:
@@ -43,47 +57,97 @@ def _decimal(value: Any) -> Decimal | None:
         return None
 
 
-def _classify_row(row: dict[str, Any]) -> tuple[ResultStatus, bool, str, str | None]:
-    value = _decimal(row.get("normalized_value"))
-    low = _decimal(row.get("extracted_reference_min"))
-    high = _decimal(row.get("extracted_reference_max"))
-
+def _date(value: Any, fallback: date | None = None) -> date | None:
     if value is None:
-        return (
-            ResultStatus.NEEDS_REVIEW,
-            True,
-            "Sayısal sonuç okunamadı; hekim kontrolü gerekir.",
-            "pdf_missing_numeric_value",
-        )
+        return fallback
+    text = str(value).strip()
+    if not text:
+        return fallback
+    try:
+        return date.fromisoformat(text[:10])
+    except ValueError:
+        return fallback
 
-    if low is None or high is None:
-        return (
-            ResultStatus.NEEDS_REVIEW,
-            True,
-            "PDF üzerinde güvenilir bir referans aralığı bulunmadığı için sonuç otomatik sınıflandırılmadı.",
-            "pdf_missing_reference",
-        )
 
-    if value < low:
-        return (
-            ResultStatus.LOW,
-            False,
-            f"Değer {value}, PDF referans alt sınırı {low} değerinin altındadır.",
-            "pdf_value_below_min",
+def _media_type(file: UploadFile) -> str:
+    declared = (file.content_type or "").split(";", 1)[0].lower().strip()
+    if declared in SUPPORTED_LAB_MEDIA_TYPES:
+        return declared
+    suffix = Path(file.filename or "").suffix.lower()
+    return _EXTENSION_MEDIA_TYPES.get(suffix, declared)
+
+
+def _status(value: Any) -> ResultStatus:
+    normalized = str(value or "").strip().upper()
+    return {
+        "NORMAL": ResultStatus.NORMAL,
+        "LOW": ResultStatus.LOW,
+        "HIGH": ResultStatus.HIGH,
+        "NEEDS_REVIEW": ResultStatus.NEEDS_REVIEW,
+    }.get(normalized, ResultStatus.UNKNOWN)
+
+
+def _python_fallback(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Development-only fallback; production defaults to native_lab_required=true."""
+    processed: list[dict[str, Any]] = []
+    for source in rows:
+        row = dict(source)
+        value = _decimal(row.get("normalized_value"))
+        low = _decimal(row.get("reference_min"))
+        high = _decimal(row.get("reference_max"))
+        confidence = float(row.get("confidence") or 0.0)
+        needs_review = bool(row.get("needs_review")) or confidence < 0.85
+
+        if value is None:
+            result_status = "NEEDS_REVIEW"
+            needs_review = True
+            reason = "Sayısal sonuç güvenilir biçimde çıkarılamadı."
+            rule = "python_fallback_missing_numeric"
+            classification_confidence = 0.0
+        elif low is not None and high is not None and low > high:
+            result_status = "NEEDS_REVIEW"
+            needs_review = True
+            reason = "Referans aralığı geçersiz."
+            rule = "python_fallback_invalid_reference"
+            classification_confidence = 0.0
+        elif low is not None and value < low:
+            result_status = "LOW"
+            reason = "Değer kaynak rapordaki referans alt sınırının altında."
+            rule = "python_fallback_below_min"
+            classification_confidence = confidence
+        elif high is not None and value > high:
+            result_status = "HIGH"
+            reason = "Değer kaynak rapordaki referans üst sınırının üzerinde."
+            rule = "python_fallback_above_max"
+            classification_confidence = confidence
+        elif low is not None or high is not None:
+            result_status = "NORMAL"
+            reason = "Değer kaynak rapordaki mevcut referans sınırları içinde."
+            rule = "python_fallback_within_reference"
+            classification_confidence = confidence
+        else:
+            result_status = "NEEDS_REVIEW"
+            needs_review = True
+            reason = "Kaynak raporda güvenilir referans sınırı bulunamadı."
+            rule = "python_fallback_missing_reference"
+            classification_confidence = 0.0
+
+        processed.append(
+            {
+                **row,
+                "display_name": row.get("canonical_name") or row.get("raw_parameter_name") or "Bilinmeyen test",
+                "reference_min": low,
+                "reference_max": high,
+                "extraction_confidence": confidence,
+                "result_status": result_status,
+                "needs_review": needs_review,
+                "reason": reason,
+                "rule_applied": rule,
+                "classification_confidence": classification_confidence,
+                "contract_version": "python-development-fallback",
+            }
         )
-    if value > high:
-        return (
-            ResultStatus.HIGH,
-            False,
-            f"Değer {value}, PDF referans üst sınırı {high} değerinin üzerindedir.",
-            "pdf_value_above_max",
-        )
-    return (
-        ResultStatus.NORMAL,
-        False,
-        f"Değer {value}, PDF referans aralığı [{low}, {high}] içindedir.",
-        "pdf_value_within_range",
-    )
+    return processed
 
 
 def _to_output(result: LabResult) -> StructuredLabResultOutput:
@@ -99,6 +163,7 @@ def _to_output(result: LabResult) -> StructuredLabResultOutput:
         reference_max=result.reference_max,
         result_status=result.result_status,
         trend_status=result.trend_status,
+        measured_at=result.measured_at,
         needs_review=result.needs_review,
         reason=result.reason,
         alias_confidence=result.alias_confidence,
@@ -117,55 +182,105 @@ async def analyze_uploaded_pdf_direct(
     session: SessionDep,
     file: UploadFile = File(...),
 ) -> AnalysisPipelineResult:
+    settings = get_settings()
+    if not settings.openai_lab_extraction_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Direct OpenAI/Astra laboratuvar çıkarımı devre dışı.",
+        )
     if not file.filename:
         raise HTTPException(status_code=400, detail="Yüklenen dosyanın adı bulunmuyor.")
-    if not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Bu akış yalnızca PDF dosyalarını destekler.")
+
+    media_type = _media_type(file)
+    if media_type not in SUPPORTED_LAB_MEDIA_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Laboratuvar yüklemesi PDF, PNG, JPEG veya WEBP olmalıdır.",
+        )
 
     file_bytes = await file.read()
     if not file_bytes:
-        raise HTTPException(status_code=400, detail="Yüklenen PDF boş.")
-    if len(file_bytes) > lab_analysis._MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=400, detail="Yüklenen laboratuvar dosyası boş.")
+    if len(file_bytes) > settings.lab_extraction_max_bytes:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail="PDF 10 MB sınırını aşıyor.",
+            detail=f"Dosya {settings.lab_extraction_max_bytes // (1024 * 1024)} MB sınırını aşıyor.",
         )
 
-    extracted_text = lab_analysis._extract_text_from_pdf(file_bytes)
-    if not extracted_text.strip():
+    try:
+        ai_payload = await extract_lab_document_with_openai(
+            content=file_bytes,
+            media_type=media_type,
+            file_name=file.filename,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except OpenAILabExtractionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+
+    raw_rows = ai_payload.get("labs") or []
+    if not raw_rows:
         raise HTTPException(
             status_code=400,
-            detail="PDF'den seçilebilir metin çıkarılamadı. Görüntü tabanlı PDF için OCR gerekir.",
+            detail="Astra/OpenAI dosyada güvenilir laboratuvar sonucu bulamadı.",
         )
 
-    report_date = lab_pdf_system_extract._extract_report_date(extracted_text)
-    rows = lab_pdf_system_extract._parse_all_blood_rows(extracted_text, report_date)
+    try:
+        rows = process_astra_lab_rows(raw_rows)
+    except NativeLabUnavailable as exc:
+        if settings.native_lab_required:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(exc),
+            ) from exc
+        rows = _python_fallback([dict(row) for row in raw_rows])
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=f"Native lab işleme hatası: {exc}") from exc
+
     if not rows:
-        raise HTTPException(
-            status_code=400,
-            detail="PDF içinde sınıflandırılabilir kan tahlili satırı bulunamadı.",
-        )
+        raise HTTPException(status_code=400, detail="İşlenebilir laboratuvar satırı bulunamadı.")
 
-    # The existing demo entities are used only as temporary ownership until the
-    # user presses Kaydet and attaches the report to the active patient.
     await lab_analysis._ensure_demo_patient_and_user()
-    patient_metadata = lab_analysis._parse_patient_metadata_from_text(extracted_text)
 
+    report_date = _date(ai_payload.get("report_date"), date.today()) or date.today()
+    patient_metadata = PatientMetadataOutput(
+        display_name=None,
+        age=ai_payload.get("patient_age"),
+        sex=(str(ai_payload.get("patient_sex")).strip() if ai_payload.get("patient_sex") else None),
+        birth_date=None,
+    )
+
+    model_name = settings.openai_lab_model
     now = datetime.now(timezone.utc)
+    safe_ai_metadata = {
+        "model": model_name,
+        "extraction_confidence": ai_payload.get("extraction_confidence"),
+        "critical_findings": ai_payload.get("critical_findings") or [],
+        "clinical_summary": ai_payload.get("clinical_summary") or "",
+        "follow_up_considerations": ai_payload.get("follow_up_considerations") or [],
+        "warnings": ai_payload.get("warnings") or [],
+    }
+
     report = LabReport(
         patient_id=lab_analysis.DEMO_PATIENT_ID,
         uploaded_by_user_id=lab_analysis.DEMO_UPLOADED_BY_USER_ID,
-        source_type="pdf_upload",
+        source_type="ai_document_upload",
         file_name=file.filename,
         report_date=report_date,
         raw_payload={
             "source": _PARSER_SOURCE,
-            "parsed_blood_test_count": len(rows),
+            "media_type": media_type,
+            "processed_lab_count": len(rows),
+            **safe_ai_metadata,
         },
         metadata_json={
             "parser_source": _PARSER_SOURCE,
-            "parsed_blood_test_count": len(rows),
-            "reference_policy": "printed_pdf_reference_first",
+            "native_contract": rows[0].get("contract_version"),
+            "reference_policy": "source_document_reference_first",
+            **safe_ai_metadata,
         },
         status="analyzed",
     )
@@ -178,26 +293,40 @@ async def analyze_uploaded_pdf_direct(
         status="completed",
         started_at=now,
         completed_at=now,
-        metadata_json={"source": _PARSER_SOURCE},
+        metadata_json={
+            "source": _PARSER_SOURCE,
+            "model": model_name,
+            "native_contract": rows[0].get("contract_version"),
+        },
     )
     session.add(run)
     await session.flush()
 
     persisted: list[LabResult] = []
     for row in rows:
-        result_status, needs_review, reason, rule = _classify_row(row)
-        reference_min = _decimal(row.get("extracted_reference_min"))
-        reference_max = _decimal(row.get("extracted_reference_max"))
+        result_status = _status(row.get("result_status"))
+        needs_review = bool(row.get("needs_review"))
+        reference_min = _decimal(row.get("reference_min"))
+        reference_max = _decimal(row.get("reference_max"))
         normalized_value = _decimal(row.get("normalized_value"))
-        display_name = str(row.get("display_name") or "Bilinmeyen test")[:255]
+        display_name = str(
+            row.get("display_name")
+            or row.get("canonical_name")
+            or row.get("raw_parameter_name")
+            or "Bilinmeyen test"
+        )[:255]
+        raw_parameter_name = str(row.get("raw_parameter_name") or display_name)[:255]
         unit = str(row.get("unit") or "")[:64] or None
+        extraction_confidence = float(row.get("extraction_confidence") or 0.0)
+        classification_confidence = float(row.get("classification_confidence") or 0.0)
+        measured_at = _date(row.get("measured_at"), report_date)
 
         lab_result = LabResult(
             patient_id=lab_analysis.DEMO_PATIENT_ID,
             lab_report_id=report.id,
             analysis_run_id=run.id,
             parameter_id=None,
-            raw_parameter_name=display_name,
+            raw_parameter_name=raw_parameter_name,
             parameter_code=None,
             canonical_name=display_name,
             raw_value=str(row.get("raw_value") or "")[:128] or None,
@@ -205,24 +334,35 @@ async def analyze_uploaded_pdf_direct(
             unit=unit,
             reference_min=reference_min,
             reference_max=reference_max,
-            reference_source="extracted_report" if reference_min is not None and reference_max is not None else None,
+            reference_source=(
+                "extracted_report"
+                if reference_min is not None or reference_max is not None
+                else None
+            ),
             result_status=result_status,
             trend_status=TrendStatus.NO_PREVIOUS_RESULT,
             previous_value=None,
             absolute_difference=None,
             percentage_difference=None,
             time_difference_days=None,
-            alias_confidence=1.0,
-            reference_confidence=0.98 if reference_min is not None and reference_max is not None else 0.0,
-            classification_confidence=1.0 if not needs_review else 0.0,
+            alias_confidence=extraction_confidence,
+            reference_confidence=(
+                extraction_confidence
+                if reference_min is not None or reference_max is not None
+                else 0.0
+            ),
+            classification_confidence=classification_confidence,
             trend_confidence=0.0,
             needs_review=needs_review,
-            reason=reason,
-            rule_applied=rule,
-            measured_at=report_date,
+            reason=str(row.get("reason") or "")[:2000] or None,
+            rule_applied=str(row.get("rule_applied") or "")[:255] or None,
+            measured_at=measured_at,
             metadata_json={
                 "source": _PARSER_SOURCE,
-                "qualitative_normal": bool(row.get("qualitative_normal")),
+                "source_page": row.get("source_page"),
+                "reference_text": row.get("reference_text"),
+                "extraction_confidence": extraction_confidence,
+                "native_contract": row.get("contract_version"),
             },
         )
         persisted.append(lab_result)
