@@ -5,6 +5,7 @@
 #include <cmath>
 #include <sstream>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 namespace medicore::lab {
@@ -39,6 +40,24 @@ std::string make_dedupe_key(const LabRow& row) {
         "\x1f" + numeric_key(row.normalized_value) +
         "\x1f" + numeric_key(row.reference_min) +
         "\x1f" + numeric_key(row.reference_max);
+}
+
+bool is_pseudo_parameter(const LabRow& row) {
+    std::string name = row.canonical_name.empty() ? row.raw_parameter_name : row.canonical_name;
+    name = lower_ascii(normalize_whitespace(name));
+
+    static const std::unordered_set<std::string> kPseudoNames = {
+        "note",
+        "notes",
+        "not",
+        "comment",
+        "comments",
+        "remark",
+        "remarks",
+        "aciklama",
+        "açıklama",
+    };
+    return kPseudoNames.contains(name);
 }
 
 }  // namespace
@@ -193,6 +212,10 @@ std::vector<ProcessedLabRow> process_rows(const std::vector<LabRow>& rows) {
     // genuinely repeated test with a different value/reference remains separate.
     std::unordered_map<std::string, std::size_t> index_by_key;
     for (const LabRow& row : rows) {
+        if (is_pseudo_parameter(row)) {
+            continue;
+        }
+
         ProcessedLabRow processed = process_row(row);
         const std::string key = make_dedupe_key(processed.source);
 
