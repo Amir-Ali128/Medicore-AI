@@ -110,12 +110,29 @@ export async function evaluateMultisourceCase(
     );
   }
 
+  const radiologySummary = sourceSummaries.radiology ?? sourceSummaries.ultrasound;
+  const abnormalLabSummary = cleanText(sourceSummaries.laboratory);
+  const hasContextSource = availability.clinical || availability.radiology;
+
+  // The analysis-run endpoint intentionally skips the model when every structured
+  // lab result is normal and no deterministic review flag exists. When the patient
+  // still has meaningful clinical or radiology context, use the patient-scoped
+  // source-only endpoint instead. That backend adds a neutral context-review gate,
+  // keeps normal labs out of the model input, and preserves limited-source warnings.
+  const useAnalysisRun =
+    Boolean(analysisRunId) && (Boolean(abnormalLabSummary) || !hasContextSource);
+
+  if (!useAnalysisRun && !patientId) {
+    throw new Error(
+      'Klinik kaynakla değerlendirme için önce hasta kaydını kaydetmelisin.',
+    );
+  }
+
   const token = getAccessToken();
-  const endpoint = analysisRunId
+  const endpoint = useAnalysisRun
     ? `${API_BASE_URL}/analysis-runs/${analysisRunId}/clinical-hypotheses/generate`
     : `${API_BASE_URL}/clinical-evaluations/source-only/generate`;
 
-  const radiologySummary = sourceSummaries.radiology ?? sourceSummaries.ultrasound;
   const response = await fetch(endpoint, {
     method: 'POST',
     headers: {
@@ -134,7 +151,12 @@ export async function evaluateMultisourceCase(
           availableCount === 3
             ? 'compact_multisource_rule_gated_evaluation'
             : 'compact_partial_source_rule_gated_evaluation',
+        evaluation_mode: useAnalysisRun
+          ? 'analysis_run_review_flags'
+          : 'patient_context_review',
         normal_results_excluded: true,
+        normal_labs_context_only:
+          availability.laboratory && !Boolean(abnormalLabSummary),
         patient_age: clinicalContext?.patient_information.age ?? null,
         symptoms: buildCompactSymptoms(clinicalContext),
         vitals: buildCompactVitals(clinicalContext),
