@@ -108,7 +108,7 @@ def test_pdf_page_is_read_without_fixed_section_requirements(monkeypatch) -> Non
     assert captured["model"] == "gpt-6-astra"
     assert captured["text"]["format"]["type"] == "json_schema"
     assert captured["text"]["format"]["strict"] is True
-    assert "fixed sections" not in str(captured["input"]).lower()
+    assert "whatever clinically relevant content" in str(captured["input"]).lower()
 
     parts = captured["input"][0]["content"]
     pdf = next(part for part in parts if part["type"] == "input_file")
