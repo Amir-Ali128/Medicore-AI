@@ -16,10 +16,6 @@ export type ClinicalBrainSourceSummaries = {
   clinical: string;
   laboratory: string;
   ultrasound: string;
-  /**
-   * Generic imaging summary used only by the compact physician-review workflow.
-   * The Python Clinical Brain still owns ultrasound-specific reasoning separately.
-   */
   radiology?: string;
 };
 
@@ -27,7 +23,6 @@ export type ClinicalBrainSourceAvailability = {
   clinical: boolean;
   laboratory: boolean;
   ultrasound: boolean;
-  /** Generic analyzable radiology/imaging source for compact evaluation. */
   radiology?: boolean;
 };
 
@@ -314,16 +309,9 @@ function compactRadiologySummary(report: RadiologyReport): string | null {
 }
 
 function reportTimestamp(report: RadiologyReport): number {
-  return (
-    Date.parse(report.updated_at || report.created_at || report.report_date || '') || 0
-  );
+  return Date.parse(report.updated_at || report.created_at || report.report_date || '') || 0;
 }
 
-/**
- * Thin browser adapter. Clinical decisions and disease-specific imaging reasoning are
- * intentionally owned by the Python backend. This adapter only adds a generic,
- * bounded radiology source for the separate compact physician-review workflow.
- */
 export async function evaluateClinicalBrain(
   input: ClinicalBrainInput,
 ): Promise<ClinicalBrainResult> {
@@ -338,30 +326,11 @@ export async function evaluateClinicalBrain(
     payload,
   );
 
-  const latestRadiology = [...restoredInput.radiology_reports]
+  const latestRadiology = [...(restoredInput.radiology_reports ?? [])]
     .filter(isAnalyzableRadiologyReport)
     .sort((left, right) => reportTimestamp(right) - reportTimestamp(left))
     .find((report) => compactRadiologySummary(report) !== null) ?? null;
-  const radiologySummary = latestRadiology
-    ? compactRadiologySummary(latestRadiology)
-    : null;
-  const radiologyReady = Boolean(radiologySummary);
-
-  // The UI historically reads `.ultrasound`, while its 3-source coverage counter
-  // uses Object.values(). Keep ultrasound available for its specific rules without
-  // counting it as a fourth source; radiology is the single imaging source group.
-  const sourceAvailability: ClinicalBrainSourceAvailability = {
-    clinical: result.source_availability.clinical,
-    laboratory: result.source_availability.laboratory,
-    radiology: radiologyReady,
-    ultrasound: result.source_availability.ultrasound,
-  };
-  Object.defineProperty(sourceAvailability, 'ultrasound', {
-    value: result.source_availability.ultrasound,
-    enumerable: false,
-    writable: false,
-    configurable: false,
-  });
+  const radiologySummary = latestRadiology ? compactRadiologySummary(latestRadiology) : null;
 
   return {
     ...result,
@@ -373,9 +342,15 @@ export async function evaluateClinicalBrain(
       ...result.ai_source_summaries,
       radiology: radiologySummary ?? '',
     },
-    source_availability: sourceAvailability,
+    source_availability: {
+      clinical: result.source_availability?.clinical === true,
+      laboratory: result.source_availability?.laboratory === true,
+      ultrasound: result.source_availability?.ultrasound === true,
+      radiology: Boolean(radiologySummary),
+    },
     source_dates: {
-      ...result.source_dates,
+      laboratory: result.source_dates?.laboratory ?? null,
+      ultrasound: result.source_dates?.ultrasound ?? null,
       radiology:
         latestRadiology?.report_date ?? latestRadiology?.created_at?.slice(0, 10) ?? null,
     },
