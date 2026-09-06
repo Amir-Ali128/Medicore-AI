@@ -24,6 +24,8 @@ _LAB_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "required": [
+        "patient_age",
+        "patient_sex",
         "report_date",
         "labs",
         "critical_findings",
@@ -33,6 +35,8 @@ _LAB_SCHEMA: dict[str, Any] = {
         "extraction_confidence",
     ],
     "properties": {
+        "patient_age": {"type": ["integer", "null"], "minimum": 0, "maximum": 130},
+        "patient_sex": {"type": ["string", "null"]},
         "report_date": {"type": ["string", "null"]},
         "labs": {
             "type": "array",
@@ -85,7 +89,8 @@ understanding, extraction and normalization in one pass.
 Safety and provenance rules:
 - This is physician-assistive software, not an autonomous diagnostic system.
 - Never output a patient's name, national identity number, protocol number,
-  address, phone, email or exact date of birth.
+  address, phone, email or exact date of birth. Coarse age and sex may be returned
+  only when explicitly visible and useful for physician review.
 - Never invent a test, value, unit, date or reference range.
 - Preserve the laboratory's printed reference interval. One-sided limits are
   allowed: use null for the missing side and keep the original rule in
