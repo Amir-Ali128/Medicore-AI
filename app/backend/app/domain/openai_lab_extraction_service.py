@@ -1,9 +1,9 @@
 """Direct OpenAI/Astra laboratory document extraction.
 
 Raw PDF/image bytes are sent directly to the configured multimodal OpenAI model.
-The model performs document reading, table extraction and semantic normalization in
-one request. Deterministic reference-range classification is deliberately left to
-the native C++ lab core before any result is persisted.
+This first pass is intentionally extraction-only: document reading, table parsing and
+semantic normalization happen here; deterministic classification/calculation happens
+in native C++, and clinical synthesis happens only after native validation.
 """
 
 from __future__ import annotations
@@ -29,9 +29,6 @@ _LAB_SCHEMA: dict[str, Any] = {
         "patient_sex",
         "report_date",
         "labs",
-        "critical_findings",
-        "clinical_summary",
-        "follow_up_considerations",
         "warnings",
         "extraction_confidence",
     ],
@@ -76,21 +73,20 @@ _LAB_SCHEMA: dict[str, Any] = {
                 },
             },
         },
-        "critical_findings": {"type": "array", "items": {"type": "string"}},
-        "clinical_summary": {"type": "string"},
-        "follow_up_considerations": {"type": "array", "items": {"type": "string"}},
         "warnings": {"type": "array", "items": {"type": "string"}},
         "extraction_confidence": {"type": "number", "minimum": 0, "maximum": 1},
     },
 }
 
 _INSTRUCTIONS = """
-You are the laboratory document reader inside MediCore-AI. Read ALL ORIGINAL
-uploaded laboratory report files as one case. Perform visual/text preprocessing,
-table understanding, extraction and normalization in one pass.
+You are the extraction-only laboratory document reader inside MediCore-AI. Read ALL
+ORIGINAL uploaded laboratory report files as one case. Perform visual/text
+preprocessing, table understanding, extraction and normalization in one pass.
 
 Safety and provenance rules:
-- This is physician-assistive software, not an autonomous diagnostic system.
+- Do not diagnose, interpret clinical significance, rank clinical risk or recommend
+  treatment in this pass. A later layer does clinical synthesis after native C++
+  validation.
 - Never output a patient's name, national identity number, protocol number,
   address, phone, email or exact date of birth. Coarse age and sex may be returned
   only when explicitly visible and useful for physician review.
@@ -108,13 +104,9 @@ Safety and provenance rules:
   keep the exact visible test label in raw_parameter_name.
 - Merge the supplied files into one logical report/case. Do not duplicate a lab row
   merely because adjacent uploaded images overlap.
-- clinical_summary may describe patterns that deserve physician attention, but
-  must not claim a definitive diagnosis or prescribe treatment.
-- critical_findings must contain only findings clearly supported by the supplied
-  values/reference ranges. Do not invent emergency thresholds.
-- follow_up_considerations must be conservative physician-review considerations,
-  not treatment instructions.
 - Return every clearly visible laboratory result, including normal values.
+- warnings should contain extraction/provenance uncertainties only, not clinical
+  interpretation.
 """.strip()
 
 
@@ -159,7 +151,7 @@ async def extract_lab_documents_with_openai(
             "text": (
                 "Process every attached source as one laboratory case. Extract all "
                 "visible rows, normalize them, preserve printed references and return "
-                "the required JSON. Source labels are authoritative for provenance."
+                "the required extraction JSON. Source labels are authoritative for provenance."
             ),
         }
     ]
@@ -198,7 +190,10 @@ async def extract_lab_documents_with_openai(
     if not model:
         raise OpenAILabExtractionError("OPENAI_LAB_MODEL yapılandırılmamış.")
 
-    client = AsyncOpenAI(api_key=settings.openai_api_key)
+    client = AsyncOpenAI(
+        api_key=settings.openai_api_key,
+        timeout=settings.ai_call_timeout_seconds,
+    )
     try:
         response = await client.responses.create(
             model=model,
@@ -208,7 +203,7 @@ async def extract_lab_documents_with_openai(
             text={
                 "format": {
                     "type": "json_schema",
-                    "name": "medicore_lab_document_v1",
+                    "name": "medicore_lab_document_v2",
                     "strict": True,
                     "schema": _LAB_SCHEMA,
                 }
