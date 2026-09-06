@@ -19,6 +19,7 @@ from app.core.config import get_settings
 SUPPORTED_LAB_MEDIA_TYPES: frozenset[str] = frozenset(
     {"application/pdf", "image/png", "image/jpeg", "image/webp"}
 )
+_MAX_DOCUMENTS_PER_REQUEST = 12
 
 _LAB_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -55,6 +56,7 @@ _LAB_SCHEMA: dict[str, Any] = {
                     "measured_at",
                     "needs_review",
                     "confidence",
+                    "source_file_name",
                     "source_page",
                 ],
                 "properties": {
@@ -69,6 +71,7 @@ _LAB_SCHEMA: dict[str, Any] = {
                     "measured_at": {"type": ["string", "null"]},
                     "needs_review": {"type": "boolean"},
                     "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                    "source_file_name": {"type": ["string", "null"]},
                     "source_page": {"type": ["integer", "null"], "minimum": 1},
                 },
             },
@@ -82,9 +85,9 @@ _LAB_SCHEMA: dict[str, Any] = {
 }
 
 _INSTRUCTIONS = """
-You are the laboratory document reader inside MediCore-AI. Read the ORIGINAL
-uploaded laboratory report directly. Perform visual/text preprocessing, table
-understanding, extraction and normalization in one pass.
+You are the laboratory document reader inside MediCore-AI. Read ALL ORIGINAL
+uploaded laboratory report files as one case. Perform visual/text preprocessing,
+table understanding, extraction and normalization in one pass.
 
 Safety and provenance rules:
 - This is physician-assistive software, not an autonomous diagnostic system.
@@ -99,9 +102,12 @@ Safety and provenance rules:
   limit or a historical value.
 - If digits, decimal separators, units, row association or reference limits are
   visually ambiguous, set needs_review=true and lower confidence.
-- source_page is 1-based when the document has pages; otherwise use null.
+- source_file_name must identify the supplied source label for the row.
+- source_page is 1-based within that source file when it has pages; otherwise null.
 - Canonicalize obvious test names (for example HbA1c, Hemoglobin, Creatinine) but
   keep the exact visible test label in raw_parameter_name.
+- Merge the supplied files into one logical report/case. Do not duplicate a lab row
+  merely because adjacent uploaded images overlap.
 - clinical_summary may describe patterns that deserve physician attention, but
   must not claim a definitive diagnosis or prescribe treatment.
 - critical_findings must contain only findings clearly supported by the supplied
@@ -131,22 +137,60 @@ def _media_block(*, content: bytes, media_type: str, file_name: str) -> dict[str
     }
 
 
-async def extract_lab_document_with_openai(
-    *,
-    content: bytes,
-    media_type: str,
-    file_name: str,
-) -> dict[str, Any]:
-    """Send the original report directly to Astra/OpenAI and return strict JSON."""
-    settings = get_settings()
-    normalized_type = (media_type or "").split(";", 1)[0].lower().strip()
+def _normalized_media_type(media_type: str) -> str:
+    return (media_type or "").split(";", 1)[0].lower().strip()
 
-    if normalized_type not in SUPPORTED_LAB_MEDIA_TYPES:
-        raise ValueError(f"Desteklenmeyen laboratuvar dosya türü: {normalized_type or 'unknown'}")
-    if not content:
-        raise ValueError("Laboratuvar dosyası boş olamaz.")
-    if len(content) > settings.lab_extraction_max_bytes:
-        raise ValueError("Laboratuvar dosyası izin verilen boyut sınırını aşıyor.")
+
+async def extract_lab_documents_with_openai(
+    *,
+    documents: list[tuple[bytes, str, str]],
+) -> dict[str, Any]:
+    """Send one or more original report files to Astra/OpenAI in a single request."""
+    settings = get_settings()
+    if not documents:
+        raise ValueError("En az bir laboratuvar dosyası gerekir.")
+    if len(documents) > _MAX_DOCUMENTS_PER_REQUEST:
+        raise ValueError(f"Tek analizde en fazla {_MAX_DOCUMENTS_PER_REQUEST} dosya gönderilebilir.")
+
+    total_bytes = 0
+    content_parts: list[dict[str, Any]] = [
+        {
+            "type": "input_text",
+            "text": (
+                "Process every attached source as one laboratory case. Extract all "
+                "visible rows, normalize them, preserve printed references and return "
+                "the required JSON. Source labels are authoritative for provenance."
+            ),
+        }
+    ]
+
+    for index, (content, media_type, file_name) in enumerate(documents, start=1):
+        normalized_type = _normalized_media_type(media_type)
+        if normalized_type not in SUPPORTED_LAB_MEDIA_TYPES:
+            raise ValueError(
+                f"Desteklenmeyen laboratuvar dosya türü: {normalized_type or 'unknown'}"
+            )
+        if not content:
+            raise ValueError(f"Laboratuvar dosyası boş: {file_name or index}")
+
+        total_bytes += len(content)
+        safe_name = (file_name or f"lab-source-{index}")[:512]
+        content_parts.append(
+            {
+                "type": "input_text",
+                "text": f"SOURCE {index} filename: {safe_name}",
+            }
+        )
+        content_parts.append(
+            _media_block(
+                content=content,
+                media_type=normalized_type,
+                file_name=safe_name,
+            )
+        )
+
+    if total_bytes > settings.lab_extraction_max_bytes:
+        raise ValueError("Laboratuvar dosyalarının toplamı izin verilen boyut sınırını aşıyor.")
     if not settings.openai_api_key:
         raise OpenAILabExtractionError("OPENAI_API_KEY yapılandırılmamış.")
 
@@ -169,26 +213,7 @@ async def extract_lab_document_with_openai(
                     "schema": _LAB_SCHEMA,
                 }
             },
-            input=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "input_text",
-                            "text": (
-                                "Process this complete laboratory document directly. "
-                                "Extract all visible lab rows, normalize them, preserve "
-                                "printed reference ranges, and return the required JSON."
-                            ),
-                        },
-                        _media_block(
-                            content=content,
-                            media_type=normalized_type,
-                            file_name=file_name,
-                        ),
-                    ],
-                }
-            ],
+            input=[{"role": "user", "content": content_parts}],
         )
     except Exception as exc:  # provider errors are translated at the API boundary
         raise OpenAILabExtractionError(f"OpenAI laboratuvar analizi başarısız: {exc}") from exc
@@ -205,3 +230,15 @@ async def extract_lab_document_with_openai(
     if not isinstance(payload, dict) or not isinstance(payload.get("labs"), list):
         raise OpenAILabExtractionError("OpenAI laboratuvar çıktısı beklenen şemada değil.")
     return payload
+
+
+async def extract_lab_document_with_openai(
+    *,
+    content: bytes,
+    media_type: str,
+    file_name: str,
+) -> dict[str, Any]:
+    """Backward-compatible single-document wrapper."""
+    return await extract_lab_documents_with_openai(
+        documents=[(content, media_type, file_name)]
+    )
