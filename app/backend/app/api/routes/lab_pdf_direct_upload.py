@@ -2,9 +2,9 @@
 
 The original PDF/image files are sent directly to the configured OpenAI multimodal
 model for document reading, preprocessing, extraction and semantic normalization.
-The returned rows are then validated/classified by MediCore's native C++ lab core
-before persistence. The legacy Python PDF parser is intentionally not part of this
-route anymore.
+The returned rows are validated/classified and mathematically enriched by MediCore's
+native C++ lab core before a second, physician-assistive AI synthesis. The legacy
+Python PDF parser is intentionally not part of this route anymore.
 """
 
 from __future__ import annotations
@@ -20,7 +20,16 @@ from app.api.dependencies import SessionDep
 from app.api.routes import lab_analysis
 from app.core.config import get_settings
 from app.domain.enums import ResultStatus, TrendStatus
-from app.domain.native_lab_engine import NativeLabUnavailable, process_astra_lab_rows
+from app.domain.native_lab_engine import (
+    NativeLabUnavailable,
+    compute_native_lab_metrics,
+    process_astra_lab_rows,
+)
+from app.domain.openai_lab_clinical_service import (
+    OpenAILabClinicalError,
+    build_fallback_clinical_assessment,
+    synthesize_lab_clinical_assessment,
+)
 from app.domain.openai_lab_extraction_service import (
     OpenAILabExtractionError,
     SUPPORTED_LAB_MEDIA_TYPES,
@@ -32,13 +41,15 @@ from app.infrastructure.database.models.lab_result import LabResult
 from app.schemas.lab_analysis import (
     AnalysisCounts,
     AnalysisPipelineResult,
+    DerivedLabMetricOutput,
+    LabClinicalAssessmentOutput,
     PatientMetadataOutput,
     StructuredLabResultOutput,
 )
 
 router = APIRouter(prefix="/lab-analysis", tags=["lab-analysis"])
 
-_PARSER_SOURCE = "astra_native_cpp_lab_v1"
+_PARSER_SOURCE = "astra_native_cpp_lab_v2"
 _EXTENSION_MEDIA_TYPES = {
     ".pdf": "application/pdf",
     ".png": "image/png",
@@ -260,6 +271,36 @@ async def _analyze_prepared_documents(
         birth_date=None,
     )
 
+    try:
+        derived_metric_dicts = compute_native_lab_metrics(
+            raw_rows,
+            patient_age=patient_metadata.age,
+            patient_sex=patient_metadata.sex,
+        )
+    except (NativeLabUnavailable, RuntimeError, ValueError) as exc:
+        if settings.native_lab_required:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"Native C++ clinical metrics kullanılamıyor: {exc}",
+            ) from exc
+        derived_metric_dicts = []
+
+    derived_metrics = [DerivedLabMetricOutput.model_validate(item) for item in derived_metric_dicts]
+
+    try:
+        clinical_assessment_dict = await synthesize_lab_clinical_assessment(
+            rows=rows,
+            derived_metrics=derived_metric_dicts,
+            patient_age=patient_metadata.age,
+            patient_sex=patient_metadata.sex,
+        )
+    except OpenAILabClinicalError:
+        clinical_assessment_dict = build_fallback_clinical_assessment(
+            rows=rows,
+            derived_metrics=derived_metric_dicts,
+        )
+    clinical_assessment = LabClinicalAssessmentOutput.model_validate(clinical_assessment_dict)
+
     model_name = settings.openai_lab_model
     source_names = [name for _content, _media_type_value, name in documents]
     report_file_name = source_names[0] if len(source_names) == 1 else f"batch:{len(source_names)}-files"
@@ -267,10 +308,9 @@ async def _analyze_prepared_documents(
     safe_ai_metadata = {
         "model": model_name,
         "extraction_confidence": ai_payload.get("extraction_confidence"),
-        "critical_findings": ai_payload.get("critical_findings") or [],
-        "clinical_summary": ai_payload.get("clinical_summary") or "",
-        "follow_up_considerations": ai_payload.get("follow_up_considerations") or [],
         "warnings": ai_payload.get("warnings") or [],
+        "derived_metrics": [item.model_dump(mode="json") for item in derived_metrics],
+        "clinical_assessment": clinical_assessment.model_dump(mode="json"),
     }
 
     report = LabReport(
@@ -288,6 +328,9 @@ async def _analyze_prepared_documents(
         metadata_json={
             "parser_source": _PARSER_SOURCE,
             "native_contract": rows[0].get("contract_version"),
+            "native_metrics_contract": (
+                derived_metric_dicts[0].get("metrics_version") if derived_metric_dicts else None
+            ),
             "reference_policy": "source_document_reference_first",
             "source_file_count": len(source_names),
             **safe_ai_metadata,
@@ -308,6 +351,8 @@ async def _analyze_prepared_documents(
             "model": model_name,
             "source_file_count": len(source_names),
             "native_contract": rows[0].get("contract_version"),
+            "native_metric_codes": [metric.code for metric in derived_metrics],
+            "clinical_synthesis_source": clinical_assessment.synthesis_source,
         },
     )
     session.add(run)
@@ -406,6 +451,8 @@ async def _analyze_prepared_documents(
         patient=patient_metadata,
         results=[_to_output(item) for item in persisted],
         counts=counts,
+        derived_metrics=derived_metrics,
+        clinical_assessment=clinical_assessment,
     )
 
 

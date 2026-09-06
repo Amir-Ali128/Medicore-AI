@@ -1,13 +1,12 @@
 const TEXT_REPLACEMENTS = new Map<string, string>([
   ['Tiroglobulin', 'Globulin'],
-  ['Hekim Kontrolü Gerekenler', 'Hesaplanan / Özel Parametreler'],
   [
     'Belirsiz sonuçlar hekim kontrolü için ayrıldı.',
-    'Sabit referansı olmayan veya klinik bağlama göre yorumlanan sonuçlar.',
+    'Kaynak raporda güvenilir referans veya sınıflandırma bulunmayan sonuçlar hekim/kaynak doğrulamasına ayrılır.',
   ],
   [
     'Parametre eşleştirmesi, referans aralığı veya sınıflandırma belirsiz.',
-    'Hesaplanan, özel veya sabit referansı bulunmayan parametreler klinik bağlama göre değerlendirilir.',
+    'Kaynak raporda güvenilir referansı bulunmayan veya çıkarımı belirsiz sonuçlar klinik bağlamda doğrulanmalıdır.',
   ],
 ]);
 

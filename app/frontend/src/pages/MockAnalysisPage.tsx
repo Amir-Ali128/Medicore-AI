@@ -4,6 +4,7 @@ import {
   createEmptyClinicalIntake,
   readStoredClinicalIntake,
 } from '../components/clinical/ClinicalIntakeForm';
+import LabClinicalAssessmentCard from '../components/lab/LabClinicalAssessmentCard';
 import ManualLabEntrySection from '../components/lab/ManualLabEntrySection';
 import {
   analyzeLabReportImage,
@@ -116,7 +117,6 @@ function archiveReportLabel(report: LabReportSummary) {
 }
 
 function displayTestName(result: LabAnalysisResult) {
-  // PDF satırındaki gerçek ad, eski alias eşleştirmelerinden daha güvenlidir.
   return result.raw_parameter_name || result.canonical_name || 'Bilinmeyen test';
 }
 
@@ -140,7 +140,7 @@ function displayReason(result: LabAnalysisResult) {
   if (status === 'normal') return 'Değer PDF’de belirtilen referans sınırları içindedir.';
   if (status === 'high') return 'Değer PDF’de belirtilen üst referans sınırının üzerindedir.';
   if (status === 'low') return 'Değer PDF’de belirtilen alt referans sınırının altındadır.';
-  return 'PDF’de güvenilir bir referans aralığı bulunmadığı için hekim kontrolü gerekir.';
+  return result.reason || 'Kaynak raporda güvenilir referans aralığı bulunmadığı için hekim kontrolü gerekir.';
 }
 
 function StatusPill({ status }: { status: ResultTone }) {
@@ -430,7 +430,7 @@ export default function MockAnalysisPage() {
       <header>
         <h1 className="text-2xl font-semibold text-slate-950">Laboratuvar Raporları</h1>
         <p className="mt-2 text-sm leading-6 text-slate-500">
-          PDF’deki test adı, sonuç ve referans aralığı esas alınır. Sonuçlar normal, yüksek, düşük veya yalnızca referansı yoksa hekim kontrolü olarak ayrılır.
+          Astra raporu okur; Native C++ değerleri, referansları ve hesaplanabilir klinik metrikleri doğrular; ardından AI sonuçları bütün olarak klinik önceliklere göre açıklar.
         </p>
       </header>
 
@@ -442,7 +442,7 @@ export default function MockAnalysisPage() {
       <section className="rounded-xl border border-slate-200 bg-white p-5">
         <h2 className="text-base font-semibold text-slate-950">PDF veya JPG ile laboratuvar girişi</h2>
         <p className="mt-1 text-sm leading-6 text-slate-500">
-          PDF yüklemeleri doğrudan PDF-first parser ile analiz edilir; eski alias eşleştirmesi sonuçların yerini değiştirmez.
+          PDF/JPG doğrudan Astra belge okuma katmanına gider; sınıflandırma ve türetilmiş metrikler Native C++ tarafından yapılır.
         </p>
         <input
           type="file"
@@ -468,7 +468,7 @@ export default function MockAnalysisPage() {
 
         <div className="mt-4 flex flex-wrap gap-2">
           <button type="button" onClick={handleUpload} disabled={isUploading || selectedFiles.length === 0} className="rounded-lg bg-blue-700 px-5 py-3 text-sm font-semibold text-white disabled:opacity-50">
-            {isUploading ? progress || 'Analiz ediliyor…' : 'PDF’yi analiz et'}
+            {isUploading ? progress || 'Analiz ediliyor…' : 'Raporu analiz et'}
           </button>
           {successfulResults.length > 0 ? (
             <button type="button" onClick={handleSave} disabled={isSaving || unsavedResults.length === 0} className="rounded-lg bg-emerald-700 px-5 py-3 text-sm font-semibold text-white disabled:opacity-50">
@@ -516,6 +516,11 @@ export default function MockAnalysisPage() {
 
       {backendResult ? (
         <section className="space-y-5">
+          <LabClinicalAssessmentCard
+            assessment={backendResult.clinical_assessment}
+            metrics={backendResult.derived_metrics}
+          />
+
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
             {[
               ['Toplam', backendResult.results.length, 'border-slate-200'],

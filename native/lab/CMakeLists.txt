@@ -11,6 +11,7 @@ add_library(
     medicore_lab_core
     STATIC
     src/lab_core.cpp
+    src/clinical_metrics.cpp
 )
 set_target_properties(medicore_lab_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(
@@ -31,7 +32,7 @@ target_link_libraries(
 target_compile_definitions(
     medicore_lab
     PRIVATE
-        MEDICORE_LAB_VERSION="1.0.0"
+        MEDICORE_LAB_VERSION="1.1.0"
 )
 
 # Installing with --prefix app/backend places the extension on FastAPI's normal

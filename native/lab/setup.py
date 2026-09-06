@@ -12,14 +12,15 @@ extra_compile_args = ["/std:c++20", "/O2"] if sys.platform == "win32" else ["-st
 
 setup(
     name="medicore-lab-native",
-    version="1.0.0",
-    description="MediCore native C++20 laboratory normalization/classification core",
+    version="1.1.0",
+    description="MediCore native C++20 laboratory normalization, classification and clinical metrics core",
     ext_modules=[
         Extension(
             "medicore_lab",
             sources=[
                 str(ROOT / "src" / "bindings.cpp"),
                 str(ROOT / "src" / "lab_core.cpp"),
+                str(ROOT / "src" / "clinical_metrics.cpp"),
             ],
             include_dirs=[
                 pybind11.get_include(),
