@@ -1,3 +1,4 @@
+#include "medicore/lab/clinical_metrics.hpp"
 #include "medicore/lab/lab_core.hpp"
 
 #include <pybind11/pybind11.h>
@@ -8,6 +9,7 @@
 #include <vector>
 
 namespace py = pybind11;
+using medicore::lab::DerivedMetric;
 using medicore::lab::LabRow;
 using medicore::lab::ProcessedLabRow;
 
@@ -85,6 +87,18 @@ LabRow from_python(const py::dict& row) {
     return value;
 }
 
+std::vector<LabRow> rows_from_python(const py::list& rows) {
+    std::vector<LabRow> native_rows;
+    native_rows.reserve(static_cast<std::size_t>(py::len(rows)));
+    for (const py::handle item : rows) {
+        if (!py::isinstance<py::dict>(item)) {
+            throw py::value_error("Her laboratuvar satırı bir dict olmalıdır.");
+        }
+        native_rows.push_back(from_python(py::reinterpret_borrow<py::dict>(item)));
+    }
+    return native_rows;
+}
+
 py::object optional_to_python(const std::optional<double>& value) {
     if (!value) {
         return py::none();
@@ -130,16 +144,21 @@ py::dict to_python(const ProcessedLabRow& row) {
     return out;
 }
 
-py::list process_python_rows(const py::list& rows) {
-    std::vector<LabRow> native_rows;
-    native_rows.reserve(static_cast<std::size_t>(py::len(rows)));
-    for (const py::handle item : rows) {
-        if (!py::isinstance<py::dict>(item)) {
-            throw py::value_error("Her laboratuvar satırı bir dict olmalıdır.");
-        }
-        native_rows.push_back(from_python(py::reinterpret_borrow<py::dict>(item)));
-    }
+py::dict metric_to_python(const DerivedMetric& metric) {
+    py::dict out;
+    out["code"] = metric.code;
+    out["name"] = metric.name;
+    out["value"] = metric.value;
+    out["unit"] = metric.unit;
+    out["formula"] = metric.formula;
+    out["input_labels"] = metric.input_labels;
+    out["note"] = metric.note;
+    out["metrics_version"] = medicore::lab::kMetricsContractVersion;
+    return out;
+}
 
+py::list process_python_rows(const py::list& rows) {
+    const auto native_rows = rows_from_python(rows);
     const auto processed = medicore::lab::process_rows(native_rows);
     py::list result;
     for (const auto& row : processed) {
@@ -148,11 +167,38 @@ py::list process_python_rows(const py::list& rows) {
     return result;
 }
 
+py::list compute_python_metrics(
+    const py::list& rows,
+    const py::object& patient_age,
+    const std::string& patient_sex
+) {
+    const auto native_rows = rows_from_python(rows);
+    const auto processed = medicore::lab::process_rows(native_rows);
+
+    std::optional<int> age;
+    if (!patient_age.is_none()) {
+        try {
+            age = py::cast<int>(patient_age);
+        } catch (const py::cast_error&) {
+            throw py::value_error("patient_age integer veya None olmalıdır.");
+        }
+    }
+
+    const auto metrics = medicore::lab::compute_derived_metrics(processed, age, patient_sex);
+    py::list result;
+    for (const auto& metric : metrics) {
+        result.append(metric_to_python(metric));
+    }
+    return result;
+}
+
 }  // namespace
 
 PYBIND11_MODULE(medicore_lab, module) {
-    module.doc() = "MediCore native C++ laboratory normalization/classification core";
+    module.doc() = "MediCore native C++ laboratory normalization/classification/metrics core";
     module.attr("CONTRACT_VERSION") = medicore::lab::kContractVersion;
+    module.attr("METRICS_VERSION") = medicore::lab::kMetricsContractVersion;
     module.def("process_rows", &process_python_rows, py::arg("rows"));
+    module.def("compute_derived_metrics", &compute_python_metrics, py::arg("rows"), py::arg("patient_age") = py::none(), py::arg("patient_sex") = "");
     module.def("normalize_unit", &medicore::lab::normalize_unit, py::arg("unit"));
 }
