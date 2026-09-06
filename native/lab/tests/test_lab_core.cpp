@@ -62,5 +62,23 @@ int main() {
         assert(results.front().status == "HIGH");
     }
 
+    {
+        LabRow note;
+        note.raw_parameter_name = "Note";
+        note.raw_value = "sample note text";
+
+        LabRow hba1c;
+        hba1c.raw_parameter_name = "HbA1c";
+        hba1c.normalized_value = 9.4;
+        hba1c.reference_max = 6.5;
+        hba1c.unit = "%";
+        hba1c.extraction_confidence = 0.99;
+
+        const auto results = process_rows({note, hba1c});
+        assert(results.size() == 1);
+        assert(results.front().display_name == "HbA1c");
+        assert(results.front().status == "HIGH");
+    }
+
     return 0;
 }
