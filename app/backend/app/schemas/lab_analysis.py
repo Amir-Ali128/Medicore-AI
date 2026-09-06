@@ -198,6 +198,56 @@ class AnalysisCounts(BaseModel):
     unknown: int = 0
 
 
+class DerivedLabMetricOutput(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    code: str
+    name: str
+    value: Decimal
+    unit: str
+    formula: str
+    input_labels: list[str] = Field(default_factory=list)
+    note: str = ""
+
+
+ClinicalFindingSeverity = Literal["critical", "high", "moderate", "info"]
+ClinicalSectionStatus = Literal["attention", "reassuring", "mixed", "uncertain"]
+
+
+class ClinicalPriorityFindingOutput(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    title: str
+    severity: ClinicalFindingSeverity = "info"
+    summary: str
+    evidence: list[str] = Field(default_factory=list)
+    follow_up: list[str] = Field(default_factory=list)
+
+
+class ClinicalSystemSectionOutput(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    title: str
+    status: ClinicalSectionStatus = "uncertain"
+    summary: str
+    evidence: list[str] = Field(default_factory=list)
+
+
+class LabClinicalAssessmentOutput(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    headline: str
+    overview: str
+    priority_findings: list[ClinicalPriorityFindingOutput] = Field(default_factory=list)
+    systems: list[ClinicalSystemSectionOutput] = Field(default_factory=list)
+    reassuring_findings: list[str] = Field(default_factory=list)
+    priority_actions: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+    narrative_tr: str
+    model: str | None = None
+    synthesis_source: str = "ai"
+
+
 class AnalysisPipelineResult(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -207,3 +257,5 @@ class AnalysisPipelineResult(BaseModel):
     patient: PatientMetadataOutput = Field(default_factory=PatientMetadataOutput)
     results: list[StructuredLabResultOutput] = Field(default_factory=list)
     counts: AnalysisCounts = Field(default_factory=AnalysisCounts)
+    derived_metrics: list[DerivedLabMetricOutput] = Field(default_factory=list)
+    clinical_assessment: LabClinicalAssessmentOutput | None = None
