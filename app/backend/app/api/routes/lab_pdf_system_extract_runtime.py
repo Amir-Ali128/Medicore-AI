@@ -7,7 +7,8 @@ that source range even when MediCore does not yet know the parameter name.
 
 This runtime layer also keeps CBC absolute (#) and percentage (%) names distinct,
 filters footer phone numbers, preserves rows without a printed reference for
-human review, and canonicalizes common lipid/AST naming variants before mapping.
+human review, canonicalizes common report naming variants before mapping, and
+filters non-test note rows.
 """
 
 from __future__ import annotations
@@ -27,9 +28,11 @@ def _name_key(value: str) -> str:
     return re.sub(r"[^A-Z0-9]+", "", normalized)
 
 
-# Common report spellings that otherwise become dynamic PDF parameters. Keep
-# score/index rows (TyG, LDL/HDL ratio, FIB-4) out of automatic range guessing.
+# Common report spellings that otherwise become dynamic PDF parameters. Score /
+# index rows (TyG, LDL/HDL ratio, FIB-4, estimated average glucose) intentionally
+# remain outside automatic range guessing unless a trusted parameter/range exists.
 _KNOWN_DISPLAY_NAME_BY_KEY: dict[str, str] = {
+    # Lipids / liver
     "CHOLESTEROL": "Total Kolesterol",
     "CHOLESTROL": "Total Kolesterol",
     "TOTALCHOLESTEROL": "Total Kolesterol",
@@ -56,6 +59,32 @@ _KNOWN_DISPLAY_NAME_BY_KEY: dict[str, str] = {
     "AST": "AST",
     "ASPARTATEAMINOTRANSFERASE": "AST",
     "ASPARTATAMINOTRANSFERAZ": "AST",
+
+    # CBC differential percentages. The Render catalog already contains these
+    # canonical parameters with age/sex-aware reference ranges.
+    "NEUTROPHIL": "Nötrofil %",
+    "NEUTROPHILS": "Nötrofil %",
+    "NEUTROPHILPCT": "Nötrofil %",
+    "LYMPHOCYTE": "Lenfosit %",
+    "LYMPHOCYTES": "Lenfosit %",
+    "LYMPHOCYTEPCT": "Lenfosit %",
+    "MONOCYTE": "Monosit %",
+    "MONOCYTES": "Monosit %",
+    "MONOCYTEPCT": "Monosit %",
+    "EOSINOPHIL": "Eozinofil %",
+    "EOSINOPHILS": "Eozinofil %",
+    "EOSINOPHILPCT": "Eozinofil %",
+    "BASOPHIL": "Bazofil %",
+    "BASOPHILS": "Bazofil %",
+    "BASOPHILPCT": "Bazofil %",
+
+    # Common English / abbreviated glucose and inflammation names.
+    "FBS": "Glukoz",
+    "FASTINGBLOODSUGAR": "Glukoz",
+    "FASTINGGLUCOSE": "Glukoz",
+    "HBA1C": "HbA1c",
+    "ESR": "Sedimentasyon",
+    "ERYTHROCYTESEDIMENTATIONRATE": "Sedimentasyon",
 }
 
 # Some reports render an upper decision limit as e.g.
@@ -84,6 +113,17 @@ def _canonicalize_known_row(row: dict[str, Any]) -> dict[str, Any]:
         return row
 
     row["display_name"] = canonical
+
+    # HbA1c is sometimes exported with a lone upper decision value (e.g. "-- 6.5").
+    # A single bound is insufficient for the existing RuleEngine; once the name is
+    # mapped with high confidence, let ReferenceResolver use the catalog's trusted
+    # age/sex-aware interval instead of treating the partial PDF bound as uncertain.
+    if canonical == "HbA1c":
+        low = row.get("extracted_reference_min")
+        high = row.get("extracted_reference_max")
+        if (low is None) != (high is None):
+            row["extracted_reference_min"] = None
+            row["extracted_reference_max"] = None
 
     # Reuse the already-established deterministic demo references for common
     # lipid markers. Do not invent ranges for calculated scores/indexes.
@@ -137,8 +177,17 @@ def _row_from_numeric_match(
     return _canonicalize_known_row(row)
 
 
+def _is_note_pseudo_test(row: dict[str, Any]) -> bool:
+    key = _name_key(str(row.get("display_name") or ""))
+    return key in {"NOTE", "NOT", "COMMENT", "COMMENTS", "ACIKLAMA"}
+
+
 def _parse_all_blood_rows(text: str, report_date: date) -> list[dict[str, Any]]:
-    rows = [_canonicalize_known_row(row) for row in _original_parse_all_blood_rows(text, report_date)]
+    rows = [
+        _canonicalize_known_row(row)
+        for row in _original_parse_all_blood_rows(text, report_date)
+        if not _is_note_pseudo_test(row)
+    ]
     seen = {_name_key(str(row.get("display_name") or "")) for row in rows}
 
     # Recover known lipid rows with the odd "- - limit" export shape.
@@ -188,7 +237,11 @@ def _map_rows_to_parameters(
     rows: list[dict[str, Any]],
     catalog: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    canonical_rows = [_canonicalize_known_row(row) for row in rows]
+    canonical_rows = [
+        _canonicalize_known_row(row)
+        for row in rows
+        if not _is_note_pseudo_test(row)
+    ]
     return _original_map_rows_to_parameters(canonical_rows, catalog)
 
 
@@ -204,6 +257,9 @@ async def _ensure_dynamic_parameters(rows: list[dict[str, Any]]) -> None:
 def _to_pipeline_values(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     values: list[dict[str, Any]] = []
     for row in rows:
+        if _is_note_pseudo_test(row):
+            continue
+
         # Known catalog parameters still use their stable code. Unknown rows use
         # the report's display name so the result remains understandable and the
         # pipeline's extracted-reference fallback can classify it directly.
