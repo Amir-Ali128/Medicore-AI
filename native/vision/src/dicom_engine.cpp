@@ -1,4 +1,5 @@
 #include "medicore_vision/dicom_engine.hpp"
+#include "medicore_vision/dicom_codecs.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -17,9 +18,23 @@
 namespace medicore::vision {
 namespace {
 
+constexpr std::size_t kMaxEncodedDicomBytes = 512ULL * 1024ULL * 1024ULL;
+constexpr std::size_t kMaxFramePixels = 64ULL * 1024ULL * 1024ULL;
+constexpr std::size_t kMaxTotalPixels = 256ULL * 1024ULL * 1024ULL;
+
+std::size_t checked_multiply(std::size_t left, std::size_t right, const char* label) {
+    if (left != 0 && right > std::numeric_limits<std::size_t>::max() / left) {
+        throw std::runtime_error(std::string("DICOM size overflow: ") + label);
+    }
+    return left * right;
+}
+
 std::unique_ptr<DcmFileFormat> parse_dicom(const std::vector<std::uint8_t>& encoded) {
     if (encoded.empty()) {
         throw std::invalid_argument("DICOM content cannot be empty");
+    }
+    if (encoded.size() > kMaxEncodedDicomBytes) {
+        throw std::invalid_argument("DICOM content exceeds the configured native safety limit");
     }
 
     DcmInputBufferStream stream;
@@ -85,6 +100,21 @@ DicomMetadata extract_metadata(DcmDataset& dataset) {
     if (metadata.rows <= 0 || metadata.columns <= 0) {
         throw std::runtime_error("DICOM Rows/Columns must be positive");
     }
+    const std::size_t frame_pixels = checked_multiply(
+        static_cast<std::size_t>(metadata.rows),
+        static_cast<std::size_t>(metadata.columns),
+        "Rows*Columns");
+    if (frame_pixels > kMaxFramePixels) {
+        throw std::runtime_error("DICOM frame exceeds the configured pixel safety limit");
+    }
+    const std::size_t total_pixels = checked_multiply(
+        frame_pixels,
+        static_cast<std::size_t>(metadata.frames),
+        "Rows*Columns*Frames");
+    if (total_pixels > kMaxTotalPixels) {
+        throw std::runtime_error("DICOM study exceeds the configured total pixel safety limit");
+    }
+
     if (metadata.samples_per_pixel != 1) {
         throw std::runtime_error("DICOM Engine v1 supports monochrome SamplesPerPixel=1 only");
     }
@@ -146,6 +176,8 @@ DicomMetadata extract_metadata(DcmDataset& dataset) {
     if (const char* uid = transfer.getXferID(); uid != nullptr) {
         metadata.transfer_syntax_uid = uid;
     }
+    metadata.compression_decoder_available =
+        !metadata.compressed || dicom_transfer_syntax_decodable(metadata.transfer_syntax_uid);
 
     return metadata;
 }
@@ -179,25 +211,32 @@ std::vector<double> extract_modality_frame(
     DcmDataset& dataset,
     const DicomMetadata& metadata,
     int frame_index) {
-    if (metadata.compressed) {
-        throw std::runtime_error(
-            "Compressed/encapsulated DICOM Pixel Data is not enabled in DICOM Engine v1");
-    }
     if (frame_index < 0 || frame_index >= metadata.frames) {
         throw std::out_of_range("DICOM frame_index is outside NumberOfFrames");
     }
+    if (metadata.compressed) {
+        ensure_uncompressed_dicom_pixel_data(dataset, metadata.transfer_syntax_uid);
+    }
 
-    const std::size_t frame_pixels =
-        static_cast<std::size_t>(metadata.rows) * static_cast<std::size_t>(metadata.columns);
-    const std::size_t required_pixels = frame_pixels * static_cast<std::size_t>(metadata.frames);
-    const std::size_t frame_offset = frame_pixels * static_cast<std::size_t>(frame_index);
+    const std::size_t frame_pixels = checked_multiply(
+        static_cast<std::size_t>(metadata.rows),
+        static_cast<std::size_t>(metadata.columns),
+        "Rows*Columns");
+    const std::size_t required_pixels = checked_multiply(
+        frame_pixels,
+        static_cast<std::size_t>(metadata.frames),
+        "Rows*Columns*Frames");
+    const std::size_t frame_offset = checked_multiply(
+        frame_pixels,
+        static_cast<std::size_t>(frame_index),
+        "frame offset");
 
     std::vector<double> values(frame_pixels);
     if (metadata.bits_allocated == 16) {
         const Uint16* pixels = nullptr;
         unsigned long count = 0;
         if (dataset.findAndGetUint16Array(DCM_PixelData, pixels, &count).bad() || pixels == nullptr) {
-            throw std::runtime_error("Unable to read native 16-bit DICOM Pixel Data");
+            throw std::runtime_error("Unable to read 16-bit DICOM Pixel Data after representation selection");
         }
         if (static_cast<std::size_t>(count) < required_pixels) {
             throw std::runtime_error("DICOM Pixel Data is shorter than Rows*Columns*Frames");
@@ -215,7 +254,7 @@ std::vector<double> extract_modality_frame(
         const Uint8* pixels = nullptr;
         unsigned long count = 0;
         if (dataset.findAndGetUint8Array(DCM_PixelData, pixels, &count).bad() || pixels == nullptr) {
-            throw std::runtime_error("Unable to read native 8-bit DICOM Pixel Data");
+            throw std::runtime_error("Unable to read 8-bit DICOM Pixel Data after representation selection");
         }
         if (static_cast<std::size_t>(count) < required_pixels) {
             throw std::runtime_error("DICOM Pixel Data is shorter than Rows*Columns*Frames");
