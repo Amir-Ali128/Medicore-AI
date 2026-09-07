@@ -1,9 +1,9 @@
 """Alias normalization.
 
-Deterministic, dependency-free normalization used both when matching raw lab
-test names against canonical parameters and when persisting `normalized_alias`
-lookup keys. Turkish-aware: dotted/dotless i and the ç/ğ/ö/ş/ü letters are
-folded to ASCII so that "İnsülin", "Insulin" and "insulin" collapse to one key.
+Canonical lab-name normalization is owned by the native C++ deterministic core when
+that extension is installed. The dependency-free Python implementation remains as a
+rolling-deploy/dev fallback and is intentionally behavior-compatible for Turkish and
+common Latin text.
 """
 
 from __future__ import annotations
@@ -11,7 +11,6 @@ from __future__ import annotations
 import re
 import unicodedata
 
-# Fold Turkish-specific letters to ASCII before generic diacritic stripping.
 _TURKISH_FOLD = str.maketrans(
     {
         "ı": "i", "İ": "i",
@@ -27,12 +26,7 @@ _NON_ALNUM = re.compile(r"[^a-z0-9]+")
 _WHITESPACE = re.compile(r"\s+")
 
 
-def normalize_alias(value: str | None) -> str:
-    """Return a canonical lookup key for a lab test name or alias.
-
-    Lowercased, Turkish/diacritic-folded, punctuation-collapsed to single
-    spaces, and trimmed. Empty/None input yields an empty string.
-    """
+def _python_normalize_alias(value: str | None) -> str:
     if not value:
         return ""
     text = value.strip().translate(_TURKISH_FOLD).lower()
@@ -42,14 +36,27 @@ def normalize_alias(value: str | None) -> str:
     return _WHITESPACE.sub(" ", text).strip()
 
 
+def normalize_alias(value: str | None) -> str:
+    """Return the canonical lookup key, preferring the C++ implementation."""
+    try:
+        from app.domain.native_lab_engine import (
+            native_lab_deterministic_available,
+            native_normalize_alias,
+        )
+
+        if native_lab_deterministic_available():
+            return native_normalize_alias(value)
+    except (ImportError, RuntimeError, OSError):
+        pass
+    return _python_normalize_alias(value)
+
+
 def normalization_tokens(value: str | None) -> list[str]:
-    """Return the normalized whitespace-separated tokens of `value`."""
     normalized = normalize_alias(value)
     return normalized.split(" ") if normalized else []
 
 
 def strip_parenthetical(value: str | None) -> str:
-    """Return `value` with any `(...)` segments removed (pre-normalization)."""
     if not value:
         return ""
     return re.sub(r"\(.*?\)", " ", value).strip()
