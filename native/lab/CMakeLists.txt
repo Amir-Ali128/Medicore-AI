@@ -48,7 +48,6 @@ enable_testing()
 add_executable(
     medicore_lab_core_tests
     tests/test_lab_core.cpp
-    tests/test_deterministic_core.cpp
 )
 target_link_libraries(
     medicore_lab_core_tests
@@ -56,3 +55,14 @@ target_link_libraries(
         medicore_lab_core
 )
 add_test(NAME medicore_lab_core COMMAND medicore_lab_core_tests)
+
+add_executable(
+    medicore_lab_deterministic_tests
+    tests/test_deterministic_core.cpp
+)
+target_link_libraries(
+    medicore_lab_deterministic_tests
+    PRIVATE
+        medicore_lab_core
+)
+add_test(NAME medicore_lab_deterministic COMMAND medicore_lab_deterministic_tests)
