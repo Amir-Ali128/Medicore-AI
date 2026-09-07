@@ -1,9 +1,9 @@
 """Thin Python adapter around MediCore's C++ laboratory core.
 
-The OpenAI model extracts structured rows from the original report. This module
-hands those rows to the native C++ core for deterministic normalization,
-reference-range classification, duplicate suppression, confidence gating and
-selected non-diagnostic clinical calculations.
+The extraction layer provides structured rows from the original report. This module
+hands those rows to the native C++ core for deterministic normalization, reference-range
+classification, validation, duplicate suppression, confidence gating and selected
+non-diagnostic clinical calculations.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ from functools import lru_cache
 from typing import Any, Mapping, Sequence
 
 LAB_NATIVE_CONTRACT = "medicore-lab-v1"
+LAB_VALIDATION_CONTRACT = "medicore-lab-validation-v1"
 LAB_METRICS_CONTRACT = "medicore-lab-metrics-v1"
 
 
@@ -31,6 +32,15 @@ def _load_native_module() -> Any | None:
 def native_lab_available() -> bool:
     module = _load_native_module()
     return bool(module is not None and getattr(module, "CONTRACT_VERSION", None) == LAB_NATIVE_CONTRACT)
+
+
+def native_lab_validation_available() -> bool:
+    module = _load_native_module()
+    return bool(
+        module is not None
+        and getattr(module, "CONTRACT_VERSION", None) == LAB_NATIVE_CONTRACT
+        and getattr(module, "VALIDATION_VERSION", None) == LAB_VALIDATION_CONTRACT
+    )
 
 
 def native_lab_metrics_available() -> bool:
@@ -53,7 +63,7 @@ def _require_module() -> Any:
 
 
 def process_astra_lab_rows(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    """Normalize/classify Astra-extracted rows with the native C++ core."""
+    """Normalize/classify extracted rows with the native C++ core."""
     if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes, bytearray)):
         raise ValueError("Laboratuvar satırları bir liste olmalıdır.")
 
@@ -68,7 +78,14 @@ def process_astra_lab_rows(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, 
             raise RuntimeError("Native C++ lab engine satır formatı geçersiz.")
         if item.get("contract_version") != LAB_NATIVE_CONTRACT:
             raise RuntimeError("Native C++ lab satır contract sürümü uyumsuz.")
-        processed.append(dict(item))
+
+        row = dict(item)
+        # Validation metadata is additive so older native binaries remain readable
+        # during a rolling deployment. New binaries advertise and emit the contract.
+        validation_version = row.get("validation_contract_version")
+        if validation_version is not None and validation_version != LAB_VALIDATION_CONTRACT:
+            raise RuntimeError("Native C++ lab validation contract sürümü uyumsuz.")
+        processed.append(row)
     return processed
 
 
