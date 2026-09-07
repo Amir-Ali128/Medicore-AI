@@ -148,7 +148,7 @@ async def run_native_trust_clinical_pipeline(
     strict AI-facing pipeline. This is more conservative than standalone metric APIs:
     no review-only measurement can influence the generative clinical summary.
     """
-    trusted_rows, review_rows, all_rows = validate_native_trust_envelope(envelope)
+    trusted_rows, review_rows, _all_rows = validate_native_trust_envelope(envelope)
     service_rows = _rows_for_clinical_service(trusted_rows, review_rows)
 
     derived_metrics: list[dict[str, Any]] = []
@@ -181,11 +181,13 @@ async def run_native_trust_clinical_pipeline(
                 patient_age=_metric_age(envelope.get("patient_age")),
                 patient_sex=str(envelope.get("patient_sex") or "") or None,
             )
-        except OpenAILabClinicalError as exc:
+        except OpenAILabClinicalError:
+            # Do not echo provider/runtime error details into API payloads. The caller
+            # only needs the stable fallback category; operational details belong in logs.
             assessment = _fallback(
                 rows=service_rows,
                 derived_metrics=derived_metrics,
-                reason=f"clinical_ai_unavailable:{exc}",
+                reason="clinical_ai_unavailable",
             )
 
     return {
