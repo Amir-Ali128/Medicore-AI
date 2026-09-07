@@ -52,6 +52,7 @@ int main() {
         row.extraction_confidence = 0.99;
         const auto result = process_row(row);
         assert(result.status == "HIGH");
+        assert(result.validation_status == "VALID");
         assert(!result.needs_review);
         assert(result.rule_applied == "native_value_above_max");
     }
@@ -66,6 +67,74 @@ int main() {
         row.extraction_confidence = 0.98;
         const auto result = process_row(row);
         assert(result.status == "LOW");
+        assert(result.validation_status == "VALID");
+    }
+
+    // Strict upper bound: <5 means 5 itself is outside the reference condition.
+    {
+        LabRow row;
+        row.raw_parameter_name = "CRP";
+        row.normalized_value = 5.0;
+        row.unit = "mg/L";
+        row.reference_max = 5.0;
+        row.reference_text = "< 5";
+        row.extraction_confidence = 0.99;
+        const auto result = process_row(row);
+        assert(result.source.reference_type == "less_than");
+        assert(result.status == "HIGH");
+        assert(result.validation_status == "VALID");
+    }
+
+    // Inclusive upper bound: <=5 keeps equality inside the reference condition.
+    {
+        LabRow row;
+        row.raw_parameter_name = "Marker A";
+        row.normalized_value = 5.0;
+        row.reference_max = 5.0;
+        row.reference_text = "<= 5";
+        row.extraction_confidence = 0.99;
+        const auto result = process_row(row);
+        assert(result.source.reference_type == "less_equal");
+        assert(result.status == "NORMAL");
+    }
+
+    // Strict lower bound: >40 means 40 itself does not satisfy the condition.
+    {
+        LabRow row;
+        row.raw_parameter_name = "HDL";
+        row.normalized_value = 40.0;
+        row.unit = "mg/dL";
+        row.reference_min = 40.0;
+        row.reference_text = "> 40";
+        row.extraction_confidence = 0.99;
+        const auto result = process_row(row);
+        assert(result.source.reference_type == "greater_than");
+        assert(result.status == "LOW");
+    }
+
+    // Inclusive lower bound: >=40 keeps equality inside the reference condition.
+    {
+        LabRow row;
+        row.raw_parameter_name = "Marker B";
+        row.normalized_value = 40.0;
+        row.reference_min = 40.0;
+        row.reference_text = ">= 40";
+        row.extraction_confidence = 0.99;
+        const auto result = process_row(row);
+        assert(result.source.reference_type == "greater_equal");
+        assert(result.status == "NORMAL");
+    }
+
+    // A lone numeric max without comparator text preserves legacy inclusive behavior.
+    {
+        LabRow row;
+        row.raw_parameter_name = "Marker C";
+        row.normalized_value = 5.0;
+        row.reference_max = 5.0;
+        row.extraction_confidence = 0.99;
+        const auto result = process_row(row);
+        assert(result.source.reference_type == "range");
+        assert(result.status == "NORMAL");
     }
 
     {
@@ -76,7 +145,49 @@ int main() {
         row.extraction_confidence = 0.99;
         const auto result = process_row(row);
         assert(result.status == "NEEDS_REVIEW");
+        assert(result.validation_status == "NEEDS_REVIEW");
         assert(result.needs_review);
+    }
+
+    // Invalid range is structurally invalid, not silently reinterpreted.
+    {
+        LabRow row;
+        row.raw_parameter_name = "Broken Range";
+        row.normalized_value = 50.0;
+        row.reference_min = 100.0;
+        row.reference_max = 70.0;
+        row.extraction_confidence = 0.99;
+        const auto result = process_row(row);
+        assert(result.status == "NEEDS_REVIEW");
+        assert(result.validation_status == "INVALID");
+        assert(result.needs_review);
+    }
+
+    // Comparator with a missing required bound cannot be classified safely.
+    {
+        LabRow row;
+        row.raw_parameter_name = "Malformed Reference";
+        row.normalized_value = 2.0;
+        row.reference_type = "less_than";
+        row.extraction_confidence = 0.99;
+        const auto result = process_row(row);
+        assert(result.status == "NEEDS_REVIEW");
+        assert(result.validation_status == "NEEDS_REVIEW");
+        assert(result.rule_applied == "native_reference_shape_mismatch");
+    }
+
+    // Low extraction confidence keeps the numeric classification but downgrades trust.
+    {
+        LabRow row;
+        row.raw_parameter_name = "Glucose";
+        row.normalized_value = 180.0;
+        row.reference_max = 100.0;
+        row.extraction_confidence = 0.70;
+        const auto result = process_row(row);
+        assert(result.status == "HIGH");
+        assert(result.validation_status == "WARNING");
+        assert(result.needs_review);
+        assert(result.classification_confidence <= 0.84);
     }
 
     {
@@ -95,6 +206,23 @@ int main() {
         assert(results.size() == 1);
         assert(results.front().source.extraction_confidence == 0.98);
         assert(results.front().status == "HIGH");
+        assert(results.front().validation_status == "VALID");
+    }
+
+    // Same value/range but different comparator semantics must not be deduplicated.
+    {
+        LabRow strict;
+        strict.raw_parameter_name = "Boundary Test";
+        strict.normalized_value = 5.0;
+        strict.reference_max = 5.0;
+        strict.reference_text = "<5";
+        strict.extraction_confidence = 0.99;
+
+        LabRow inclusive = strict;
+        inclusive.reference_text = "<=5";
+
+        const auto results = process_rows({strict, inclusive});
+        assert(results.size() == 2);
     }
 
     {

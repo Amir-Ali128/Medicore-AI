@@ -1,9 +1,9 @@
 """Physician-assistive laboratory synthesis built on native-validated facts.
 
-Astra/OpenAI never performs the deterministic arithmetic in this module. It receives
-only de-identified lab rows already classified by the C++ core plus derived metrics
-calculated by that same native core, then turns those facts into a readable clinical
-priority summary for physician review.
+The language model never performs deterministic laboratory arithmetic here. It receives
+rows already normalized/classified by MediCore's C++ core plus derived metrics calculated
+by that same native core. Rows that fail or weaken native validation are separated from
+AI-eligible facts and are presented only as review items.
 """
 
 from __future__ import annotations
@@ -81,14 +81,19 @@ You are the clinical laboratory synthesis layer of MediCore-AI, a physician-assi
 clinical decision support system. Write in clear, natural Turkish suitable for a
 physician and an informed patient reading together.
 
-The input contains two authoritative fact layers:
-1) lab_rows: measured values and NORMAL/LOW/HIGH/NEEDS_REVIEW classification produced
-   by MediCore's deterministic native C++ core from the laboratory's printed ranges.
-2) derived_metrics: deterministic calculations produced by the native C++ core.
+The input contains three fact layers:
+1) lab_rows: measured values whose deterministic comparison passed MediCore's native
+   C++ validation and can be used as primary laboratory facts.
+2) review_rows: rows marked WARNING, NEEDS_REVIEW or INVALID by the C++ core. They are
+   supplied only so you can state limitations/review needs; NEVER use them as verified
+   evidence for a clinical conclusion and NEVER silently repair or reinterpret them.
+3) derived_metrics: deterministic calculations produced by the native C++ core.
 
 Hard rules:
 - NEVER recalculate a value or derived metric yourself. Use the supplied C++ values.
-- NEVER override a C++ result_status or turn NEEDS_REVIEW into NORMAL/HIGH/LOW.
+- NEVER override a C++ result_status or validation_status.
+- NEVER promote review_rows into trusted facts, even if a value looks clinically plausible.
+- NEVER infer a missing digit, decimal separator, unit, comparator or reference range.
 - Clearly distinguish measured laboratory values from calculated metrics.
 - Never invent a reference range, diagnosis, symptom, medication, history or test.
 - Do not prescribe medication, dose changes, or treatment. Follow-up may recommend
@@ -105,14 +110,12 @@ Hard rules:
   uyumlu olabilir / diyabet olasılığını güçlü destekleyebilir; klinik doğrulama gerekir"
   rather than claiming a definitive diagnosis.
 - A missing printed reference range means deterministic normality cannot be claimed.
-  You may discuss clinical context cautiously, but preserve the uncertainty.
+  Preserve that uncertainty.
 - Reserve severity "critical" for findings whose urgency is clearly supported by the
   supplied evidence. Do not invent emergency cutoffs.
-- Mention reassuring normal findings compactly; do not waste space narrating every
-  normal row one-by-one.
-- Rank the most important clinical pattern first. Group related values by system
-  (for example glucose/metabolism, kidney, lipids/cardiovascular, liver, thyroid,
-  hematology, inflammation) only when evidence for that group exists.
+- Mention reassuring normal findings compactly; do not narrate every normal row one-by-one.
+- Rank the most important clinical pattern first. Group related values by system only
+  when evidence for that group exists.
 - Every substantive claim must be traceable to supplied evidence strings.
 - Do not include patient name, identity number, address, phone, email, protocol number
   or exact date of birth.
@@ -138,16 +141,33 @@ def _json_safe(value: Any) -> Any:
     return value
 
 
+def _validation_state(row: Mapping[str, Any]) -> str:
+    """Normalize native validation state while remaining compatible with v1 rows."""
+    explicit = str(row.get("validation_status") or "").strip().upper()
+    if explicit in {"VALID", "WARNING", "NEEDS_REVIEW", "INVALID"}:
+        return explicit
+    if bool(row.get("needs_review")) or str(row.get("result_status") or "").upper() == "NEEDS_REVIEW":
+        return "NEEDS_REVIEW"
+    return "VALID"
+
+
+def _row_requires_review(row: Mapping[str, Any]) -> bool:
+    return _validation_state(row) != "VALID" or bool(row.get("needs_review"))
+
+
 def _clinical_row(row: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "test": row.get("display_name") or row.get("canonical_name") or row.get("raw_parameter_name"),
+        "loinc_code": row.get("loinc_code"),
         "value": _json_safe(row.get("normalized_value")),
         "unit": row.get("unit"),
         "reference_min": _json_safe(row.get("reference_min")),
         "reference_max": _json_safe(row.get("reference_max")),
         "reference_text": row.get("reference_text"),
+        "reference_type": row.get("reference_type"),
         "result_status": row.get("result_status"),
-        "needs_review": bool(row.get("needs_review")),
+        "validation_status": _validation_state(row),
+        "needs_review": _row_requires_review(row),
         "reason": row.get("reason"),
         "classification_confidence": _json_safe(row.get("classification_confidence")),
     }
@@ -165,27 +185,47 @@ def _metric_input(metric: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def partition_rows_for_ai(
+    rows: Sequence[Mapping[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Separate C++-validated facts from rows that must remain review-only.
+
+    This is the trust boundary between deterministic native processing and generative
+    clinical synthesis. The AI gets review rows for transparency, but they cannot enter
+    the trusted evidence list.
+    """
+    trusted: list[dict[str, Any]] = []
+    review: list[dict[str, Any]] = []
+    for row in rows:
+        serialized = _clinical_row(row)
+        if _row_requires_review(row):
+            review.append(serialized)
+        else:
+            trusted.append(serialized)
+    return trusted, review
+
+
 def build_fallback_clinical_assessment(
     *,
     rows: Sequence[Mapping[str, Any]],
     derived_metrics: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
     """Safe deterministic fallback when the narrative model is unavailable."""
+    trusted_rows, review_rows = partition_rows_for_ai(rows)
     abnormal = [
         row
-        for row in rows
+        for row in trusted_rows
         if str(row.get("result_status") or "").upper() in {"HIGH", "LOW"}
     ]
-    review = [row for row in rows if bool(row.get("needs_review"))]
     normal = [
         row
-        for row in rows
-        if str(row.get("result_status") or "").upper() == "NORMAL" and not bool(row.get("needs_review"))
+        for row in trusted_rows
+        if str(row.get("result_status") or "").upper() == "NORMAL"
     ]
 
     def evidence(row: Mapping[str, Any]) -> str:
-        name = row.get("display_name") or row.get("canonical_name") or row.get("raw_parameter_name") or "Test"
-        value = row.get("normalized_value")
+        name = row.get("test") or row.get("display_name") or row.get("canonical_name") or row.get("raw_parameter_name") or "Test"
+        value = row.get("value") if "value" in row else row.get("normalized_value")
         unit = row.get("unit") or ""
         return f"{name}: {value} {unit}".strip()
 
@@ -203,9 +243,9 @@ def build_fallback_clinical_assessment(
         )
 
     headline = (
-        "Kaynak laboratuvar referanslarına göre öncelikli sapmalar saptandı."
+        "Kaynak laboratuvar referanslarına göre doğrulanmış öncelikli sapmalar saptandı."
         if abnormal
-        else "Belirgin kaynak-referans sapması saptanmadı; doğrulama gereken sonuçlar ayrıca gösterildi."
+        else "Doğrulanmış belirgin kaynak-referans sapması saptanmadı; doğrulama gereken sonuçlar ayrıca gösterildi."
     )
     normal_evidence = [evidence(row) for row in normal[:8]]
     metric_lines = [
@@ -218,24 +258,32 @@ def build_fallback_clinical_assessment(
     if metric_lines:
         narrative_parts.append("C++ ile hesaplanan ek metrikler:\n" + "\n".join(f"• {line}" for line in metric_lines))
     if normal_evidence:
-        narrative_parts.append("Kaynak aralığı içinde görünen bazı sonuçlar:\n" + "\n".join(f"• {line}" for line in normal_evidence))
-    if review:
-        narrative_parts.append(f"{len(review)} sonuç ayrıca hekim/kaynak doğrulaması gerektiriyor.")
+        narrative_parts.append("Kaynak aralığı içinde doğrulanmış bazı sonuçlar:\n" + "\n".join(f"• {line}" for line in normal_evidence))
+    if review_rows:
+        narrative_parts.append(
+            f"{len(review_rows)} sonuç C++ doğrulama katmanı tarafından kaynak/hekim kontrolüne ayrıldı ve klinik kanıt olarak kullanılmadı."
+        )
     narrative_parts.append("Bu çıktı klinik karar desteğidir; tanı veya tedavi kararı değildir.")
+
+    limitations = [
+        "AI klinik sentezi kullanılamadığı için bu metin yalnızca deterministik yedek özettir.",
+        "Kaynak raporda referansı bulunmayan sonuçların normal/düşük/yüksek sınıflaması yapılmaz.",
+    ]
+    if review_rows:
+        limitations.append(
+            f"{len(review_rows)} satır WARNING/NEEDS_REVIEW/INVALID durumunda olduğu için doğrulanmış klinik kanıta dahil edilmedi."
+        )
 
     return {
         "headline": headline,
-        "overview": "Laboratuvar sonuçları native C++ sınıflandırması ve kaynak referansları temel alınarak özetlendi.",
+        "overview": "Laboratuvar sonuçları native C++ sınıflandırması, doğrulama durumu ve kaynak referansları temel alınarak özetlendi.",
         "priority_findings": priority_findings,
         "systems": [],
         "reassuring_findings": normal_evidence,
         "priority_actions": [
             "Öncelikli sapmaları hastanın öyküsü, muayenesi, önceki sonuçları ve mevcut tedavileriyle birlikte değerlendirin."
         ] if abnormal else [],
-        "limitations": [
-            "AI klinik sentezi kullanılamadığı için bu metin yalnızca deterministik yedek özettir.",
-            "Kaynak raporda referansı bulunmayan sonuçların normal/düşük/yüksek sınıflaması yapılmaz.",
-        ],
+        "limitations": limitations,
         "narrative_tr": "\n\n".join(narrative_parts),
         "model": None,
         "synthesis_source": "deterministic_fallback",
@@ -257,13 +305,20 @@ async def synthesize_lab_clinical_assessment(
     if not model:
         raise OpenAILabClinicalError("OPENAI_LAB_MODEL yapılandırılmamış.")
 
+    trusted_rows, review_rows = partition_rows_for_ai(rows)
     payload = {
         "patient_context": {
             "age": patient_age,
             "sex": patient_sex,
         },
-        "lab_rows": [_clinical_row(row) for row in rows],
+        "lab_rows": trusted_rows,
+        "review_rows": review_rows,
         "derived_metrics": [_metric_input(metric) for metric in derived_metrics],
+        "trust_policy": {
+            "primary_lab_facts": "native_cpp_validation_status_VALID_only",
+            "review_rows_are_non_authoritative": True,
+            "silent_correction_allowed": False,
+        },
     }
 
     client = AsyncOpenAI(api_key=settings.openai_api_key)

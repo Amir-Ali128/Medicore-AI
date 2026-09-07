@@ -64,6 +64,7 @@ LabRow from_python(const py::dict& row) {
     LabRow value;
     value.raw_parameter_name = text_value(row, "raw_parameter_name");
     value.canonical_name = text_value(row, "canonical_name");
+    value.loinc_code = text_value(row, "loinc_code");
     value.raw_value = text_value(row, "raw_value");
     value.normalized_value = optional_double(row, "normalized_value");
     value.unit = text_value(row, "unit");
@@ -76,6 +77,7 @@ LabRow from_python(const py::dict& row) {
         value.reference_max = optional_double(row, "extracted_reference_max");
     }
     value.reference_text = text_value(row, "reference_text");
+    value.reference_type = text_value(row, "reference_type");
     value.measured_at = text_value(row, "measured_at");
     value.ai_needs_review = bool_value(row, "needs_review");
     value.extraction_confidence = confidence_value(row, "confidence");
@@ -124,6 +126,7 @@ py::dict to_python(const ProcessedLabRow& row) {
     py::dict out;
     out["raw_parameter_name"] = row.source.raw_parameter_name;
     out["canonical_name"] = text_or_none(row.source.canonical_name);
+    out["loinc_code"] = text_or_none(row.source.loinc_code);
     out["display_name"] = row.display_name;
     out["raw_value"] = text_or_none(row.source.raw_value);
     out["normalized_value"] = optional_to_python(row.source.normalized_value);
@@ -131,16 +134,19 @@ py::dict to_python(const ProcessedLabRow& row) {
     out["reference_min"] = optional_to_python(row.source.reference_min);
     out["reference_max"] = optional_to_python(row.source.reference_max);
     out["reference_text"] = text_or_none(row.source.reference_text);
+    out["reference_type"] = row.source.reference_type;
     out["measured_at"] = text_or_none(row.source.measured_at);
     out["source_file_name"] = text_or_none(row.source.source_file_name);
     out["source_page"] = optional_int_to_python(row.source.source_page);
     out["extraction_confidence"] = row.source.extraction_confidence;
     out["result_status"] = row.status;
+    out["validation_status"] = row.validation_status;
     out["needs_review"] = row.needs_review;
     out["reason"] = row.reason;
     out["rule_applied"] = row.rule_applied;
     out["classification_confidence"] = row.classification_confidence;
     out["contract_version"] = medicore::lab::kContractVersion;
+    out["validation_contract_version"] = medicore::lab::kValidationContractVersion;
     return out;
 }
 
@@ -197,8 +203,10 @@ py::list compute_python_metrics(
 PYBIND11_MODULE(medicore_lab, module) {
     module.doc() = "MediCore native C++ laboratory normalization/classification/metrics core";
     module.attr("CONTRACT_VERSION") = medicore::lab::kContractVersion;
+    module.attr("VALIDATION_VERSION") = medicore::lab::kValidationContractVersion;
     module.attr("METRICS_VERSION") = medicore::lab::kMetricsContractVersion;
     module.def("process_rows", &process_python_rows, py::arg("rows"));
     module.def("compute_derived_metrics", &compute_python_metrics, py::arg("rows"), py::arg("patient_age") = py::none(), py::arg("patient_sex") = "");
     module.def("normalize_unit", &medicore::lab::normalize_unit, py::arg("unit"));
+    module.def("normalize_reference_type", &medicore::lab::normalize_reference_type, py::arg("reference_type"));
 }

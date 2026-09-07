@@ -32,7 +32,7 @@ target_link_libraries(
 target_compile_definitions(
     medicore_lab
     PRIVATE
-        MEDICORE_LAB_VERSION="1.1.0"
+        MEDICORE_LAB_VERSION="1.2.0"
 )
 
 # Installing with --prefix app/backend places the extension on FastAPI's normal
