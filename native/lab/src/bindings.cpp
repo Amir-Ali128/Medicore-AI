@@ -24,6 +24,17 @@ std::string text_value(const py::dict& row, const char* key) {
     return py::str(row[key]).cast<std::string>();
 }
 
+std::vector<std::string> string_list_value(const py::dict& row, const char* key) {
+    if (!row.contains(key) || row[key].is_none()) {
+        return {};
+    }
+    try {
+        return py::cast<std::vector<std::string>>(row[key]);
+    } catch (const py::cast_error&) {
+        return {};
+    }
+}
+
 std::optional<double> optional_double(const py::dict& row, const char* key) {
     if (!row.contains(key) || row[key].is_none()) {
         return std::nullopt;
@@ -102,6 +113,7 @@ LabRow from_python(const py::dict& row) {
     value.loinc_code = text_value(row, "loinc_code");
     value.raw_value = text_value(row, "raw_value");
     value.normalized_value = optional_double(row, "normalized_value");
+    value.raw_unit = text_value(row, "raw_unit");
     value.unit = text_value(row, "unit");
     value.reference_min = optional_double(row, "reference_min");
     if (!value.reference_min) {
@@ -114,13 +126,20 @@ LabRow from_python(const py::dict& row) {
     value.reference_text = text_value(row, "reference_text");
     value.reference_type = text_value(row, "reference_type");
     value.measured_at = text_value(row, "measured_at");
+    value.value_type = text_value(row, "value_type");
     value.ai_needs_review = bool_value(row, "needs_review");
     value.extraction_confidence = confidence_value(row, "confidence");
     if (value.extraction_confidence == 0.0) {
         value.extraction_confidence = confidence_value(row, "extraction_confidence");
     }
+    value.canonical_row_contract = text_value(row, "canonical_row_contract");
+    value.source_type = text_value(row, "source_type");
     value.source_file_name = text_value(row, "source_file_name");
     value.source_page = optional_int(row, "source_page");
+    value.source_sha256 = text_value(row, "source_sha256");
+    value.source_record_id = text_value(row, "source_record_id");
+    value.integration_type = text_value(row, "integration_type");
+    value.ingestion_reasons = string_list_value(row, "ingestion_reasons");
     return value;
 }
 
@@ -194,14 +213,22 @@ py::dict to_python(const ProcessedLabRow& row) {
     out["display_name"] = row.display_name;
     out["raw_value"] = text_or_none(row.source.raw_value);
     out["normalized_value"] = optional_to_python(row.source.normalized_value);
+    out["raw_unit"] = text_or_none(row.source.raw_unit);
     out["unit"] = text_or_none(row.source.unit);
     out["reference_min"] = optional_to_python(row.source.reference_min);
     out["reference_max"] = optional_to_python(row.source.reference_max);
     out["reference_text"] = text_or_none(row.source.reference_text);
     out["reference_type"] = row.source.reference_type;
     out["measured_at"] = text_or_none(row.source.measured_at);
+    out["value_type"] = text_or_none(row.source.value_type);
+    out["canonical_row_contract"] = text_or_none(row.source.canonical_row_contract);
+    out["source_type"] = text_or_none(row.source.source_type);
     out["source_file_name"] = text_or_none(row.source.source_file_name);
     out["source_page"] = optional_int_to_python(row.source.source_page);
+    out["source_sha256"] = text_or_none(row.source.source_sha256);
+    out["source_record_id"] = text_or_none(row.source.source_record_id);
+    out["integration_type"] = text_or_none(row.source.integration_type);
+    out["ingestion_reasons"] = row.source.ingestion_reasons;
     out["extraction_confidence"] = row.source.extraction_confidence;
     out["result_status"] = row.status;
     out["validation_status"] = row.validation_status;
@@ -211,6 +238,7 @@ py::dict to_python(const ProcessedLabRow& row) {
     out["classification_confidence"] = row.classification_confidence;
     out["contract_version"] = medicore::lab::kContractVersion;
     out["validation_contract_version"] = medicore::lab::kValidationContractVersion;
+    out["provenance_contract_version"] = medicore::lab::kProvenanceContractVersion;
     return out;
 }
 
@@ -341,6 +369,7 @@ PYBIND11_MODULE(medicore_lab, module) {
     module.doc() = "MediCore native C++ laboratory normalization/classification/metrics core";
     module.attr("CONTRACT_VERSION") = medicore::lab::kContractVersion;
     module.attr("VALIDATION_VERSION") = medicore::lab::kValidationContractVersion;
+    module.attr("PROVENANCE_VERSION") = medicore::lab::kProvenanceContractVersion;
     module.attr("METRICS_VERSION") = medicore::lab::kMetricsContractVersion;
     module.attr("DETERMINISTIC_VERSION") = medicore::lab::kDeterministicContractVersion;
     module.def("process_rows", &process_python_rows, py::arg("rows"));

@@ -9,6 +9,7 @@ namespace medicore::lab {
 // Keep the row contract backward-compatible with the existing Python adapter.
 inline constexpr const char* kContractVersion = "medicore-lab-v1";
 inline constexpr const char* kValidationContractVersion = "medicore-lab-validation-v1";
+inline constexpr const char* kProvenanceContractVersion = "medicore-lab-provenance-v1";
 
 struct LabRow {
     std::string raw_parameter_name;
@@ -16,6 +17,7 @@ struct LabRow {
     std::string loinc_code;
     std::string raw_value;
     std::optional<double> normalized_value;
+    std::string raw_unit;
     std::string unit;
     std::optional<double> reference_min;
     std::optional<double> reference_max;
@@ -24,10 +26,20 @@ struct LabRow {
     // greater_equal, qualitative, unknown. Empty means infer conservatively.
     std::string reference_type;
     std::string measured_at;
+    std::string value_type;
     bool ai_needs_review{false};
     double extraction_confidence{0.0};
+
+    // Canonical-ingestion provenance. These fields are deliberately carried
+    // through native dedupe so the selected deterministic row remains auditable.
+    std::string canonical_row_contract;
+    std::string source_type;
     std::string source_file_name;
     std::optional<int> source_page;
+    std::string source_sha256;
+    std::string source_record_id;
+    std::string integration_type;
+    std::vector<std::string> ingestion_reasons;
 };
 
 struct ProcessedLabRow {
