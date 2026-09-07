@@ -15,6 +15,7 @@ from app.api.routes import (
     extraction_review,
     feedback,
     lab_analysis,
+    lab_ingestion,
     lab_manual_entry,
     lab_pdf_direct_alias,
     lab_pdf_direct_upload,
@@ -70,6 +71,9 @@ api_router.include_router(lab_pdf_direct_alias.router)
 api_router.include_router(lab_pdf_direct_upload.router)
 api_router.include_router(lab_pdf_system_extract.router)
 api_router.include_router(lab_analysis.router)
+# New seven-source gateway emits only the canonical lab contract. Native C++ and
+# clinical AI remain downstream so all sources share one trust boundary.
+api_router.include_router(lab_ingestion.router)
 api_router.include_router(lab_manual_entry.router)
 api_router.include_router(combined_case_import.router)
 api_router.include_router(lab_reports.router)

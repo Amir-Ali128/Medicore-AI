@@ -21,6 +21,7 @@ on:
       - feature/astra-native-lab-cpp
       - feature/universal-page-analysis
       - feature/native-core-completion-v3
+      - feature/universal-lab-ingestion-v1
   pull_request:
     branches:
       - main
@@ -66,6 +67,7 @@ jobs:
             tests/test_onnx_parity.py \
             tests/test_native_lab_extensions_adapter.py \
             tests/test_native_process_isolation.py \
+            tests/test_universal_lab_ingestion.py \
             tests/test_clinical_fusion_brain.py \
             tests/test_clinical_fusion_case_adapter.py \
             tests/test_clinical_fusion_onnx_bridge.py \
