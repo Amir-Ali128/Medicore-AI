@@ -2,10 +2,9 @@
 
 Safe alias resolver with curated Turkish/English lab synonyms.
 
-Important fix:
-- If a known curated raw name cannot be mapped to an existing DB parameter,
-  it returns UNKNOWN instead of falling through to risky fuzzy matching.
-  This prevents examples like Vitamin B1 -> Vitamin B12 or Triglyceride -> IG%.
+Normalization and fuzzy similarity prefer the native C++ deterministic core when
+available. Database lookup and curated alias orchestration intentionally remain in
+Python. Known curated raw names never fall through to risky fuzzy matching.
 """
 
 from __future__ import annotations
@@ -21,7 +20,6 @@ from app.infrastructure.database.repositories.parameter_alias_repository import 
 )
 from app.schemas.analysis import AliasCandidate, AliasMatchResult, MatchMethod
 
-
 CONF_PARAMETER_CODE = 1.0
 CONF_CANONICAL_NAME = 0.99
 CONF_CURATED_ALIAS = 0.94
@@ -31,30 +29,22 @@ FUZZY_REVIEW_FLOOR = 0.75
 MAX_ALTERNATIVES = 3
 _MIN_FUZZY_LENGTH = 2
 
-
 _CURATED_ALIAS_TARGETS_RAW: dict[str, tuple[str, ...]] = {
-    # Kidney / glucose
     "BUN": ("BUN", "Blood Urea Nitrogen"),
     "Kreatinin": ("Creatinine", "Kreatinin", "CREA"),
     "GFR": ("GFR", "eGFR", "Glomerular Filtration Rate"),
     "Glukoz": ("Glucose", "Glukoz", "Fasting Glucose"),
-
-    # Lipids
     "Total Kolesterol": ("Total Cholesterol", "Cholesterol", "Total Kolesterol"),
     "HDL": ("HDL", "HDL Cholesterol"),
     "Trigliserit": ("Triglyceride", "Triglycerides", "Trigliserit"),
     "LDL": ("LDL", "LDL Cholesterol"),
     "Non-HDL": ("Non-HDL Cholesterol", "Non HDL Cholesterol"),
-
-    # Liver / bilirubin
     "ALP": ("ALP", "Alkaline Phosphatase"),
     "AST": ("AST", "SGOT"),
     "ALT": ("ALT", "SGPT"),
     "GGT": ("GGT", "Gamma GT", "Gama-GT"),
     "Total Bilirubin": ("Total Bilirubin", "Bilirubin Total"),
     "Direkt Bilirubin": ("Direct Bilirubin", "Bilirubin Direct"),
-
-    # Thyroid / vitamins / inflammation
     "FT3": ("FT3", "Free T3"),
     "FT4": ("FT4", "Free T4"),
     "TSH": ("TSH", "Thyroid Stimulating Hormone"),
@@ -65,8 +55,6 @@ _CURATED_ALIAS_TARGETS_RAW: dict[str, tuple[str, ...]] = {
     "CRP": ("CRP", "C-Reactive Protein"),
     "Folik Asit": ("Folate", "Folic Acid", "Folik Asit"),
     "CK": ("CK", "CK (CPK)", "CPK", "Creatine Kinase", "Kreatin Kinaz"),
-
-    # CBC
     "Lökosit": ("WBC", "Lökosit", "Lokosit", "Leukocyte"),
     "Eritrosit": ("RBC", "Eritrosit", "Erythrocyte"),
     "Hemoglobin": ("Hemoglobin", "HGB", "Hb"),
@@ -79,9 +67,6 @@ _CURATED_ALIAS_TARGETS_RAW: dict[str, tuple[str, ...]] = {
     "MPV": ("MPV",),
     "PCT": ("PCT", "Plateletcrit"),
     "P-LCR": ("P-LCR", "Platelet Large Cell Ratio"),
-
-    # Differential absolute + percentages. Keep absolute and percentage
-    # separate; if DB lacks absolute entries, better UNKNOWN than wrong % mapping.
     "Nötrofil": ("Neutrophil", "Nötrofil", "Notrofil", "NEU", "NEUT"),
     "Nötrofil %": ("Neutrophil %", "Nötrofil %", "Notrofil %", "NEU%", "NEUT%"),
     "Lenfosit": ("Lymphocyte", "Lenfosit", "LYM", "LYMPH"),
@@ -100,6 +85,20 @@ _CURATED_ALIAS_TARGETS = {
     normalize_alias(raw): tuple(targets)
     for raw, targets in _CURATED_ALIAS_TARGETS_RAW.items()
 }
+
+
+def _similarity(left: str, right: str) -> float:
+    try:
+        from app.domain.native_lab_engine import (
+            native_alias_similarity,
+            native_lab_deterministic_available,
+        )
+
+        if native_lab_deterministic_available():
+            return native_alias_similarity(left, right)
+    except (ImportError, RuntimeError, OSError):
+        pass
+    return SequenceMatcher(None, left, right).ratio()
 
 
 class _IndexEntry:
@@ -141,7 +140,6 @@ class AliasEngine:
             self._entries.append(entry)
             self._by_code[parameter.parameter_code] = entry
             self._by_code[parameter.parameter_code.upper()] = entry
-
             if entry.normalized:
                 self._by_normalized.setdefault(entry.normalized, entry)
 
@@ -163,7 +161,6 @@ class AliasEngine:
             return self._result(raw, entry, CONF_PARAMETER_CODE, MatchMethod.PARAMETER_CODE, False)
 
         normalized = normalize_alias(raw)
-
         entry = self._by_normalized.get(normalized)
         if entry is not None:
             return self._result(raw, entry, CONF_CANONICAL_NAME, MatchMethod.CANONICAL_NAME, False)
@@ -172,8 +169,6 @@ class AliasEngine:
         entry = self._curated_alias_resolve(normalized)
         if entry is not None:
             return self._result(raw, entry, CONF_CURATED_ALIAS, MatchMethod.NORMALIZED_ALIAS, False)
-
-        # Known curated names should not be fuzzy-mapped to a wrong parameter.
         if is_curated_name:
             return AliasMatchResult.unknown(raw)
 
@@ -182,7 +177,6 @@ class AliasEngine:
             param = await self._parameters.get_by_id(alias.canonical_parameter_id)
             if param is not None:
                 confidence = float(alias.confidence)
-                needs_review = confidence < ALIAS_AUTO_ACCEPT
                 return AliasMatchResult(
                     raw_parameter_name=raw,
                     canonical_parameter_id=param.id,
@@ -190,7 +184,7 @@ class AliasEngine:
                     canonical_name=param.canonical_name,
                     confidence=confidence,
                     match_method=MatchMethod.NORMALIZED_ALIAS,
-                    needs_review=needs_review,
+                    needs_review=confidence < ALIAS_AUTO_ACCEPT,
                 )
 
         return self._fuzzy_resolve(raw, normalized)
@@ -203,16 +197,13 @@ class AliasEngine:
         targets = _CURATED_ALIAS_TARGETS.get(normalized)
         if not targets:
             return None
-
         for target in targets:
             entry = self._by_code.get(target) or self._by_code.get(target.upper())
             if entry is not None:
                 return entry
-
             entry = self._by_normalized.get(normalize_alias(target))
             if entry is not None:
                 return entry
-
         return None
 
     def _fuzzy_resolve(self, raw: str, normalized: str) -> AliasMatchResult:
@@ -220,11 +211,7 @@ class AliasEngine:
             return AliasMatchResult.unknown(raw)
 
         scored = sorted(
-            (
-                (SequenceMatcher(None, normalized, e.normalized).ratio(), e)
-                for e in self._entries
-                if e.normalized
-            ),
+            ((_similarity(normalized, e.normalized), e) for e in self._entries if e.normalized),
             key=lambda pair: pair[0],
             reverse=True,
         )
