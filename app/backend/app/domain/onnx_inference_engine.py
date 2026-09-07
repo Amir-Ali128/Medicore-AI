@@ -496,11 +496,25 @@ def _env_enabled(value: str | None) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _prefer_native_cpu_backend(manifest_path: str) -> bool:
+    """Use native C++ by default for CPU manifests; preserve Python GPU providers."""
+    if not _env_enabled(os.getenv("MEDICORE_NATIVE_ONNX_PREFER", "1")):
+        return False
+    try:
+        manifest = load_model_manifest(manifest_path)
+    except OnnxInferenceError:
+        return False
+    return all(provider == "CPUExecutionProvider" for provider in manifest.provider_order)
+
+
 @lru_cache(maxsize=1)
-def get_configured_xray_onnx_engine() -> OnnxInferenceEngine | None:
-    """Load the configured model only when explicitly enabled.
+def get_configured_xray_onnx_engine() -> Any | None:
+    """Load the configured model, preferring native C++ for CPU execution.
 
     The model binary itself is intentionally not committed to the repository.
+    If the optional C++ ONNX Runtime backend is not compiled/available, the existing
+    Python onnxruntime engine remains the automatic fallback. GPU/provider-specific
+    manifests also stay on Python until the native backend gains provider selection.
     """
     if not _env_enabled(os.getenv("XRAY_ONNX_ENABLED")):
         return None
@@ -510,7 +524,27 @@ def get_configured_xray_onnx_engine() -> OnnxInferenceEngine | None:
         raise ModelUnavailable(
             "XRAY_ONNX_ENABLED açık ancak model/manifest yolu yapılandırılmamış."
         )
+
     settings = get_settings()
+    if _prefer_native_cpu_backend(manifest_path):
+        try:
+            from app.domain.native_onnx_engine import (
+                NativeOnnxInferenceEngine,
+                native_onnx_available,
+            )
+
+            if native_onnx_available():
+                return NativeOnnxInferenceEngine(
+                    model_path,
+                    manifest_path,
+                    max_concurrency=settings.onnx_max_concurrency,
+                    concurrency_wait_seconds=settings.onnx_concurrency_wait_seconds,
+                    intra_op_num_threads=settings.onnx_intra_op_threads,
+                    inter_op_num_threads=settings.onnx_inter_op_threads,
+                )
+        except (ImportError, OSError):
+            pass
+
     return OnnxInferenceEngine(
         model_path,
         manifest_path,
@@ -521,7 +555,7 @@ def get_configured_xray_onnx_engine() -> OnnxInferenceEngine | None:
     )
 
 
-def try_get_configured_xray_onnx_engine() -> OnnxInferenceEngine | None:
+def try_get_configured_xray_onnx_engine() -> Any | None:
     """Best-effort loader suitable for optional integration/fallback paths."""
     try:
         return get_configured_xray_onnx_engine()
