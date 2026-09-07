@@ -2,9 +2,8 @@
 
 Database I/O remains in Python. Candidate compatibility, specificity and ambiguity
 selection prefer the native C++ deterministic core when its contract is available.
-The original Python selector remains as a safe fallback for rolling deploys and for
-fractional-age bands that the current native v1 integer-age contract does not yet
-represent exactly.
+The native v2 selector preserves fractional-year pediatric/neonatal age bands; the
+original Python selector remains a safe rolling-deploy fallback.
 
 Priority:
     1. extracted / report range
@@ -98,23 +97,19 @@ class ReferenceResolver:
         patient_age: float | None,
         pregnancy_status: bool | None,
     ) -> ReferenceResolutionResult | None:
-        """Use native selector only when v1 can represent all age bounds exactly."""
+        """Prefer native v2 selector, including fractional pediatric age bands."""
         try:
             from app.domain.native_lab_engine import (
                 native_lab_deterministic_available,
+                native_lab_extensions_available,
                 native_select_reference_candidate,
             )
 
-            if not native_lab_deterministic_available():
+            if not (
+                native_lab_extensions_available()
+                or native_lab_deterministic_available()
+            ):
                 return None
-
-            if patient_age is not None and not float(patient_age).is_integer():
-                return None
-            for rr in all_ranges:
-                if rr.age_min is not None and not float(rr.age_min).is_integer():
-                    return None
-                if rr.age_max is not None and not float(rr.age_max).is_integer():
-                    return None
 
             payload = [
                 {
@@ -123,8 +118,8 @@ class ReferenceResolver:
                     "unit": rr.unit,
                     "source": rr.source,
                     "sex": rr.sex.value,
-                    "age_min": int(rr.age_min) if rr.age_min is not None else None,
-                    "age_max": int(rr.age_max) if rr.age_max is not None else None,
+                    "age_min": float(rr.age_min) if rr.age_min is not None else None,
+                    "age_max": float(rr.age_max) if rr.age_max is not None else None,
                     "pregnancy_status": rr.pregnancy_status,
                 }
                 for rr in all_ranges
@@ -132,7 +127,7 @@ class ReferenceResolver:
             selected = native_select_reference_candidate(
                 payload,
                 patient_sex=patient_sex.value if patient_sex is not None else None,
-                patient_age=int(patient_age) if patient_age is not None else None,
+                patient_age=float(patient_age) if patient_age is not None else None,
                 pregnancy_status=pregnancy_status,
             )
         except (ImportError, RuntimeError, OSError, ValueError, TypeError, KeyError):
