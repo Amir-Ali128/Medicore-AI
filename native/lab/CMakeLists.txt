@@ -32,7 +32,7 @@ endif()
 
 pybind11_add_module(medicore_lab src/bindings.cpp)
 target_link_libraries(medicore_lab PRIVATE medicore_lab_core)
-target_compile_definitions(medicore_lab PRIVATE MEDICORE_LAB_VERSION="1.4.0")
+target_compile_definitions(medicore_lab PRIVATE MEDICORE_LAB_VERSION="1.5.0")
 
 pybind11_add_module(medicore_lab_ext src/extensions_bindings.cpp)
 target_link_libraries(medicore_lab_ext PRIVATE medicore_lab_core)
@@ -56,6 +56,10 @@ add_test(NAME medicore_lab_deterministic COMMAND medicore_lab_deterministic_test
 add_executable(medicore_lab_extensions_tests tests/test_lab_extensions.cpp)
 target_link_libraries(medicore_lab_extensions_tests PRIVATE medicore_lab_core)
 add_test(NAME medicore_lab_extensions COMMAND medicore_lab_extensions_tests)
+
+add_executable(medicore_lab_canonical_trust_tests tests/test_canonical_trust.cpp)
+target_link_libraries(medicore_lab_canonical_trust_tests PRIVATE medicore_lab_core)
+add_test(NAME medicore_lab_canonical_trust COMMAND medicore_lab_canonical_trust_tests)
 
 if(MEDICORE_ENABLE_FUZZING)
     if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
