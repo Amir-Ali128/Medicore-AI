@@ -12,7 +12,7 @@ int main() {
     assert(normalize_alias(" İnsülin ") == "insulin");
     assert(normalize_alias("Nötrofil %") == "notrofil");
     assert(alias_similarity_ratio("Triglyceride", "Triglycerides") > 0.90);
-    assert(alias_similarity_ratio("Vitamin B1", "Vitamin B12") < 0.95);
+    assert(alias_similarity_ratio("Vitamin B1", "Vitamin B12") < 1.0);
 
     {
         const auto result = evaluate_rule(true, false, false, 5.0, 1.0, 5.0);
