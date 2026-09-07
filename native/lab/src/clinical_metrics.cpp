@@ -51,7 +51,8 @@ std::string unit_key(const std::string& unit) {
 }
 
 bool confident_numeric(const ProcessedLabRow& row) {
-    return row.source.normalized_value.has_value() &&
+    return row.validation_status == "VALID" &&
+        row.source.normalized_value.has_value() &&
         std::isfinite(*row.source.normalized_value) &&
         !row.source.ai_needs_review &&
         row.source.extraction_confidence >= 0.85;
