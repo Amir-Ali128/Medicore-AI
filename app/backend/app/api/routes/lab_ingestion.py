@@ -1,8 +1,8 @@
-"""Authenticated universal laboratory ingestion endpoints.
+"""Authenticated seven-source laboratory ingestion -> native C++ trust endpoints.
 
-These endpoints stop at the canonical ingestion contract. Native C++ validation and
-clinical AI are intentionally downstream phases so all seven sources share one trust
-boundary.
+Every source is first normalized into ``medicore-canonical-lab-v1`` and then passed
+through the deterministic native trust boundary. No source can bypass C++ validation
+to become trusted clinical evidence.
 """
 
 from __future__ import annotations
@@ -21,6 +21,11 @@ from app.domain.canonical_lab_model import (
     SOURCE_PHOTO,
     SOURCE_SCREENSHOT,
 )
+from app.domain.canonical_native_trust import (
+    NATIVE_TRUST_CONTRACT,
+    process_canonical_lab_case,
+)
+from app.domain.native_lab_engine import NativeLabUnavailable
 from app.domain.openai_lab_extraction_service import OpenAILabExtractionError
 from app.domain.universal_lab_ingestion import (
     ingest_document_bytes,
@@ -52,7 +57,7 @@ class IntegrationLabIngestionInput(BaseModel):
 
 
 def _raise_ingestion_error(exc: Exception) -> None:
-    if isinstance(exc, OpenAILabExtractionError):
+    if isinstance(exc, (OpenAILabExtractionError, NativeLabUnavailable, RuntimeError)):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(exc),
@@ -60,6 +65,10 @@ def _raise_ingestion_error(exc: Exception) -> None:
     if isinstance(exc, ValueError):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     raise exc
+
+
+def _native_trust(canonical_case: dict[str, Any]) -> dict[str, Any]:
+    return process_canonical_lab_case(canonical_case)
 
 
 async def _read_file(file: UploadFile) -> tuple[bytes, str, str]:
@@ -84,8 +93,11 @@ async def _read_file(file: UploadFile) -> tuple[bytes, str, str]:
 
 @router.get("/capabilities")
 async def capabilities() -> dict[str, Any]:
-    """Return the seven accepted ingress families and canonical contract version."""
-    return ingestion_capabilities()
+    """Return ingress families plus the mandatory downstream native trust contract."""
+    payload = ingestion_capabilities()
+    payload["downstream_contract"] = NATIVE_TRUST_CONTRACT
+    payload["native_trust_required"] = True
+    return payload
 
 
 @router.post("/enabiz-pdf", status_code=status.HTTP_201_CREATED)
@@ -95,13 +107,14 @@ async def ingest_enabiz_pdf(
 ) -> dict[str, Any]:
     content, media_type, file_name = await _read_file(file)
     try:
-        return await ingest_document_bytes(
+        canonical = await ingest_document_bytes(
             content=content,
             media_type=media_type,
             file_name=file_name,
             source_type=SOURCE_ENABIZ_PDF,
             source_record_id=source_record_id,
         )
+        return _native_trust(canonical)
     except Exception as exc:  # translated into stable API errors below
         _raise_ingestion_error(exc)
         raise
@@ -114,13 +127,14 @@ async def ingest_file_upload(
 ) -> dict[str, Any]:
     content, media_type, file_name = await _read_file(file)
     try:
-        return await ingest_generic_file(
+        canonical = await ingest_generic_file(
             content=content,
             media_type=media_type,
             file_name=file_name,
             source_type=SOURCE_FILE_UPLOAD,
             source_record_id=source_record_id,
         )
+        return _native_trust(canonical)
     except Exception as exc:
         _raise_ingestion_error(exc)
         raise
@@ -133,13 +147,14 @@ async def ingest_photo(
 ) -> dict[str, Any]:
     content, media_type, file_name = await _read_file(file)
     try:
-        return await ingest_document_bytes(
+        canonical = await ingest_document_bytes(
             content=content,
             media_type=media_type,
             file_name=file_name,
             source_type=SOURCE_PHOTO,
             source_record_id=source_record_id,
         )
+        return _native_trust(canonical)
     except Exception as exc:
         _raise_ingestion_error(exc)
         raise
@@ -152,13 +167,14 @@ async def ingest_screenshot(
 ) -> dict[str, Any]:
     content, media_type, file_name = await _read_file(file)
     try:
-        return await ingest_document_bytes(
+        canonical = await ingest_document_bytes(
             content=content,
             media_type=media_type,
             file_name=file_name,
             source_type=SOURCE_SCREENSHOT,
             source_record_id=source_record_id,
         )
+        return _native_trust(canonical)
     except Exception as exc:
         _raise_ingestion_error(exc)
         raise
@@ -167,13 +183,14 @@ async def ingest_screenshot(
 @router.post("/manual", status_code=status.HTTP_201_CREATED)
 async def ingest_manual(payload: ManualLabIngestionInput) -> dict[str, Any]:
     try:
-        return ingest_manual_payload(
+        canonical = ingest_manual_payload(
             labs=payload.labs,
             patient_age=payload.patient_age,
             patient_sex=payload.patient_sex,
             report_date=payload.report_date,
             source_record_id=payload.source_record_id,
         )
+        return _native_trust(canonical)
     except Exception as exc:
         _raise_ingestion_error(exc)
         raise
@@ -187,13 +204,14 @@ async def ingest_email_attachment(
     """Ingest an already-authorized email attachment; no mailbox access occurs here."""
     content, media_type, file_name = await _read_file(file)
     try:
-        return await ingest_generic_file(
+        canonical = await ingest_generic_file(
             content=content,
             media_type=media_type,
             file_name=file_name,
             source_type=SOURCE_EMAIL_ATTACHMENT,
             source_record_id=source_record_id,
         )
+        return _native_trust(canonical)
     except Exception as exc:
         _raise_ingestion_error(exc)
         raise
@@ -203,11 +221,12 @@ async def ingest_email_attachment(
 async def ingest_integration(payload: IntegrationLabIngestionInput) -> dict[str, Any]:
     """Accept HL7 ORU, embedded FHIR Observation data, or structured REST JSON."""
     try:
-        return ingest_integration_payload(
+        canonical = ingest_integration_payload(
             integration_type=payload.integration_type,
             payload=payload.payload,
             source_record_id=payload.source_record_id,
         )
+        return _native_trust(canonical)
     except Exception as exc:
         _raise_ingestion_error(exc)
         raise
