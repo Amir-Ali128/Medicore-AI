@@ -166,6 +166,7 @@ jobs:
           medicore_vision_dicom_tests
           medicore_vision_dicom_codec_tests
           medicore_vision_postprocessing_tests
+          medicore_vision_anatomy_gate_tests
       - name: Run vision sanitizer tests
         env:
           ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
