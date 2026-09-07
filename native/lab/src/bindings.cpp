@@ -238,6 +238,7 @@ py::dict to_python(const ProcessedLabRow& row) {
     out["classification_confidence"] = row.classification_confidence;
     out["contract_version"] = medicore::lab::kContractVersion;
     out["validation_contract_version"] = medicore::lab::kValidationContractVersion;
+    out["provenance_contract_version"] = medicore::lab::kProvenanceContractVersion;
     return out;
 }
 
@@ -368,6 +369,7 @@ PYBIND11_MODULE(medicore_lab, module) {
     module.doc() = "MediCore native C++ laboratory normalization/classification/metrics core";
     module.attr("CONTRACT_VERSION") = medicore::lab::kContractVersion;
     module.attr("VALIDATION_VERSION") = medicore::lab::kValidationContractVersion;
+    module.attr("PROVENANCE_VERSION") = medicore::lab::kProvenanceContractVersion;
     module.attr("METRICS_VERSION") = medicore::lab::kMetricsContractVersion;
     module.attr("DETERMINISTIC_VERSION") = medicore::lab::kDeterministicContractVersion;
     module.def("process_rows", &process_python_rows, py::arg("rows"));
