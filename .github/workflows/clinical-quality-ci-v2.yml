@@ -20,6 +20,7 @@ on:
       - feature/gemini-radiology-third-reader
       - feature/astra-native-lab-cpp
       - feature/universal-page-analysis
+      - feature/native-core-completion-v3
   pull_request:
     branches:
       - main
@@ -62,6 +63,9 @@ jobs:
             tests/test_urinalysis_runtime.py \
             tests/test_native_vision_engine.py \
             tests/test_onnx_inference_engine.py \
+            tests/test_onnx_parity.py \
+            tests/test_native_lab_extensions_adapter.py \
+            tests/test_native_process_isolation.py \
             tests/test_clinical_fusion_brain.py \
             tests/test_clinical_fusion_case_adapter.py \
             tests/test_clinical_fusion_onnx_bridge.py \
@@ -99,6 +103,90 @@ jobs:
         run: cmake --build native/lab/build --config Release --parallel 2
       - name: Run native lab tests
         run: ctest --test-dir native/lab/build --output-on-failure
+
+  native-hardening:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install hardening toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake libopencv-dev pybind11-dev libdcmtk-dev
+
+      - name: Configure lab ASan/UBSan
+        env:
+          CC: clang
+          CXX: clang++
+        run: >-
+          cmake -S native/lab -B native/lab/build-sanitize
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DMEDICORE_ENABLE_SANITIZERS=ON
+      - name: Build lab sanitizer tests
+        run: >-
+          cmake --build native/lab/build-sanitize --parallel 2 --target
+          medicore_lab_core_tests
+          medicore_lab_deterministic_tests
+          medicore_lab_extensions_tests
+      - name: Run lab sanitizer tests
+        env:
+          ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: ctest --test-dir native/lab/build-sanitize --output-on-failure
+
+      - name: Configure and build lab fuzzer
+        env:
+          CC: clang
+          CXX: clang++
+        run: |
+          cmake -S native/lab -B native/lab/build-fuzz \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DMEDICORE_ENABLE_SANITIZERS=ON \
+            -DMEDICORE_ENABLE_FUZZING=ON
+          cmake --build native/lab/build-fuzz --parallel 2 --target medicore_lab_reference_fuzz
+      - name: Fuzz lab reference parser
+        env:
+          ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: native/lab/build-fuzz/medicore_lab_reference_fuzz -runs=1000 -max_len=1024
+
+      - name: Configure vision ASan/UBSan
+        env:
+          CC: clang
+          CXX: clang++
+        run: >-
+          cmake -S native/vision -B native/vision/build-sanitize
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DMEDICORE_ENABLE_SANITIZERS=ON
+      - name: Build vision sanitizer tests
+        run: >-
+          cmake --build native/vision/build-sanitize --parallel 2 --target
+          medicore_vision_core_tests
+          medicore_vision_inference_contract_tests
+          medicore_vision_dicom_tests
+          medicore_vision_dicom_codec_tests
+          medicore_vision_postprocessing_tests
+      - name: Run vision sanitizer tests
+        env:
+          ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: ctest --test-dir native/vision/build-sanitize --output-on-failure
+
+      - name: Configure and build DICOM fuzzer
+        env:
+          CC: clang
+          CXX: clang++
+        run: |
+          cmake -S native/vision -B native/vision/build-fuzz \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DMEDICORE_ENABLE_SANITIZERS=ON \
+            -DMEDICORE_ENABLE_FUZZING=ON
+          cmake --build native/vision/build-fuzz --parallel 2 --target medicore_dicom_fuzz
+      - name: Fuzz DICOM parser
+        env:
+          ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: native/vision/build-fuzz/medicore_dicom_fuzz -runs=300 -max_len=65536
 
   frontend-build:
     runs-on: ubuntu-latest
