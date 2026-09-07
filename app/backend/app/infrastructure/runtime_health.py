@@ -1,9 +1,8 @@
 """Liveness/readiness helpers for production deployments.
 
 Liveness is intentionally process-only. Readiness verifies the critical database
-path while reporting optional AI/model circuits as degraded instead of taking the
-whole API offline. This matches MediCore's physician-review/fallback architecture:
-core records must remain available even when an optional model is temporarily down.
+path while reporting optional AI/model/native circuits as degraded instead of taking
+the whole API offline. Native probes run in a crash-isolated subprocess.
 """
 
 from __future__ import annotations
@@ -17,6 +16,7 @@ from typing import Any, TypeVar
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from app.infrastructure.native_process_isolation import probe_native_extensions
 from app.infrastructure.runtime_resilience import registered_dependency_snapshots
 
 logger = logging.getLogger(__name__)
@@ -67,6 +67,26 @@ async def run_noncritical_startup_step(
 
     record_runtime_component(name, status="ok", critical=False)
     return result
+
+
+async def refresh_native_runtime_health(*, timeout_seconds: float = 5.0) -> dict[str, Any]:
+    """Probe C++ modules outside the API process and record the resulting health."""
+    snapshot = await asyncio.to_thread(
+        probe_native_extensions,
+        timeout_seconds=float(timeout_seconds),
+    )
+    status = str(snapshot.get("status") or "degraded")
+    unavailable = snapshot.get("unavailable") or []
+    detail = None
+    if unavailable:
+        detail = "unavailable: " + ", ".join(str(item) for item in unavailable)
+    record_runtime_component(
+        "native_extensions",
+        status=status,
+        critical=False,
+        detail=detail,
+    )
+    return snapshot
 
 
 async def probe_database(
