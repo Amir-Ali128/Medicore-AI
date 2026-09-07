@@ -9,6 +9,7 @@ namespace medicore::lab {
 // Keep the row contract backward-compatible with the existing Python adapter.
 inline constexpr const char* kContractVersion = "medicore-lab-v1";
 inline constexpr const char* kValidationContractVersion = "medicore-lab-validation-v1";
+inline constexpr const char* kProvenanceContractVersion = "medicore-lab-provenance-v1";
 
 struct LabRow {
     std::string raw_parameter_name;
