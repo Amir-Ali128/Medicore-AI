@@ -109,13 +109,98 @@ def _require_extensions_module() -> Any:
     return module
 
 
+def _hydrate_reference_with_native(row: dict[str, Any], extensions: Any) -> dict[str, Any]:
+    """Fill only missing structured reference fields from the raw source text.
+
+    Source-provided bounds/type always win. The parser is not allowed to overwrite
+    extracted data, and unparseable text remains review-only.
+    """
+    text = str(row.get("reference_text") or "").strip()
+    if not text:
+        return row
+
+    ref_type = str(row.get("reference_type") or "").strip().lower()
+    has_min = row.get("reference_min") is not None or row.get("extracted_reference_min") is not None
+    has_max = row.get("reference_max") is not None or row.get("extracted_reference_max") is not None
+    if ref_type not in {"", "unknown"} and (has_min or has_max):
+        return row
+
+    parsed = extensions.parse_reference_text(text)
+    if not isinstance(parsed, dict) or parsed.get("extensions_version") != LAB_EXTENSIONS_CONTRACT:
+        return row
+    if not bool(parsed.get("parsed")):
+        row["reference_parse_needs_review"] = True
+        row["reference_parse_reason"] = str(parsed.get("reason") or "")
+        return row
+
+    parsed_type = str(parsed.get("type") or "unknown")
+    if ref_type in {"", "unknown"} and parsed_type:
+        row["reference_type"] = parsed_type
+    if not has_min and parsed.get("minimum") is not None:
+        row["reference_min"] = parsed["minimum"]
+    if not has_max and parsed.get("maximum") is not None:
+        row["reference_max"] = parsed["maximum"]
+    row["reference_parse_needs_review"] = bool(parsed.get("needs_review"))
+    row["reference_parse_reason"] = str(parsed.get("reason") or "")
+    return row
+
+
+def _attach_plausibility(row: dict[str, Any], extensions: Any) -> dict[str, Any]:
+    value = row.get("normalized_value")
+    if value is None:
+        return row
+    analyte = str(
+        row.get("canonical_name")
+        or row.get("display_name")
+        or row.get("raw_parameter_name")
+        or ""
+    )
+    unit = str(row.get("unit") or "")
+    try:
+        result = extensions.validate_plausibility(analyte, float(value), unit)
+    except (TypeError, ValueError, RuntimeError):
+        return row
+    if not isinstance(result, dict) or result.get("extensions_version") != LAB_EXTENSIONS_CONTRACT:
+        return row
+
+    status = str(result.get("status") or "VALID").upper()
+    row["plausibility_status"] = status
+    row["plausibility_needs_review"] = bool(result.get("needs_review"))
+    row["plausibility_rule"] = str(result.get("rule_applied") or "")
+    row["plausibility_reason"] = str(result.get("reason") or "")
+    row["extensions_contract_version"] = LAB_EXTENSIONS_CONTRACT
+
+    # Never change the measured value or deterministic result classification.
+    # Plausibility only tightens the trust/validation envelope.
+    current = str(row.get("validation_status") or "VALID").upper()
+    severity = {"VALID": 0, "WARNING": 1, "NEEDS_REVIEW": 2, "INVALID": 3}
+    if severity.get(status, 0) > severity.get(current, 0):
+        row["validation_status"] = status
+    if bool(result.get("needs_review")):
+        row["needs_review"] = True
+        reason = str(row.get("reason") or "")
+        extra = str(result.get("reason") or "")
+        if extra and extra not in reason:
+            row["reason"] = (reason + " " + extra).strip()
+    return row
+
+
 def process_astra_lab_rows(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes, bytearray)):
         raise ValueError("Laboratuvar satırları bir liste olmalıdır.")
-    payload = [dict(row) for row in rows]
+
+    extensions = _load_extensions_module() if native_lab_extensions_available() else None
+    payload: list[dict[str, Any]] = []
+    for source in rows:
+        row = dict(source)
+        if extensions is not None:
+            row = _hydrate_reference_with_native(row, extensions)
+        payload.append(row)
+
     native_output = _require_module().process_rows(payload)
     if not isinstance(native_output, list):
         raise RuntimeError("Native C++ lab engine geçersiz çıktı döndürdü.")
+
     processed: list[dict[str, Any]] = []
     for item in native_output:
         if not isinstance(item, dict):
@@ -126,6 +211,8 @@ def process_astra_lab_rows(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, 
         validation_version = row.get("validation_contract_version")
         if validation_version is not None and validation_version != LAB_VALIDATION_CONTRACT:
             raise RuntimeError("Native C++ lab validation contract sürümü uyumsuz.")
+        if extensions is not None:
+            row = _attach_plausibility(row, extensions)
         processed.append(row)
     return processed
 
