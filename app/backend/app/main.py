@@ -36,14 +36,8 @@ from app.domain import compact_hypothesis_dedup_runtime as _compact_hypothesis_d
 from app.domain import claude_possibility_review_runtime as _claude_possibility_review_runtime  # noqa: F401
 from app.domain import compact_summary_complete_runtime as _compact_summary_complete_runtime  # noqa: F401
 from app.domain import pathological_source_runtime as _pathological_source_runtime  # noqa: F401
-# Imported last so the quality wrapper sees the fully enriched hypothesis produced by
-# every earlier compact-runtime layer.
 from app.domain import clinical_quality_runtime as _clinical_quality_runtime  # noqa: F401
-# Tighten recommendation de-duplication after the quality layer is installed: only
-# studies belonging to the active multisource case may suppress a recommendation.
 from app.domain import clinical_quality_scope_runtime as _clinical_quality_scope_runtime  # noqa: F401
-# Route disease-area-specific deterministic helpers only to domains supported by the
-# active case evidence. This runtime must load after both quality runtimes above.
 from app.domain import clinical_domain_router_runtime as _clinical_domain_router_runtime  # noqa: F401
 from app.infrastructure.admin_bootstrap import ensure_bootstrap_admin
 from app.infrastructure.database.feedback_migrations import ensure_user_feedback
@@ -56,6 +50,7 @@ from app.infrastructure.database.startup_migrations import (
 )
 from app.infrastructure.runtime_health import (
     build_readiness_snapshot,
+    refresh_native_runtime_health,
     run_noncritical_startup_step,
 )
 
@@ -83,8 +78,6 @@ async def lifespan(_: FastAPI):
         await _lab_case01_safety._ensure_case01_parameters(session)
         await session.commit()
 
-    # Admin bootstrap and retention cleanup are operational conveniences. Their
-    # failure must not make existing patient records/API routes unavailable.
     admin_bootstrap = await run_noncritical_startup_step(
         "admin_bootstrap",
         ensure_bootstrap_admin,
@@ -101,6 +94,13 @@ async def lifespan(_: FastAPI):
             "Analytics retention cleanup completed: "
             f"removed {purged_analytics_rows} stale presence row(s)."
         )
+
+    # Native modules are probed outside this API process. A broken pybind library or
+    # native crash therefore degrades readiness metadata without killing FastAPI.
+    settings = get_settings()
+    await refresh_native_runtime_health(
+        timeout_seconds=settings.health_check_timeout_seconds,
+    )
 
     yield
 
@@ -136,7 +136,7 @@ async def liveness() -> dict[str, str]:
 
 @app.get("/health/ready", tags=["health"])
 async def readiness() -> JSONResponse:
-    """Readiness: database is critical; optional AI/model failures are degraded."""
+    """Readiness: database is critical; optional AI/model/native failures are degraded."""
     settings = get_settings()
     snapshot = await build_readiness_snapshot(
         engine,

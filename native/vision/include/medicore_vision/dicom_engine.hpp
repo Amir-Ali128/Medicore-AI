@@ -25,6 +25,7 @@ struct DicomMetadata {
     std::string transfer_syntax{};
     std::string transfer_syntax_uid{};
     bool compressed{false};
+    bool compression_decoder_available{true};
     double rescale_slope{1.0};
     double rescale_intercept{0.0};
     bool has_window{false};

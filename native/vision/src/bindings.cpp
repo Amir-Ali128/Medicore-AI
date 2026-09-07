@@ -9,6 +9,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
+#include "medicore_vision/dicom_codecs.hpp"
 #include "medicore_vision/dicom_engine.hpp"
 #include "medicore_vision/postprocessing.hpp"
 #include "medicore_vision/preprocessing.hpp"
@@ -140,10 +141,7 @@ py::array_t<float> tensor_to_numpy(const medicore::vision::XRayTensor& tensor) {
         static_cast<py::ssize_t>(tensor.shape[3]),
     });
     auto buffer = result.request();
-    std::memcpy(
-        buffer.ptr,
-        tensor.values.data(),
-        tensor.values.size() * sizeof(float));
+    std::memcpy(buffer.ptr, tensor.values.data(), tensor.values.size() * sizeof(float));
     return result;
 }
 
@@ -162,6 +160,7 @@ py::dict dicom_metadata_to_dict(const medicore::vision::DicomMetadata& metadata)
     result["transfer_syntax"] = metadata.transfer_syntax;
     result["transfer_syntax_uid"] = metadata.transfer_syntax_uid;
     result["compressed"] = metadata.compressed;
+    result["compression_decoder_available"] = metadata.compression_decoder_available;
     result["rescale_slope"] = metadata.rescale_slope;
     result["rescale_intercept"] = metadata.rescale_intercept;
     result["has_window"] = metadata.has_window;
@@ -174,7 +173,7 @@ py::dict dicom_metadata_to_dict(const medicore::vision::DicomMetadata& metadata)
     result["pixel_spacing_col_mm"] = metadata.has_pixel_spacing
         ? py::cast(metadata.pixel_spacing_col_mm)
         : py::none();
-    result["native_pixel_decode_supported"] = !metadata.compressed;
+    result["native_pixel_decode_supported"] = metadata.compression_decoder_available;
     return result;
 }
 
@@ -182,12 +181,8 @@ medicore::vision::DicomWindowConfig dicom_window_from_python(
     const py::object& center,
     const py::object& width) {
     medicore::vision::DicomWindowConfig config;
-    if (!center.is_none()) {
-        config.center = center.cast<double>();
-    }
-    if (!width.is_none()) {
-        config.width = width.cast<double>();
-    }
+    if (!center.is_none()) config.center = center.cast<double>();
+    if (!width.is_none()) config.width = width.cast<double>();
     return config;
 }
 
@@ -244,6 +239,19 @@ PYBIND11_MODULE(medicore_vision, module) {
     module.attr("XRAY_TENSOR_CONTRACT") = "xray-core-v2/nchw-f32-0-1";
     module.attr("DICOM_FRAME_CONTRACT") = medicore::vision::kDicomFrameContract;
     module.attr("VISION_POSTPROCESS_CONTRACT") = medicore::vision::kVisionPostprocessContract;
+
+    module.def(
+        "dicom_codec_capabilities",
+        [] {
+            const auto caps = medicore::vision::dicom_codec_capabilities();
+            py::dict out;
+            out["rle"] = caps.rle;
+            out["jpeg"] = caps.jpeg;
+            out["jpeg_ls"] = caps.jpeg_ls;
+            out["jpeg2000"] = caps.jpeg2000;
+            return out;
+        },
+        "Return compressed DICOM decoder capabilities compiled into this build.");
 
     module.def(
         "inspect_image",
@@ -338,7 +346,7 @@ PYBIND11_MODULE(medicore_vision, module) {
         py::arg("frame_index") = 0,
         py::arg("window_center") = py::none(),
         py::arg("window_width") = py::none(),
-        "Decode one DICOM frame through rescale/windowing/MONOCHROME handling.");
+        "Decode one DICOM frame through decompression/rescale/windowing/MONOCHROME handling.");
 
     module.def(
         "prepare_dicom_xray_tensor",
@@ -424,12 +432,8 @@ PYBIND11_MODULE(medicore_vision, module) {
                 .max_components = max_components,
                 .normalize_minmax = normalize_minmax,
             };
-            if (!pixel_spacing_row_mm.is_none()) {
-                config.pixel_spacing_row_mm = pixel_spacing_row_mm.cast<double>();
-            }
-            if (!pixel_spacing_col_mm.is_none()) {
-                config.pixel_spacing_col_mm = pixel_spacing_col_mm.cast<double>();
-            }
+            if (!pixel_spacing_row_mm.is_none()) config.pixel_spacing_row_mm = pixel_spacing_row_mm.cast<double>();
+            if (!pixel_spacing_col_mm.is_none()) config.pixel_spacing_col_mm = pixel_spacing_col_mm.cast<double>();
 
             const auto result = medicore::vision::postprocess_spatial_map(
                 numpy_to_mat_f32(spatial_map),
@@ -438,9 +442,7 @@ PYBIND11_MODULE(medicore_vision, module) {
             py::dict payload;
             payload["heatmap"] = mat_to_numpy_f32(result.heatmap_original);
             payload["mask"] = mat_to_numpy_u8(result.mask_original);
-            payload["shape"] = py::make_tuple(
-                result.heatmap_original.rows,
-                result.heatmap_original.cols);
+            payload["shape"] = py::make_tuple(result.heatmap_original.rows, result.heatmap_original.cols);
             payload["heatmap_dtype"] = "float32";
             payload["mask_dtype"] = "uint8";
             payload["heatmap_range"] = py::make_tuple(0.0, 1.0);
