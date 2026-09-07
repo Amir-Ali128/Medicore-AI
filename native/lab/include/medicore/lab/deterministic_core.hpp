@@ -35,8 +35,8 @@ struct ReferenceCandidate {
     std::string unit;
     std::string source;
     std::string sex{"ANY"};
-    std::optional<double> age_min;
-    std::optional<double> age_max;
+    std::optional<int> age_min;
+    std::optional<int> age_max;
     std::optional<bool> pregnancy_status;
 };
 
@@ -68,7 +68,7 @@ TrendEvaluation compare_trend(
 ReferenceSelection select_reference_candidate(
     const std::vector<ReferenceCandidate>& candidates,
     const std::string& patient_sex,
-    const std::optional<double>& patient_age,
+    const std::optional<int>& patient_age,
     const std::optional<bool>& pregnancy_status);
 
 }  // namespace medicore::lab
