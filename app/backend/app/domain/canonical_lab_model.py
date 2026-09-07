@@ -94,6 +94,14 @@ def _age(value: Any) -> float | None:
     return number
 
 
+def _first_present(row: Mapping[str, Any], *keys: str) -> Any:
+    for key in keys:
+        value = row.get(key)
+        if value is not None:
+            return value
+    return None
+
+
 def _row_name(row: Mapping[str, Any]) -> str | None:
     return _text(
         row.get("raw_parameter_name")
@@ -118,29 +126,19 @@ def canonicalize_row(
     classification is performed here. Those are deterministic native-core duties.
     """
     raw_name = _row_name(row)
-    raw_value = _text(
-        row.get("raw_value")
-        if row.get("raw_value") is not None
-        else row.get("result")
-        if row.get("result") is not None
-        else row.get("value"),
-        limit=256,
-    )
+    raw_value = _text(_first_present(row, "raw_value", "result", "value"), limit=256)
 
-    normalized_value = _float(
-        row.get("normalized_value")
-        if row.get("normalized_value") is not None
-        else row.get("numeric_value")
-        if row.get("numeric_value") is not None
-        else row.get("value")
-        if isinstance(row.get("value"), (int, float)) and not isinstance(row.get("value"), bool)
-        else None
-    )
+    normalized_source = _first_present(row, "normalized_value", "numeric_value")
+    if normalized_source is None:
+        candidate = row.get("value")
+        if isinstance(candidate, (int, float)) and not isinstance(candidate, bool):
+            normalized_source = candidate
+    normalized_value = _float(normalized_source)
 
-    raw_unit = _text(row.get("raw_unit") or row.get("unit"), limit=64)
-    unit = _text(row.get("unit") or row.get("normalized_unit") or raw_unit, limit=64)
+    raw_unit = _text(_first_present(row, "raw_unit", "unit"), limit=64)
+    unit = _text(_first_present(row, "unit", "normalized_unit", "raw_unit"), limit=64)
     confidence = _confidence(
-        row.get("confidence") if row.get("confidence") is not None else row.get("extraction_confidence"),
+        _first_present(row, "confidence", "extraction_confidence"),
         default_confidence,
     )
 
@@ -155,21 +153,22 @@ def canonicalize_row(
     needs_review = bool(row.get("needs_review")) or bool(reasons)
     source_file_name = _text(row.get("source_file_name") or source.file_name, limit=512)
     source_page = _page(row.get("source_page")) or default_page
+    row_record_id = _text(row.get("source_record_id"), limit=256)
 
     return {
         "canonical_row_contract": CANONICAL_ROW_CONTRACT,
         "raw_parameter_name": raw_name or "",
         "canonical_name": _text(row.get("canonical_name"), limit=255),
-        "loinc_code": _text(row.get("loinc_code") or row.get("loinc"), limit=64),
+        "loinc_code": _text(_first_present(row, "loinc_code", "loinc"), limit=64),
         "raw_value": raw_value,
         "normalized_value": normalized_value,
         "raw_unit": raw_unit,
         "unit": unit,
-        "reference_min": _float(row.get("reference_min") or row.get("ref_min")),
-        "reference_max": _float(row.get("reference_max") or row.get("ref_max")),
-        "reference_text": _text(row.get("reference_text") or row.get("reference_range"), limit=512),
+        "reference_min": _float(_first_present(row, "reference_min", "ref_min")),
+        "reference_max": _float(_first_present(row, "reference_max", "ref_max")),
+        "reference_text": _text(_first_present(row, "reference_text", "reference_range"), limit=512),
         "reference_type": _text(row.get("reference_type"), limit=64),
-        "measured_at": _text(row.get("measured_at") or row.get("observed_at"), limit=64),
+        "measured_at": _text(_first_present(row, "measured_at", "observed_at"), limit=64),
         "value_type": _text(row.get("value_type"), limit=32)
         or ("numeric" if normalized_value is not None else "qualitative" if raw_value is not None else "unknown"),
         "needs_review": needs_review,
@@ -179,7 +178,7 @@ def canonicalize_row(
         "source_file_name": source_file_name,
         "source_page": source_page,
         "source_sha256": source.source_sha256,
-        "source_record_id": source.source_record_id,
+        "source_record_id": row_record_id or source.source_record_id,
         "integration_type": source.integration_type,
     }
 
@@ -238,13 +237,16 @@ def canonicalize_extraction_payload(
     if not isinstance(labs, Sequence) or isinstance(labs, (str, bytes, bytearray)):
         raise ValueError("Extraction payload laboratuvar satırları içermiyor.")
     rows = [item for item in labs if isinstance(item, Mapping)]
+    warnings = payload.get("warnings")
+    if not isinstance(warnings, Sequence) or isinstance(warnings, (str, bytes, bytearray)):
+        warnings = None
     return build_canonical_case(
         source=source,
         rows=rows,
         patient_age=payload.get("patient_age"),
         patient_sex=payload.get("patient_sex"),
         report_date=payload.get("report_date"),
-        warnings=payload.get("warnings") if isinstance(payload.get("warnings"), Sequence) else None,
+        warnings=warnings,
         extraction_confidence=payload.get("extraction_confidence"),
         default_confidence=0.85,
     )
