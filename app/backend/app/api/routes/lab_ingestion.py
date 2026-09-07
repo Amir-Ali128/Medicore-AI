@@ -1,8 +1,9 @@
-"""Authenticated universal laboratory ingestion endpoints.
+"""Authenticated universal laboratory ingestion and native trust endpoints.
 
-These endpoints stop at the canonical ingestion contract. Native C++ validation and
-clinical AI are intentionally downstream phases so all seven sources share one trust
-boundary.
+Seven source-specific inputs terminate at ``medicore-canonical-lab-v1``. The explicit
+``/validate-canonical`` boundary then sends that single contract to the native C++ lab
+trust engine. Clinical AI remains downstream and may use only native-trusted rows as
+primary evidence.
 """
 
 from __future__ import annotations
@@ -21,6 +22,11 @@ from app.domain.canonical_lab_model import (
     SOURCE_PHOTO,
     SOURCE_SCREENSHOT,
 )
+from app.domain.canonical_lab_trust import (
+    native_canonical_trust_available,
+    process_canonical_lab_case,
+)
+from app.domain.native_lab_engine import NativeLabUnavailable
 from app.domain.openai_lab_extraction_service import OpenAILabExtractionError
 from app.domain.universal_lab_ingestion import (
     ingest_document_bytes,
@@ -52,13 +58,18 @@ class IntegrationLabIngestionInput(BaseModel):
 
 
 def _raise_ingestion_error(exc: Exception) -> None:
-    if isinstance(exc, OpenAILabExtractionError):
+    if isinstance(exc, (OpenAILabExtractionError, NativeLabUnavailable)):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(exc),
         ) from exc
     if isinstance(exc, ValueError):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    if isinstance(exc, RuntimeError):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Native laboratuvar trust işlemi başarısız: {exc}",
+        ) from exc
     raise exc
 
 
@@ -84,8 +95,24 @@ async def _read_file(file: UploadFile) -> tuple[bytes, str, str]:
 
 @router.get("/capabilities")
 async def capabilities() -> dict[str, Any]:
-    """Return the seven accepted ingress families and canonical contract version."""
-    return ingestion_capabilities()
+    """Return ingress families plus the explicit native C++ trust boundary."""
+    payload = ingestion_capabilities()
+    payload["native_cpp_trust"] = {
+        "endpoint": "/lab-ingestion/validate-canonical",
+        "available": native_canonical_trust_available(),
+        "primary_ai_policy": "native_cpp_VALID_and_no_review_only",
+    }
+    return payload
+
+
+@router.post("/validate-canonical", status_code=status.HTTP_200_OK)
+async def validate_canonical(payload: dict[str, Any]) -> dict[str, Any]:
+    """Send one canonical lab case through the deterministic native C++ trust engine."""
+    try:
+        return process_canonical_lab_case(payload)
+    except Exception as exc:
+        _raise_ingestion_error(exc)
+        raise
 
 
 @router.post("/enabiz-pdf", status_code=status.HTTP_201_CREATED)
