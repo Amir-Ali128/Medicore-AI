@@ -14,6 +14,7 @@ from typing import Any, Mapping, Sequence
 
 CANONICAL_LAB_CONTRACT = "medicore-canonical-lab-v1"
 CANONICAL_ROW_CONTRACT = "medicore-canonical-lab-row-v1"
+MAX_CANONICAL_LAB_ROWS = 5000
 
 SOURCE_ENABIZ_PDF = "enabiz_pdf"
 SOURCE_FILE_UPLOAD = "file_upload"
@@ -194,6 +195,11 @@ def build_canonical_case(
     extraction_confidence: Any = None,
     default_confidence: float = 1.0,
 ) -> dict[str, Any]:
+    if len(rows) > MAX_CANONICAL_LAB_ROWS:
+        raise ValueError(
+            f"Tek canonical laboratuvar vakasında en fazla {MAX_CANONICAL_LAB_ROWS} sonuç olabilir."
+        )
+
     canonical_rows = [
         canonicalize_row(row, source=source, default_confidence=default_confidence)
         for row in rows
