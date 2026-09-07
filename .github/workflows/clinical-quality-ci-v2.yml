@@ -22,6 +22,7 @@ on:
       - feature/universal-page-analysis
       - feature/native-core-completion-v3
       - feature/universal-lab-ingestion-v1
+      - feature/canonical-cpp-trust-engine-v1
   pull_request:
     branches:
       - main
@@ -68,6 +69,7 @@ jobs:
             tests/test_native_lab_extensions_adapter.py \
             tests/test_native_process_isolation.py \
             tests/test_universal_lab_ingestion.py \
+            tests/test_canonical_lab_trust.py \
             tests/test_clinical_fusion_brain.py \
             tests/test_clinical_fusion_case_adapter.py \
             tests/test_clinical_fusion_onnx_bridge.py \
@@ -130,6 +132,7 @@ jobs:
           medicore_lab_core_tests
           medicore_lab_deterministic_tests
           medicore_lab_extensions_tests
+          medicore_lab_canonical_trust_tests
       - name: Run lab sanitizer tests
         env:
           ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
