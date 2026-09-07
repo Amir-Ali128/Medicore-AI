@@ -263,7 +263,7 @@ def test_clinical_bridge_falls_back_when_external_ai_is_unavailable(
     assert result["ai_attempted"] is True
     assert result["ai_used"] is False
     assert result["clinical_assessment"]["synthesis_source"] == "deterministic_fallback"
-    assert result["clinical_assessment"]["fallback_reason"].startswith("clinical_ai_unavailable:")
+    assert result["clinical_assessment"]["fallback_reason"] == "clinical_ai_unavailable"
 
 
 def test_clinical_bridge_does_not_call_ai_without_trusted_native_evidence(
