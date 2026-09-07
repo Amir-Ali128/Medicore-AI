@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
 
 from app.api.routes.auth import get_current_active_user
+from app.core.config import get_settings
 from app.domain.canonical_lab_model import (
     SOURCE_EMAIL_ATTACHMENT,
     SOURCE_ENABIZ_PDF,
@@ -64,10 +65,21 @@ def _raise_ingestion_error(exc: Exception) -> None:
 async def _read_file(file: UploadFile) -> tuple[bytes, str, str]:
     if not file.filename:
         raise HTTPException(status_code=400, detail="Dosya adı bulunamadı.")
-    content = await file.read()
+
+    settings = get_settings()
+    max_bytes = int(settings.lab_extraction_max_bytes)
+    content = await file.read(max_bytes + 1)
     if not content:
         raise HTTPException(status_code=400, detail="Yüklenen laboratuvar dosyası boş.")
-    return content, file.content_type or "application/octet-stream", file.filename
+    if len(content) > max_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=(
+                "Laboratuvar dosyası izin verilen "
+                f"{max_bytes // (1024 * 1024)} MB sınırını aşıyor."
+            ),
+        )
+    return content, file.content_type or "application/octet-stream", file.filename[:512]
 
 
 @router.get("/capabilities")
