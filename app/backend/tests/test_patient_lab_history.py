@@ -12,7 +12,8 @@ from app.api.routes import lab_ingestion
 from app.domain import native_trust_clinical_ai as clinical_bridge
 from app.domain import patient_lab_history as history
 from app.domain.enums import TrendStatus
-from app.schemas.trend import TrendResult
+from app.domain.trend_engine import TrendEngine
+from app.schemas.trend import TrendComparisonInput, TrendResult
 
 
 def _trusted_row(*, name: str = "HbA1c", value: float = 8.1) -> dict:
@@ -71,6 +72,8 @@ def test_identity_prefers_loinc_and_is_stable_for_names() -> None:
     assert history._identity_code(
         {"canonical_name": "C-Reactive Protein (CRP)"}
     ) == "NAME:c_reactive_protein_crp"
+    assert history._identity_code({"canonical_name": "Üre"}) == "NAME:ure"
+    assert history._identity_code({"canonical_name": "İdrar Şekeri"}) == "NAME:idrar_sekeri"
 
 
 def test_native_trend_metrics_exclude_python_fallback() -> None:
@@ -93,6 +96,25 @@ def test_native_trend_metrics_exclude_python_fallback() -> None:
     assert metrics[0]["value"] == 10.96
 
 
+def test_trend_engine_reports_actual_fallback_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = TrendEngine()
+    monkeypatch.setattr(engine, "_compare_native", lambda _data: None)
+
+    result, backend = engine.compare_with_backend(
+        TrendComparisonInput(
+            current_value=Decimal("8.1"),
+            previous_value=Decimal("7.3"),
+            current_date=date(2026, 9, 8),
+            previous_date=date(2026, 6, 12),
+        )
+    )
+
+    assert backend == "python_fallback"
+    assert result.trend_status == TrendStatus.UP
+
+
 def test_longitudinal_builder_uses_only_trusted_rows(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -112,25 +134,27 @@ def test_longitudinal_builder_uses_only_trusted_rows(
             return previous
 
     class FakeTrendEngine:
-        def compare(self, data):
+        def compare_with_backend(self, data):
             assert data.current_value == Decimal("8.1")
             assert data.previous_value == Decimal("7.3")
-            return TrendResult(
-                parameter_code=data.parameter_code,
-                trend_status=TrendStatus.UP,
-                previous_value=Decimal("7.3"),
-                current_value=Decimal("8.1"),
-                absolute_difference=Decimal("0.8"),
-                percentage_difference=10.9589,
-                time_difference_days=88,
-                confidence=1.0,
-                reason="Value increased.",
-                needs_review=False,
+            return (
+                TrendResult(
+                    parameter_code=data.parameter_code,
+                    trend_status=TrendStatus.UP,
+                    previous_value=Decimal("7.3"),
+                    current_value=Decimal("8.1"),
+                    absolute_difference=Decimal("0.8"),
+                    percentage_difference=10.9589,
+                    time_difference_days=88,
+                    confidence=1.0,
+                    reason="Value increased.",
+                    needs_review=False,
+                ),
+                "native_cpp",
             )
 
     monkeypatch.setattr(history, "LabResultRepository", FakeRepository)
     monkeypatch.setattr(history, "TrendEngine", FakeTrendEngine)
-    monkeypatch.setattr(history, "native_lab_deterministic_available", lambda: True)
 
     trends = asyncio.run(
         history.build_longitudinal_trends(
@@ -146,6 +170,53 @@ def test_longitudinal_builder_uses_only_trusted_rows(
     assert trends[0]["trend_status"] == "up"
     assert trends[0]["previous_value"] == 7.3
     assert trends[0]["current_value"] == 8.1
+
+
+def test_missing_current_date_never_consumes_a_previous_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    envelope = _envelope()
+    envelope["report_date"] = None
+    lookups = 0
+
+    class FakeRepository:
+        def __init__(self, _session) -> None:
+            pass
+
+        async def latest_previous_match(self, *_args, **_kwargs):
+            nonlocal lookups
+            lookups += 1
+            raise AssertionError("undated current result must not query previous history")
+
+    class FakeTrendEngine:
+        def compare_with_backend(self, data):
+            assert data.current_date is None
+            assert data.previous_value is None
+            return (
+                TrendResult(
+                    parameter_code=data.parameter_code,
+                    trend_status=TrendStatus.NO_PREVIOUS_RESULT,
+                    current_value=Decimal("8.1"),
+                    confidence=0.0,
+                    reason="No previous result available for comparison.",
+                ),
+                "python_fallback",
+            )
+
+    monkeypatch.setattr(history, "LabResultRepository", FakeRepository)
+    monkeypatch.setattr(history, "TrendEngine", FakeTrendEngine)
+
+    trends = asyncio.run(
+        history.build_longitudinal_trends(
+            object(),
+            patient=SimpleNamespace(id=uuid.uuid4()),
+            trust_envelope=envelope,
+        )
+    )
+
+    assert lookups == 0
+    assert trends[0]["previous_result_id"] is None
+    assert trends[0]["trend_status"] == "no_previous_result"
 
 
 def test_finalize_persists_patient_history_and_passes_trends_to_ai(
