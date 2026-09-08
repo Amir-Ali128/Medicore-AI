@@ -17,7 +17,7 @@ const items: NavItem[] = [
   { label: 'Canlı Trafik', shortLabel: 'Trafik', icon: '📡', to: '/admin/analytics', adminOnly: true },
   { label: 'Geri Bildirimler', shortLabel: 'Mesajlar', icon: '💬', to: '/admin/feedback', adminOnly: true },
   { label: 'Hasta Bilgileri', shortLabel: 'Hasta Bilgileri', icon: '👤', to: '/patients/demo' },
-  { label: 'Laboratuvar Sonuçları', shortLabel: 'Sonuç', icon: '🩸', to: '/analysis/mock' },
+  { label: 'Laboratuvar Sonuçları', shortLabel: 'Lab', icon: '🩸', to: '/lab-ingestion' },
   { label: 'Radyoloji ve Diğer Tetkik Raporları', shortLabel: 'Tetkikler', icon: '🩻', to: '/radiology' },
   { label: 'Bulguları Değerlendir', shortLabel: 'Değerlendir', icon: '🧩', to: '/combined-evaluation' },
   { label: 'Arşiv', shortLabel: 'Arşiv', icon: '📄', to: '/patient-history' },
@@ -29,8 +29,8 @@ function mobilePrimaryItems(role: string | undefined, visibleItems: NavItem[]) {
   const preferred = role === 'admin'
     ? ['/', '/admin/analytics', '/admin/feedback', '/patient-history']
     : role === 'patient'
-      ? ['/', '/patients/demo', '/analysis/mock', '/patient-history']
-      : ['/', '/patients/demo', '/send', '/analysis/mock'];
+      ? ['/', '/patients/demo', '/lab-ingestion', '/patient-history']
+      : ['/', '/patients/demo', '/send', '/lab-ingestion'];
 
   const selected = preferred
     .map((path) => visibleItems.find((item) => item.to === path))
