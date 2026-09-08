@@ -28,6 +28,7 @@ from app.domain.canonical_native_trust import (
     NATIVE_TRUST_CONTRACT,
     process_canonical_lab_case,
 )
+from app.domain.fast_pdf_lab_parser import try_fast_pdf_lab_case
 from app.domain.native_lab_engine import NativeLabUnavailable
 from app.domain.native_trust_clinical_ai import (
     NATIVE_TRUST_CLINICAL_AI_CONTRACT,
@@ -153,6 +154,44 @@ async def _read_file(file: UploadFile) -> tuple[bytes, str, str]:
     return content, file.content_type or "application/octet-stream", file.filename[:512]
 
 
+async def _ingest_file_with_fast_pdf_fallback(
+    *,
+    content: bytes,
+    media_type: str,
+    file_name: str,
+    source_type: str,
+    source_record_id: str | None,
+    generic: bool,
+) -> dict[str, Any]:
+    """Prefer deterministic local parsing for text PDFs, then fall back to AI."""
+    fast_case = try_fast_pdf_lab_case(
+        content=content,
+        media_type=media_type,
+        file_name=file_name,
+        source_type=source_type,
+        source_record_id=source_record_id,
+    )
+    if fast_case is not None:
+        return fast_case
+
+    if generic:
+        return await ingest_generic_file(
+            content=content,
+            media_type=media_type,
+            file_name=file_name,
+            source_type=source_type,
+            source_record_id=source_record_id,
+        )
+
+    return await ingest_document_bytes(
+        content=content,
+        media_type=media_type,
+        file_name=file_name,
+        source_type=source_type,
+        source_record_id=source_record_id,
+    )
+
+
 @router.get("/capabilities")
 async def capabilities() -> dict[str, Any]:
     payload = ingestion_capabilities()
@@ -164,6 +203,8 @@ async def capabilities() -> dict[str, Any]:
     payload["patient_history_optional"] = True
     payload["patient_history_query_parameter"] = "patient_id=<uuid>"
     payload["patient_history_contract"] = PATIENT_LAB_HISTORY_CONTRACT
+    payload["text_pdf_fast_path"] = True
+    payload["text_pdf_fast_path_version"] = "fast_pdf_local_parser_v1"
     return payload
 
 
@@ -178,12 +219,13 @@ async def ingest_enabiz_pdf(
 ) -> dict[str, Any]:
     content, media_type, file_name = await _read_file(file)
     try:
-        canonical = await ingest_document_bytes(
+        canonical = await _ingest_file_with_fast_pdf_fallback(
             content=content,
             media_type=media_type,
             file_name=file_name,
             source_type=SOURCE_ENABIZ_PDF,
             source_record_id=source_record_id,
+            generic=False,
         )
         return await _finalize_canonical_case(
             canonical,
@@ -208,12 +250,13 @@ async def ingest_file_upload(
 ) -> dict[str, Any]:
     content, media_type, file_name = await _read_file(file)
     try:
-        canonical = await ingest_generic_file(
+        canonical = await _ingest_file_with_fast_pdf_fallback(
             content=content,
             media_type=media_type,
             file_name=file_name,
             source_type=SOURCE_FILE_UPLOAD,
             source_record_id=source_record_id,
+            generic=True,
         )
         return await _finalize_canonical_case(
             canonical,
@@ -327,12 +370,13 @@ async def ingest_email_attachment(
     """Ingest an already-authorized email attachment; no mailbox access occurs here."""
     content, media_type, file_name = await _read_file(file)
     try:
-        canonical = await ingest_generic_file(
+        canonical = await _ingest_file_with_fast_pdf_fallback(
             content=content,
             media_type=media_type,
             file_name=file_name,
             source_type=SOURCE_EMAIL_ATTACHMENT,
             source_record_id=source_record_id,
+            generic=True,
         )
         return await _finalize_canonical_case(
             canonical,
