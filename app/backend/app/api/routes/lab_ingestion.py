@@ -1,18 +1,20 @@
-"""Authenticated seven-source laboratory ingestion -> C++ trust -> clinical AI.
+"""Authenticated seven-source laboratory ingestion -> C++ trust -> history -> AI.
 
-Every source is first normalized into ``medicore-canonical-lab-v1`` and then passed
-through the deterministic native trust boundary. No source can bypass C++ validation
-to become trusted clinical evidence. Callers may optionally continue the same request
-through the clinical AI bridge; AI failure falls back to a deterministic summary.
+Every source is normalized into ``medicore-canonical-lab-v1`` and must cross the
+native C++ trust boundary. When ``patient_id`` is supplied, trusted longitudinal
+comparisons are resolved from PostgreSQL before clinical synthesis and the complete
+source/trust/trend/AI snapshot is persisted atomically to the patient's history.
 """
 
 from __future__ import annotations
 
-from typing import Any
+import uuid
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
 
+from app.api.dependencies import SessionDep
 from app.api.routes.auth import get_current_active_user
 from app.core.config import get_settings
 from app.domain.canonical_lab_model import (
@@ -32,6 +34,12 @@ from app.domain.native_trust_clinical_ai import (
     run_native_trust_clinical_pipeline,
 )
 from app.domain.openai_lab_extraction_service import OpenAILabExtractionError
+from app.domain.patient_lab_history import (
+    PATIENT_LAB_HISTORY_CONTRACT,
+    build_longitudinal_trends,
+    ensure_patient_access,
+    persist_patient_lab_case,
+)
 from app.domain.universal_lab_ingestion import (
     ingest_document_bytes,
     ingest_generic_file,
@@ -39,12 +47,14 @@ from app.domain.universal_lab_ingestion import (
     ingest_manual_payload,
     ingestion_capabilities,
 )
+from app.infrastructure.database.models.user import User
 
 router = APIRouter(
     prefix="/lab-ingestion",
     tags=["lab-ingestion"],
     dependencies=[Depends(get_current_active_user)],
 )
+CurrentUserDep = Annotated[User, Depends(get_current_active_user)]
 
 
 class ManualLabIngestionInput(BaseModel):
@@ -62,6 +72,8 @@ class IntegrationLabIngestionInput(BaseModel):
 
 
 def _raise_ingestion_error(exc: Exception) -> None:
+    if isinstance(exc, HTTPException):
+        raise exc
     if isinstance(exc, (OpenAILabExtractionError, NativeLabUnavailable, RuntimeError)):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -76,11 +88,49 @@ async def _finalize_canonical_case(
     canonical_case: dict[str, Any],
     *,
     clinical_ai: bool,
+    patient_id: uuid.UUID | None,
+    session: SessionDep,
+    current_user: User,
 ) -> dict[str, Any]:
     trust_envelope = process_canonical_lab_case(canonical_case)
-    if not clinical_ai:
-        return trust_envelope
-    return await run_native_trust_clinical_pipeline(trust_envelope)
+
+    patient = None
+    longitudinal_trends: list[dict[str, Any]] = []
+    if patient_id is not None:
+        patient = await ensure_patient_access(
+            session,
+            patient_id=patient_id,
+            current_user=current_user,
+        )
+        longitudinal_trends = await build_longitudinal_trends(
+            session,
+            patient=patient,
+            trust_envelope=trust_envelope,
+        )
+
+    if clinical_ai:
+        result = await run_native_trust_clinical_pipeline(
+            trust_envelope,
+            longitudinal_trends=longitudinal_trends,
+        )
+    else:
+        result = dict(trust_envelope)
+        result["longitudinal_trends"] = longitudinal_trends
+
+    if patient is not None:
+        persistence = await persist_patient_lab_case(
+            session,
+            patient=patient,
+            current_user=current_user,
+            canonical_case=canonical_case,
+            trust_envelope=trust_envelope,
+            longitudinal_trends=longitudinal_trends,
+            clinical_pipeline=result if clinical_ai else None,
+        )
+        result["patient_history"] = persistence
+        result["history_contract_version"] = PATIENT_LAB_HISTORY_CONTRACT
+
+    return result
 
 
 async def _read_file(file: UploadFile) -> tuple[bytes, str, str]:
@@ -105,21 +155,26 @@ async def _read_file(file: UploadFile) -> tuple[bytes, str, str]:
 
 @router.get("/capabilities")
 async def capabilities() -> dict[str, Any]:
-    """Return seven ingress families and downstream trust/clinical contracts."""
     payload = ingestion_capabilities()
     payload["downstream_contract"] = NATIVE_TRUST_CONTRACT
     payload["native_trust_required"] = True
     payload["clinical_ai_optional"] = True
     payload["clinical_ai_query_parameter"] = "clinical_ai=true"
     payload["clinical_pipeline_contract"] = NATIVE_TRUST_CLINICAL_AI_CONTRACT
+    payload["patient_history_optional"] = True
+    payload["patient_history_query_parameter"] = "patient_id=<uuid>"
+    payload["patient_history_contract"] = PATIENT_LAB_HISTORY_CONTRACT
     return payload
 
 
 @router.post("/enabiz-pdf", status_code=status.HTTP_201_CREATED)
 async def ingest_enabiz_pdf(
+    session: SessionDep,
+    current_user: CurrentUserDep,
     file: UploadFile = File(...),
     source_record_id: str | None = None,
     clinical_ai: bool = False,
+    patient_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
     content, media_type, file_name = await _read_file(file)
     try:
@@ -130,17 +185,26 @@ async def ingest_enabiz_pdf(
             source_type=SOURCE_ENABIZ_PDF,
             source_record_id=source_record_id,
         )
-        return await _finalize_canonical_case(canonical, clinical_ai=clinical_ai)
-    except Exception as exc:  # translated into stable API errors below
+        return await _finalize_canonical_case(
+            canonical,
+            clinical_ai=clinical_ai,
+            patient_id=patient_id,
+            session=session,
+            current_user=current_user,
+        )
+    except Exception as exc:
         _raise_ingestion_error(exc)
         raise
 
 
 @router.post("/file", status_code=status.HTTP_201_CREATED)
 async def ingest_file_upload(
+    session: SessionDep,
+    current_user: CurrentUserDep,
     file: UploadFile = File(...),
     source_record_id: str | None = None,
     clinical_ai: bool = False,
+    patient_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
     content, media_type, file_name = await _read_file(file)
     try:
@@ -151,7 +215,13 @@ async def ingest_file_upload(
             source_type=SOURCE_FILE_UPLOAD,
             source_record_id=source_record_id,
         )
-        return await _finalize_canonical_case(canonical, clinical_ai=clinical_ai)
+        return await _finalize_canonical_case(
+            canonical,
+            clinical_ai=clinical_ai,
+            patient_id=patient_id,
+            session=session,
+            current_user=current_user,
+        )
     except Exception as exc:
         _raise_ingestion_error(exc)
         raise
@@ -159,9 +229,12 @@ async def ingest_file_upload(
 
 @router.post("/photo", status_code=status.HTTP_201_CREATED)
 async def ingest_photo(
+    session: SessionDep,
+    current_user: CurrentUserDep,
     file: UploadFile = File(...),
     source_record_id: str | None = None,
     clinical_ai: bool = False,
+    patient_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
     content, media_type, file_name = await _read_file(file)
     try:
@@ -172,7 +245,13 @@ async def ingest_photo(
             source_type=SOURCE_PHOTO,
             source_record_id=source_record_id,
         )
-        return await _finalize_canonical_case(canonical, clinical_ai=clinical_ai)
+        return await _finalize_canonical_case(
+            canonical,
+            clinical_ai=clinical_ai,
+            patient_id=patient_id,
+            session=session,
+            current_user=current_user,
+        )
     except Exception as exc:
         _raise_ingestion_error(exc)
         raise
@@ -180,9 +259,12 @@ async def ingest_photo(
 
 @router.post("/screenshot", status_code=status.HTTP_201_CREATED)
 async def ingest_screenshot(
+    session: SessionDep,
+    current_user: CurrentUserDep,
     file: UploadFile = File(...),
     source_record_id: str | None = None,
     clinical_ai: bool = False,
+    patient_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
     content, media_type, file_name = await _read_file(file)
     try:
@@ -193,7 +275,13 @@ async def ingest_screenshot(
             source_type=SOURCE_SCREENSHOT,
             source_record_id=source_record_id,
         )
-        return await _finalize_canonical_case(canonical, clinical_ai=clinical_ai)
+        return await _finalize_canonical_case(
+            canonical,
+            clinical_ai=clinical_ai,
+            patient_id=patient_id,
+            session=session,
+            current_user=current_user,
+        )
     except Exception as exc:
         _raise_ingestion_error(exc)
         raise
@@ -202,7 +290,10 @@ async def ingest_screenshot(
 @router.post("/manual", status_code=status.HTTP_201_CREATED)
 async def ingest_manual(
     payload: ManualLabIngestionInput,
+    session: SessionDep,
+    current_user: CurrentUserDep,
     clinical_ai: bool = False,
+    patient_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
     try:
         canonical = ingest_manual_payload(
@@ -212,7 +303,13 @@ async def ingest_manual(
             report_date=payload.report_date,
             source_record_id=payload.source_record_id,
         )
-        return await _finalize_canonical_case(canonical, clinical_ai=clinical_ai)
+        return await _finalize_canonical_case(
+            canonical,
+            clinical_ai=clinical_ai,
+            patient_id=patient_id,
+            session=session,
+            current_user=current_user,
+        )
     except Exception as exc:
         _raise_ingestion_error(exc)
         raise
@@ -220,9 +317,12 @@ async def ingest_manual(
 
 @router.post("/email-attachment", status_code=status.HTTP_201_CREATED)
 async def ingest_email_attachment(
+    session: SessionDep,
+    current_user: CurrentUserDep,
     file: UploadFile = File(...),
     source_record_id: str | None = None,
     clinical_ai: bool = False,
+    patient_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
     """Ingest an already-authorized email attachment; no mailbox access occurs here."""
     content, media_type, file_name = await _read_file(file)
@@ -234,7 +334,13 @@ async def ingest_email_attachment(
             source_type=SOURCE_EMAIL_ATTACHMENT,
             source_record_id=source_record_id,
         )
-        return await _finalize_canonical_case(canonical, clinical_ai=clinical_ai)
+        return await _finalize_canonical_case(
+            canonical,
+            clinical_ai=clinical_ai,
+            patient_id=patient_id,
+            session=session,
+            current_user=current_user,
+        )
     except Exception as exc:
         _raise_ingestion_error(exc)
         raise
@@ -243,7 +349,10 @@ async def ingest_email_attachment(
 @router.post("/integration", status_code=status.HTTP_201_CREATED)
 async def ingest_integration(
     payload: IntegrationLabIngestionInput,
+    session: SessionDep,
+    current_user: CurrentUserDep,
     clinical_ai: bool = False,
+    patient_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
     """Accept HL7 ORU, embedded FHIR Observation data, or structured REST JSON."""
     try:
@@ -252,7 +361,13 @@ async def ingest_integration(
             payload=payload.payload,
             source_record_id=payload.source_record_id,
         )
-        return await _finalize_canonical_case(canonical, clinical_ai=clinical_ai)
+        return await _finalize_canonical_case(
+            canonical,
+            clinical_ai=clinical_ai,
+            patient_id=patient_id,
+            session=session,
+            current_user=current_user,
+        )
     except Exception as exc:
         _raise_ingestion_error(exc)
         raise
