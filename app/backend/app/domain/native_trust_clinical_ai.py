@@ -26,6 +26,7 @@ from app.domain.openai_lab_clinical_service import (
 
 NATIVE_TRUST_CLINICAL_AI_CONTRACT = "medicore-native-trust-clinical-ai-v1"
 TRUSTED_METRICS_POLICY = "native_cpp_trusted_rows_only-v1"
+LONGITUDINAL_AI_POLICY = "native_cpp_trends_only-v1"
 _TRUSTED_RESULTS = frozenset({"NORMAL", "LOW", "HIGH"})
 
 
@@ -106,13 +107,6 @@ def _rows_for_clinical_service(
     trusted_rows: Sequence[Mapping[str, Any]],
     review_rows: Sequence[Mapping[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Serialize the native partition for the legacy clinical synthesis API.
-
-    The existing clinical service re-partitions by validation/review state. Native
-    trust can be stricter than that legacy rule, so every review-row copy receives a
-    policy-only review marker. Native result_status and validation_status are preserved
-    byte-for-byte and are never overwritten.
-    """
     payload: list[dict[str, Any]] = [dict(row) for row in trusted_rows]
     for source in review_rows:
         row = dict(source)
@@ -121,6 +115,41 @@ def _rows_for_clinical_service(
         row["ai_policy_review_only"] = True
         payload.append(row)
     return payload
+
+
+def _native_trend_metrics(
+    trends: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Expose only native-C++ longitudinal facts to the generative layer.
+
+    Python-fallback trends remain visible in the API/history response but are not
+    injected into AI evidence, keeping the trust statement literal and auditable.
+    """
+    metrics: list[dict[str, Any]] = []
+    for trend in trends:
+        if str(trend.get("backend") or "") != "native_cpp":
+            continue
+        status = str(trend.get("trend_status") or "").upper()
+        if status not in {"UP", "DOWN", "STABLE", "NO_PREVIOUS_RESULT"}:
+            continue
+        name = str(trend.get("test") or trend.get("parameter_code") or "Laboratory trend")
+        value = trend.get("percentage_difference")
+        metrics.append(
+            {
+                "code": f"trend:{trend.get('parameter_code') or name}"[:128],
+                "name": f"{name} longitudinal trend",
+                "value": value if value is not None else 0.0,
+                "unit": "% change" if value is not None else "",
+                "formula": "MediCore native TrendEngine current-vs-previous comparison",
+                "input_labels": [name],
+                "note": (
+                    f"status={status}; previous={trend.get('previous_value')}; "
+                    f"current={trend.get('current_value')}; days={trend.get('time_difference_days')}. "
+                    "Use as deterministic longitudinal context; do not recalculate."
+                ),
+            }
+        )
+    return metrics
 
 
 def _fallback(
@@ -141,13 +170,9 @@ async def run_native_trust_clinical_pipeline(
     envelope: Mapping[str, Any],
     *,
     use_external_ai: bool = True,
+    longitudinal_trends: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
-    """Run a C++ trust envelope through deterministic metrics and clinical synthesis.
-
-    Derived metrics are intentionally calculated from ``trusted_rows`` only in this
-    strict AI-facing pipeline. This is more conservative than standalone metric APIs:
-    no review-only measurement can influence the generative clinical summary.
-    """
+    """Run trusted native facts, native metrics and native trends through synthesis."""
     trusted_rows, review_rows, _all_rows = validate_native_trust_envelope(envelope)
     service_rows = _rows_for_clinical_service(trusted_rows, review_rows)
 
@@ -159,17 +184,20 @@ async def run_native_trust_clinical_pipeline(
             patient_sex=str(envelope.get("patient_sex") or "") or None,
         )
 
+    trend_metrics = _native_trend_metrics(longitudinal_trends)
+    ai_metrics = [*derived_metrics, *trend_metrics]
+
     ai_attempted = False
     if not trusted_rows:
         assessment = _fallback(
             rows=service_rows,
-            derived_metrics=derived_metrics,
+            derived_metrics=ai_metrics,
             reason="no_trusted_native_evidence",
         )
     elif not use_external_ai:
         assessment = _fallback(
             rows=service_rows,
-            derived_metrics=derived_metrics,
+            derived_metrics=ai_metrics,
             reason="external_ai_disabled",
         )
     else:
@@ -177,16 +205,14 @@ async def run_native_trust_clinical_pipeline(
         try:
             assessment = await synthesize_lab_clinical_assessment(
                 rows=service_rows,
-                derived_metrics=derived_metrics,
+                derived_metrics=ai_metrics,
                 patient_age=_metric_age(envelope.get("patient_age")),
                 patient_sex=str(envelope.get("patient_sex") or "") or None,
             )
         except OpenAILabClinicalError:
-            # Do not echo provider/runtime error details into API payloads. The caller
-            # only needs the stable fallback category; operational details belong in logs.
             assessment = _fallback(
                 rows=service_rows,
-                derived_metrics=derived_metrics,
+                derived_metrics=ai_metrics,
                 reason="clinical_ai_unavailable",
             )
 
@@ -196,6 +222,7 @@ async def run_native_trust_clinical_pipeline(
         "provenance_contract_version": NATIVE_PROVENANCE_CONTRACT,
         "metrics_contract_version": LAB_METRICS_CONTRACT,
         "metrics_policy": TRUSTED_METRICS_POLICY,
+        "longitudinal_ai_policy": LONGITUDINAL_AI_POLICY,
         "source_type": envelope.get("source_type"),
         "source": dict(envelope.get("source") or {}),
         "patient_age": envelope.get("patient_age"),
@@ -206,6 +233,8 @@ async def run_native_trust_clinical_pipeline(
         "trusted_rows": trusted_rows,
         "review_rows": review_rows,
         "derived_metrics": derived_metrics,
+        "longitudinal_trends": [dict(item) for item in longitudinal_trends],
+        "native_trends_used_by_ai": len(trend_metrics),
         "clinical_assessment": assessment,
         "ai_attempted": ai_attempted,
         "ai_used": assessment.get("synthesis_source") == "ai_after_native_cpp",
