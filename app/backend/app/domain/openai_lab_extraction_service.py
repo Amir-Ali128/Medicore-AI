@@ -9,6 +9,7 @@ in native C++, and clinical synthesis happens only after native validation.
 from __future__ import annotations
 
 import base64
+from functools import lru_cache
 import json
 from typing import Any
 
@@ -20,6 +21,7 @@ SUPPORTED_LAB_MEDIA_TYPES: frozenset[str] = frozenset(
     {"application/pdf", "image/png", "image/jpeg", "image/webp"}
 )
 _MAX_DOCUMENTS_PER_REQUEST = 12
+_EXTRACTION_TIMEOUT_SECONDS = 18.0
 
 _LAB_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -114,6 +116,16 @@ class OpenAILabExtractionError(RuntimeError):
     pass
 
 
+@lru_cache(maxsize=4)
+def _client_for_key(api_key: str) -> AsyncOpenAI:
+    """Reuse the connection pool and never let provider retries multiply latency."""
+    return AsyncOpenAI(
+        api_key=api_key,
+        timeout=_EXTRACTION_TIMEOUT_SECONDS,
+        max_retries=0,
+    )
+
+
 def _media_block(*, content: bytes, media_type: str, file_name: str) -> dict[str, Any]:
     encoded = base64.b64encode(content).decode("ascii")
     if media_type == "application/pdf":
@@ -190,10 +202,7 @@ async def extract_lab_documents_with_openai(
     if not model:
         raise OpenAILabExtractionError("OPENAI_LAB_MODEL yapılandırılmamış.")
 
-    # Keep provider construction minimal so this layer is easy to test and remains
-    # compatible with the project's existing OpenAI client shim. Request-level
-    # resilience is handled at the API/runtime boundary.
-    client = AsyncOpenAI(api_key=settings.openai_api_key)
+    client = _client_for_key(settings.openai_api_key)
     try:
         response = await client.responses.create(
             model=model,
@@ -211,7 +220,9 @@ async def extract_lab_documents_with_openai(
             input=[{"role": "user", "content": content_parts}],
         )
     except Exception as exc:  # provider errors are translated at the API boundary
-        raise OpenAILabExtractionError(f"OpenAI laboratuvar analizi başarısız: {exc}") from exc
+        raise OpenAILabExtractionError(
+            f"OpenAI laboratuvar analizi {_EXTRACTION_TIMEOUT_SECONDS:.0f} sn bütçesinde tamamlanamadı: {exc}"
+        ) from exc
 
     output_text = str(getattr(response, "output_text", "") or "").strip()
     if not output_text:
