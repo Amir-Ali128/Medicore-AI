@@ -10,11 +10,20 @@ from __future__ import annotations
 
 import json
 from decimal import Decimal
+from functools import lru_cache
 from typing import Any, Mapping, Sequence
 
 from openai import AsyncOpenAI
 
 from app.core.config import get_settings
+
+_CLINICAL_MAX_OUTPUT_TOKENS = 3200
+
+
+@lru_cache(maxsize=4)
+def _client_for_key(api_key: str, timeout_seconds: float) -> AsyncOpenAI:
+    """Reuse the provider connection pool instead of rebuilding it per request."""
+    return AsyncOpenAI(api_key=api_key, timeout=timeout_seconds)
 
 
 _CLINICAL_SCHEMA: dict[str, Any] = {
@@ -119,6 +128,9 @@ Hard rules:
 - Every substantive claim must be traceable to supplied evidence strings.
 - Do not include patient name, identity number, address, phone, email, protocol number
   or exact date of birth.
+- Keep the JSON compact: prefer at most 6 priority findings, 6 systems, 8 reassuring
+  findings, 6 priority actions and 6 limitations. Avoid repeating the same evidence
+  across sections when one concise reference is sufficient.
 
 narrative_tr should read like a concise high-quality clinical explanation: start with
 "Bu sonuçlarda en önemli konu ..." when there is a clear leading issue, then use short
@@ -301,9 +313,9 @@ async def synthesize_lab_clinical_assessment(
     if not settings.openai_api_key:
         raise OpenAILabClinicalError("OPENAI_API_KEY yapılandırılmamış.")
 
-    model = (settings.openai_lab_model or "").strip()
+    model = (settings.openai_lab_clinical_model or settings.openai_lab_model or "").strip()
     if not model:
-        raise OpenAILabClinicalError("OPENAI_LAB_MODEL yapılandırılmamış.")
+        raise OpenAILabClinicalError("OPENAI_LAB_CLINICAL_MODEL yapılandırılmamış.")
 
     trusted_rows, review_rows = partition_rows_for_ai(rows)
     payload = {
@@ -321,12 +333,15 @@ async def synthesize_lab_clinical_assessment(
         },
     }
 
-    client = AsyncOpenAI(api_key=settings.openai_api_key)
+    client = _client_for_key(
+        settings.openai_api_key,
+        float(settings.ai_call_timeout_seconds),
+    )
     try:
         response = await client.responses.create(
             model=model,
             store=False,
-            max_output_tokens=8000,
+            max_output_tokens=_CLINICAL_MAX_OUTPUT_TOKENS,
             instructions=_INSTRUCTIONS,
             text={
                 "format": {
