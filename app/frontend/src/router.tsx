@@ -57,6 +57,7 @@ export const router = createHashRouter([
           { path: '/radiology', element: <RadiologyEvaluationPage /> },
           { path: '/send', element: <SendPage /> },
           { path: '/combined-evaluation', element: <CaseEvaluationPage /> },
+          { path: '/case-evaluation', element: <CaseEvaluationPage /> },
           { path: '/roadmap/radiology', element: <ModulePreviewPage module="radiology" /> },
           { path: '/roadmap/imaging', element: <ModulePreviewPage module="imaging" /> },
           { path: '/roadmap/pathology', element: <ModulePreviewPage module="pathology" /> },

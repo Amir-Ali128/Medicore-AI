@@ -46,6 +46,11 @@ export type UniversalLabIngestionResponse = {
   contract_version?: string;
   source_type?: string;
   source?: Record<string, unknown>;
+  patient_id?: string;
+  lab_report_id?: string;
+  file_name?: string | null;
+  report_date?: string | null;
+  created_at?: string | null;
   trusted_count?: number;
   review_count?: number;
   processed_row_count?: number;
@@ -67,6 +72,7 @@ export type UniversalLabIngestionResponse = {
   trusted_rows?: Array<Record<string, unknown>>;
   review_rows?: Array<Record<string, unknown>>;
   derived_metrics?: Array<Record<string, unknown>>;
+  results?: Array<Record<string, unknown>>;
   [key: string]: unknown;
 };
 
@@ -185,5 +191,16 @@ export async function evaluateSavedLabReport(
       headers: authHeaders(),
     },
   );
+  return parseResponse(response);
+}
+
+export async function getLatestPatientLabReport(
+  patientId: string,
+): Promise<UniversalLabIngestionResponse | null> {
+  const response = await fetch(
+    `${API_BASE_URL}/patients/${encodeURIComponent(patientId)}/lab-latest`,
+    { headers: authHeaders() },
+  );
+  if (response.status === 404) return null;
   return parseResponse(response);
 }
