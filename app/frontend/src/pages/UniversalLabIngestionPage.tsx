@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 
 import { getActivePatientId } from '../services/patientClient';
 import {
+  evaluateSavedLabReport,
   ingestLabFile,
   ingestLabIntegration,
   ingestManualLabs,
@@ -247,7 +248,7 @@ export default function UniversalLabIngestionPage() {
   const patientId = getActivePatientId();
   const [selectedSource, setSelectedSource] = useState<SourceId>('enabiz_pdf');
   const [file, setFile] = useState<File | null>(null);
-  const [clinicalAi, setClinicalAi] = useState(true);
+  const [clinicalAi, setClinicalAi] = useState(false);
   const [sourceRecordId, setSourceRecordId] = useState('');
   const [reportDate, setReportDate] = useState('');
   const [patientAge, setPatientAge] = useState('');
@@ -257,7 +258,9 @@ export default function UniversalLabIngestionPage() {
   const [integrationType, setIntegrationType] = useState<LabIntegrationType>('hl7_oru');
   const [integrationPayload, setIntegrationPayload] = useState('');
   const [busy, setBusy] = useState(false);
+  const [evaluating, setEvaluating] = useState(false);
   const [error, setError] = useState('');
+  const [evaluationError, setEvaluationError] = useState('');
   const [result, setResult] = useState<UniversalLabIngestionResponse | null>(null);
 
   const selected = useMemo(
@@ -269,6 +272,7 @@ export default function UniversalLabIngestionPage() {
     setSelectedSource(source);
     setFile(null);
     setError('');
+    setEvaluationError('');
     setResult(null);
   }
 
@@ -318,6 +322,7 @@ export default function UniversalLabIngestionPage() {
     event.preventDefault();
     setBusy(true);
     setError('');
+    setEvaluationError('');
     setResult(null);
 
     try {
@@ -364,6 +369,29 @@ export default function UniversalLabIngestionPage() {
     }
   }
 
+  async function evaluateFindings() {
+    const labReportId = result?.patient_history?.lab_report_id;
+    if (!labReportId) {
+      setEvaluationError('Bulguları değerlendirmek için raporun aktif hastaya kaydedilmiş olması gerekir.');
+      return;
+    }
+
+    setEvaluating(true);
+    setEvaluationError('');
+    try {
+      const evaluated = await evaluateSavedLabReport(labReportId);
+      setResult(evaluated);
+    } catch (evaluationFailure) {
+      setEvaluationError(
+        evaluationFailure instanceof Error
+          ? evaluationFailure.message
+          : 'Bulgular değerlendirilemedi.',
+      );
+    } finally {
+      setEvaluating(false);
+    }
+  }
+
   const trustedCount = result?.trusted_count ?? result?.patient_history?.trusted_count ?? 0;
   const reviewCount = result?.review_count ?? result?.patient_history?.review_count ?? 0;
   const processedCount = result?.processed_row_count ?? trustedCount + reviewCount;
@@ -377,6 +405,7 @@ export default function UniversalLabIngestionPage() {
   const hiddenNormalCount = Math.max(0, trends.length - abnormalTrends.length);
   const technicalResult = result ? buildTechnicalResult(result) : null;
   const isSaved = Boolean(result?.patient_history);
+  const canEvaluate = Boolean(result?.patient_history?.lab_report_id);
 
   return (
     <div className="space-y-7">
@@ -635,7 +664,7 @@ export default function UniversalLabIngestionPage() {
                 onChange={(event) => setClinicalAi(event.target.checked)}
                 className="h-4 w-4"
               />
-              Klinik AI çalıştır
+              Yüklerken Klinik AI çalıştır
             </label>
           </div>
 
@@ -650,7 +679,11 @@ export default function UniversalLabIngestionPage() {
             disabled={busy}
             className="rounded-lg bg-blue-700 px-6 py-3 text-sm font-semibold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {busy ? 'C++ Trust + AI işleniyor…' : 'İşle ve Sonucu Göster'}
+            {busy
+              ? clinicalAi
+                ? 'C++ Trust + AI işleniyor…'
+                : 'C++ Trust işleniyor…'
+              : 'İşle ve Sonucu Göster'}
           </button>
         </form>
       </section>
@@ -683,8 +716,8 @@ export default function UniversalLabIngestionPage() {
                   isSaved
                     ? result.patient_history?.lab_report_id
                       ? `Rapor ID: ${result.patient_history.lab_report_id}`
-                      : 'Hasta geçmişine kaydedildi.'
-                    : 'Kaydetmek için önce aktif hasta seçmelisin.'
+                      : 'Hasta geçmişine kayıt edildi.'
+                    : 'Kayıt için önce aktif hasta seçmelisin.'
                 }
                 className={`rounded-lg px-4 py-2 text-sm font-semibold ${
                   isSaved
@@ -692,10 +725,29 @@ export default function UniversalLabIngestionPage() {
                     : 'cursor-not-allowed border border-slate-300 bg-slate-100 text-slate-400'
                 }`}
               >
-                {isSaved ? '✓ Kaydedildi' : 'Kaydet'}
+                {isSaved ? '✓ Kayıt Edildi' : 'Kayıt Et'}
+              </button>
+              <button
+                type="button"
+                onClick={evaluateFindings}
+                disabled={!canEvaluate || evaluating}
+                title={
+                  canEvaluate
+                    ? 'Kaydedilmiş trusted laboratuvar bulgularını klinik AI ile değerlendir.'
+                    : 'Bulguları değerlendirmek için önce aktif hastaya kayıt gerekir.'
+                }
+                className="rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500"
+              >
+                {evaluating ? 'Değerlendiriliyor…' : 'Bulguları Değerlendir'}
               </button>
             </div>
           </div>
+
+          {evaluationError ? (
+            <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm leading-6 text-red-800">
+              {evaluationError}
+            </div>
+          ) : null}
 
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
@@ -718,7 +770,7 @@ export default function UniversalLabIngestionPage() {
 
           {result.patient_history ? (
             <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm leading-6 text-emerald-900">
-              <strong>✓ Hasta geçmişine kaydedildi.</strong>{' '}
+              <strong>✓ Hasta geçmişine kayıt edildi.</strong>{' '}
               {result.patient_history.lab_report_id
                 ? `Rapor ID: ${result.patient_history.lab_report_id}`
                 : ''}
@@ -727,7 +779,9 @@ export default function UniversalLabIngestionPage() {
 
           {result.clinical_assessment?.headline || result.clinical_assessment?.overview ? (
             <div className="rounded-xl border border-blue-200 bg-blue-50 p-4">
-              <p className="text-xs font-bold uppercase tracking-wide text-blue-700">Klinik AI özeti</p>
+              <p className="text-xs font-bold uppercase tracking-wide text-blue-700">
+                Bulguların değerlendirmesi
+              </p>
               {result.clinical_assessment.headline ? (
                 <h3 className="mt-2 font-semibold text-blue-950">{result.clinical_assessment.headline}</h3>
               ) : null}
@@ -735,7 +789,12 @@ export default function UniversalLabIngestionPage() {
                 <p className="mt-2 text-sm leading-6 text-blue-900">{result.clinical_assessment.overview}</p>
               ) : null}
             </div>
-          ) : null}
+          ) : (
+            <div className="rounded-xl border border-blue-100 bg-blue-50/50 p-4 text-sm leading-6 text-blue-900">
+              Klinik değerlendirme henüz çalıştırılmadı. İstersen <strong>Bulguları Değerlendir</strong>{' '}
+              butonuyla kaydedilmiş raporu ayrıca değerlendirebilirsin.
+            </div>
+          )}
 
           {abnormalTrends.length > 0 ? (
             <div>
