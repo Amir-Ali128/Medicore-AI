@@ -40,7 +40,7 @@ const items: NavItem[] = [
   { label: '🤖 AI Kullanımı', to: '/admin/ai-costs', adminOnly: true },
   { label: '💬 Geri Bildirimler', to: '/admin/feedback', adminOnly: true },
   { label: '👤 Hasta Bilgileri', to: '/patients/demo' },
-  { label: '🩸 Laboratuvar Sonuçları', to: '/analysis/mock' },
+  { label: '🩸 Laboratuvar Sonuçları', to: '/lab-ingestion' },
   { label: '🩻 Radyoloji ve Diğer Tetkik Raporları', to: '/radiology' },
   { label: '🧩 Bulguları Değerlendir', to: '/combined-evaluation' },
   { label: '📄 Arşiv', to: '/patient-history' },
