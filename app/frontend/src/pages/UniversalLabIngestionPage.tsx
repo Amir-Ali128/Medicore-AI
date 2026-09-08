@@ -155,8 +155,17 @@ function findTrustedRowForTrend(
   );
 }
 
+function resultStatus(row?: TrustedLabRow) {
+  return (displayScalar(row?.result_status) ?? '').toUpperCase();
+}
+
+function isAbnormalTrustedRow(row?: TrustedLabRow) {
+  const status = resultStatus(row);
+  return status === 'LOW' || status === 'HIGH';
+}
+
 function abnormalResultStatus(row?: TrustedLabRow) {
-  const status = (displayScalar(row?.result_status) ?? '').toUpperCase();
+  const status = resultStatus(row);
   if (status === 'LOW') {
     return {
       label: '↓ Düşük',
@@ -205,6 +214,33 @@ function formatTrendStatus(status?: string) {
 
 function sourceLabel(sourceType?: string) {
   return SOURCES.find((item) => item.id === sourceType)?.title ?? sourceType ?? 'Laboratuvar girişi';
+}
+
+function buildTechnicalResult(result: UniversalLabIngestionResponse) {
+  const trustedRows = result.trusted_rows ?? [];
+  const abnormalRows = trustedRows.filter((row) => isAbnormalTrustedRow(row));
+  const abnormalTrends = (result.longitudinal_trends ?? []).filter((trend) => {
+    const trustedRow = findTrustedRowForTrend(trend.test, trustedRows);
+    return isAbnormalTrustedRow(trustedRow);
+  });
+
+  const {
+    trusted_rows: _trustedRows,
+    review_rows: _reviewRows,
+    longitudinal_trends: _longitudinalTrends,
+    clinical_assessment: _clinicalAssessment,
+    ...technicalMetadata
+  } = result;
+
+  return {
+    ...technicalMetadata,
+    technical_view: 'abnormal_and_review_only',
+    abnormal_trusted_count: abnormalRows.length,
+    normal_rows_omitted: Math.max(0, trustedRows.length - abnormalRows.length),
+    abnormal_rows: abnormalRows,
+    review_rows: result.review_rows ?? [],
+    abnormal_longitudinal_trends: abnormalTrends,
+  };
 }
 
 export default function UniversalLabIngestionPage() {
@@ -333,6 +369,14 @@ export default function UniversalLabIngestionPage() {
   const processedCount = result?.processed_row_count ?? trustedCount + reviewCount;
   const trends = result?.longitudinal_trends ?? [];
   const trustedRows = result?.trusted_rows ?? [];
+  const abnormalRows = trustedRows.filter((row) => isAbnormalTrustedRow(row));
+  const abnormalTrends = trends.filter((trend) => {
+    const trustedRow = findTrustedRowForTrend(trend.test, trustedRows);
+    return isAbnormalTrustedRow(trustedRow);
+  });
+  const hiddenNormalCount = Math.max(0, trends.length - abnormalTrends.length);
+  const technicalResult = result ? buildTechnicalResult(result) : null;
+  const isSaved = Boolean(result?.patient_history);
 
   return (
     <div className="space-y-7">
@@ -622,15 +666,35 @@ export default function UniversalLabIngestionPage() {
                 {sourceLabel(result.source_type)} sonucu
               </h2>
             </div>
-            <span
-              className={`w-fit rounded-full px-3 py-1 text-xs font-bold ${
-                result.doctor_review_required
-                  ? 'bg-amber-100 text-amber-800'
-                  : 'bg-emerald-100 text-emerald-800'
-              }`}
-            >
-              {result.doctor_review_required ? 'Hekim kontrolü gerekli' : 'Trust kontrolü tamam'}
-            </span>
+            <div className="flex flex-wrap items-center gap-2">
+              <span
+                className={`w-fit rounded-full px-3 py-1 text-xs font-bold ${
+                  result.doctor_review_required
+                    ? 'bg-amber-100 text-amber-800'
+                    : 'bg-emerald-100 text-emerald-800'
+                }`}
+              >
+                {result.doctor_review_required ? 'Hekim kontrolü gerekli' : 'Trust kontrolü tamam'}
+              </span>
+              <button
+                type="button"
+                disabled
+                title={
+                  isSaved
+                    ? result.patient_history?.lab_report_id
+                      ? `Rapor ID: ${result.patient_history.lab_report_id}`
+                      : 'Hasta geçmişine kaydedildi.'
+                    : 'Kaydetmek için önce aktif hasta seçmelisin.'
+                }
+                className={`rounded-lg px-4 py-2 text-sm font-semibold ${
+                  isSaved
+                    ? 'bg-emerald-700 text-white'
+                    : 'cursor-not-allowed border border-slate-300 bg-slate-100 text-slate-400'
+                }`}
+              >
+                {isSaved ? '✓ Kaydedildi' : 'Kaydet'}
+              </button>
+            </div>
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -646,9 +710,9 @@ export default function UniversalLabIngestionPage() {
               <p className="text-xs font-semibold uppercase text-amber-700">Review</p>
               <p className="mt-1 text-2xl font-bold text-amber-900">{reviewCount}</p>
             </div>
-            <div className="rounded-xl border border-blue-200 bg-blue-50 p-4">
-              <p className="text-xs font-semibold uppercase text-blue-700">Seyir</p>
-              <p className="mt-1 text-2xl font-bold text-blue-900">{trends.length}</p>
+            <div className="rounded-xl border border-red-200 bg-red-50 p-4">
+              <p className="text-xs font-semibold uppercase text-red-700">Anormal</p>
+              <p className="mt-1 text-2xl font-bold text-red-900">{abnormalRows.length}</p>
             </div>
           </div>
 
@@ -673,11 +737,18 @@ export default function UniversalLabIngestionPage() {
             </div>
           ) : null}
 
-          {trends.length > 0 ? (
+          {abnormalTrends.length > 0 ? (
             <div>
-              <h3 className="text-sm font-semibold text-slate-900">Laboratuvar sonuçları ve seyir</h3>
+              <div className="flex flex-wrap items-end justify-between gap-2">
+                <h3 className="text-sm font-semibold text-slate-900">Anormal laboratuvar sonuçları ve seyir</h3>
+                {hiddenNormalCount > 0 ? (
+                  <span className="text-xs font-medium text-slate-500">
+                    {hiddenNormalCount} normal sonuç gizlendi
+                  </span>
+                ) : null}
+              </div>
               <div className="mt-3 grid gap-3 md:grid-cols-2">
-                {trends.map((trend, index) => {
+                {abnormalTrends.map((trend, index) => {
                   const trustedRow = findTrustedRowForTrend(trend.test, trustedRows);
                   const abnormalStatus = abnormalResultStatus(trustedRow);
                   const unit = displayScalar(trustedRow?.unit);
@@ -733,14 +804,18 @@ export default function UniversalLabIngestionPage() {
                 })}
               </div>
             </div>
-          ) : null}
+          ) : (
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
+              Trusted sonuçlarda LOW/HIGH sınıfında anormal laboratuvar sonucu yok.
+            </div>
+          )}
 
           <details className="rounded-xl border border-slate-200 bg-slate-50 p-4">
             <summary className="cursor-pointer text-sm font-semibold text-slate-700">
-              Teknik yanıtı göster
+              Teknik yanıtı göster · yalnız anormal + review
             </summary>
             <pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-slate-950 p-4 text-xs leading-5 text-slate-100">
-              {JSON.stringify(result, null, 2)}
+              {JSON.stringify(technicalResult, null, 2)}
             </pre>
           </details>
         </section>
