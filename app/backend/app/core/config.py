@@ -72,10 +72,11 @@ class Settings(BaseSettings):
     openai_radiology_second_reader_enabled: bool = True
 
     # --- Direct OpenAI/Astra laboratory document reader ------------------
-    # The original PDF/image is sent directly to the multimodal model. The model
-    # extracts and normalizes rows; the native C++ lab core performs deterministic
-    # reference-range classification before persistence.
+    # Keep the highest-quality multimodal model on extraction, where OCR/table
+    # fidelity matters most. Clinical synthesis consumes already-validated structured
+    # facts and can use a lower-latency model independently.
     openai_lab_model: str = "gpt-6-astra"
+    openai_lab_clinical_model: str = "gpt-5.6-luna"
     openai_lab_extraction_enabled: bool = True
     native_lab_required: bool = True
 
