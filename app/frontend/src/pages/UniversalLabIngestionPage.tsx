@@ -40,6 +40,8 @@ type ManualRowDraft = {
   measuredAt: string;
 };
 
+type TrustedLabRow = Record<string, unknown>;
+
 const SOURCES: SourceCard[] = [
   {
     id: 'enabiz_pdf',
@@ -129,12 +131,75 @@ function optionalNumber(value: string): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function displayScalar(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  const text = String(value).trim();
+  return text ? text : null;
+}
+
+function normalizeLabName(value: unknown) {
+  return (displayScalar(value) ?? '').toLocaleLowerCase('tr-TR');
+}
+
+function findTrustedRowForTrend(
+  trendTest: string | null | undefined,
+  trustedRows: TrustedLabRow[],
+): TrustedLabRow | undefined {
+  const target = normalizeLabName(trendTest);
+  if (!target) return undefined;
+
+  return trustedRows.find((row) =>
+    [row.display_name, row.canonical_name, row.raw_parameter_name].some(
+      (candidate) => normalizeLabName(candidate) === target,
+    ),
+  );
+}
+
+function abnormalResultStatus(row?: TrustedLabRow) {
+  const status = (displayScalar(row?.result_status) ?? '').toUpperCase();
+  if (status === 'LOW') {
+    return {
+      label: '↓ Düşük',
+      className: 'border-blue-200 bg-blue-50 text-blue-800',
+    };
+  }
+  if (status === 'HIGH') {
+    return {
+      label: '↑ Yüksek',
+      className: 'border-red-200 bg-red-50 text-red-800',
+    };
+  }
+  return null;
+}
+
+function formatLabValue(value: unknown, unit: string | null) {
+  const displayed = displayScalar(value) ?? '—';
+  return unit ? `${displayed} ${unit}` : displayed;
+}
+
+function formatReferenceRange(row: TrustedLabRow | undefined, unit: string | null) {
+  if (!row) return null;
+
+  const referenceText = displayScalar(row.reference_text);
+  if (referenceText) return referenceText;
+
+  const minimum = displayScalar(row.reference_min ?? row.extracted_reference_min);
+  const maximum = displayScalar(row.reference_max ?? row.extracted_reference_max);
+  let range: string | null = null;
+
+  if (minimum !== null && maximum !== null) range = `${minimum} – ${maximum}`;
+  else if (minimum !== null) range = `≥ ${minimum}`;
+  else if (maximum !== null) range = `≤ ${maximum}`;
+
+  return range && unit ? `${range} ${unit}` : range;
+}
+
 function formatTrendStatus(status?: string) {
   const normalized = (status || '').toUpperCase();
   if (normalized === 'UP') return '↑ Yükseliyor';
   if (normalized === 'DOWN') return '↓ Düşüyor';
   if (normalized === 'STABLE') return '→ Stabil';
-  if (normalized === 'NO_PREVIOUS_RESULT') return 'İlk kayıt';
+  if (normalized === 'NO_PREVIOUS_RESULT') return 'İlk ölçüm';
   return status || 'Bilinmiyor';
 }
 
@@ -267,6 +332,7 @@ export default function UniversalLabIngestionPage() {
   const reviewCount = result?.review_count ?? result?.patient_history?.review_count ?? 0;
   const processedCount = result?.processed_row_count ?? trustedCount + reviewCount;
   const trends = result?.longitudinal_trends ?? [];
+  const trustedRows = result?.trusted_rows ?? [];
 
   return (
     <div className="space-y-7">
@@ -581,7 +647,7 @@ export default function UniversalLabIngestionPage() {
               <p className="mt-1 text-2xl font-bold text-amber-900">{reviewCount}</p>
             </div>
             <div className="rounded-xl border border-blue-200 bg-blue-50 p-4">
-              <p className="text-xs font-semibold uppercase text-blue-700">Trend</p>
+              <p className="text-xs font-semibold uppercase text-blue-700">Seyir</p>
               <p className="mt-1 text-2xl font-bold text-blue-900">{trends.length}</p>
             </div>
           </div>
@@ -609,25 +675,62 @@ export default function UniversalLabIngestionPage() {
 
           {trends.length > 0 ? (
             <div>
-              <h3 className="text-sm font-semibold text-slate-900">Longitudinal trendler</h3>
+              <h3 className="text-sm font-semibold text-slate-900">Laboratuvar sonuçları ve seyir</h3>
               <div className="mt-3 grid gap-3 md:grid-cols-2">
-                {trends.map((trend, index) => (
-                  <div key={`${trend.parameter_code ?? trend.test ?? 'trend'}-${index}`} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <p className="font-semibold text-slate-900">{trend.test || trend.parameter_code || 'Laboratuvar sonucu'}</p>
-                      <span className="rounded-full bg-white px-2.5 py-1 text-xs font-bold text-slate-700 ring-1 ring-slate-200">
-                        {formatTrendStatus(trend.trend_status)}
-                      </span>
+                {trends.map((trend, index) => {
+                  const trustedRow = findTrustedRowForTrend(trend.test, trustedRows);
+                  const abnormalStatus = abnormalResultStatus(trustedRow);
+                  const unit = displayScalar(trustedRow?.unit);
+                  const referenceRange = formatReferenceRange(trustedRow, unit);
+                  const hasPreviousValue =
+                    trend.previous_value !== null && trend.previous_value !== undefined;
+
+                  return (
+                    <div
+                      key={`${trend.parameter_code ?? trend.test ?? 'trend'}-${index}`}
+                      className="rounded-xl border border-slate-200 bg-slate-50 p-4"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="font-semibold text-slate-900">
+                            {trend.test || trend.parameter_code || 'Laboratuvar sonucu'}
+                          </p>
+                          <p className="mt-1 text-lg font-bold text-slate-950">
+                            {formatLabValue(trend.current_value, unit)}
+                          </p>
+                        </div>
+                        {abnormalStatus ? (
+                          <span
+                            className={`w-fit rounded-full border px-2.5 py-1 text-xs font-bold ${abnormalStatus.className}`}
+                          >
+                            {abnormalStatus.label}
+                          </span>
+                        ) : null}
+                      </div>
+
+                      {referenceRange ? (
+                        <p className="mt-2 text-xs leading-5 text-slate-500">
+                          Referans: {referenceRange}
+                        </p>
+                      ) : null}
+
+                      <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+                        <span className="rounded-full bg-white px-2.5 py-1 font-bold text-slate-700 ring-1 ring-slate-200">
+                          {formatTrendStatus(trend.trend_status)}
+                        </span>
+                        {hasPreviousValue ? (
+                          <span className="text-slate-500">
+                            Önceki: {formatLabValue(trend.previous_value, unit)}
+                            {trend.percentage_difference !== null &&
+                            trend.percentage_difference !== undefined
+                              ? ` · ${trend.percentage_difference > 0 ? '+' : ''}${trend.percentage_difference.toFixed(2)}%`
+                              : ''}
+                          </span>
+                        ) : null}
+                      </div>
                     </div>
-                    <p className="mt-2 text-xs leading-5 text-slate-500">
-                      {trend.previous_value ?? '—'} → {trend.current_value ?? '—'}
-                      {trend.percentage_difference !== null && trend.percentage_difference !== undefined
-                        ? ` · ${trend.percentage_difference > 0 ? '+' : ''}${trend.percentage_difference.toFixed(2)}%`
-                        : ''}
-                      {trend.backend ? ` · ${trend.backend}` : ''}
-                    </p>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           ) : null}
