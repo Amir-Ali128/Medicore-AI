@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import uuid
+from types import SimpleNamespace
 
 import pytest
 
+from app.api.routes import lab_ingestion as lab_routes
 from app.domain.canonical_lab_model import (
     CANONICAL_LAB_CONTRACT,
     SOURCE_EMAIL_ATTACHMENT,
@@ -16,6 +19,7 @@ from app.domain.canonical_lab_model import (
     SOURCE_SCREENSHOT,
 )
 from app.domain import universal_lab_ingestion as ingestion
+from app.infrastructure.database.models.lab_report import LabReport
 
 
 def _extraction_payload() -> dict:
@@ -268,3 +272,84 @@ def test_low_confidence_extraction_is_review_only_not_silently_repaired() -> Non
     assert row["normalized_value"] == 71.0
     assert row["needs_review"] is True
     assert "low_input_confidence" in row["ingestion_reasons"]
+
+
+def test_saved_report_evaluation_uses_persisted_canonical_data(monkeypatch: pytest.MonkeyPatch) -> None:
+    report_id = uuid.uuid4()
+    patient_id = uuid.uuid4()
+    canonical_case = {"contract_version": "persisted-canonical"}
+    report = SimpleNamespace(
+        id=report_id,
+        patient_id=patient_id,
+        raw_payload=canonical_case,
+        metadata_json={"longitudinal_trends": [{"test": "Ferritin", "trend_status": "STABLE"}]},
+        status="analyzed",
+    )
+
+    class FakeSession:
+        def __init__(self) -> None:
+            self.committed = False
+            self.rolled_back = False
+
+        async def get(self, model, key):
+            assert model is LabReport
+            assert key == report_id
+            return report
+
+        async def commit(self) -> None:
+            self.committed = True
+
+        async def rollback(self) -> None:
+            self.rolled_back = True
+
+    async def fake_ensure_patient_access(*_args, **kwargs):
+        assert kwargs["patient_id"] == patient_id
+        return SimpleNamespace(id=patient_id)
+
+    def fake_process(payload):
+        assert payload is canonical_case
+        return {
+            "contract_version": "trust-v1",
+            "processed_row_count": 1,
+            "trusted_count": 1,
+            "review_count": 0,
+        }
+
+    async def fake_pipeline(envelope, *, longitudinal_trends):
+        assert envelope["trusted_count"] == 1
+        assert longitudinal_trends[0]["test"] == "Ferritin"
+        return {
+            "contract_version": "clinical-v1",
+            "trusted_count": 1,
+            "review_count": 0,
+            "trusted_rows": [],
+            "review_rows": [],
+            "longitudinal_trends": list(longitudinal_trends),
+            "clinical_assessment": {
+                "headline": "Demir eksikliği bulguları",
+                "overview": "Kaydedilmiş trusted laboratuvar verileri değerlendirildi.",
+            },
+            "ai_attempted": True,
+            "ai_used": True,
+            "native_trends_used_by_ai": 1,
+            "doctor_review_required": False,
+        }
+
+    monkeypatch.setattr(lab_routes, "ensure_patient_access", fake_ensure_patient_access)
+    monkeypatch.setattr(lab_routes, "process_canonical_lab_case", fake_process)
+    monkeypatch.setattr(lab_routes, "run_native_trust_clinical_pipeline", fake_pipeline)
+
+    session = FakeSession()
+    result = asyncio.run(
+        lab_routes.evaluate_saved_lab_report(
+            report_id,
+            session,
+            SimpleNamespace(id=uuid.uuid4()),
+        )
+    )
+
+    assert session.committed is True
+    assert session.rolled_back is False
+    assert result["clinical_assessment"]["headline"] == "Demir eksikliği bulguları"
+    assert result["patient_history"]["lab_report_id"] == str(report_id)
+    assert report.metadata_json["clinical_pipeline"]["ai_used"] is True
