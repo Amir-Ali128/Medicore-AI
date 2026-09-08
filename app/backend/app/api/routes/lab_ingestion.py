@@ -48,6 +48,7 @@ from app.domain.universal_lab_ingestion import (
     ingest_manual_payload,
     ingestion_capabilities,
 )
+from app.infrastructure.database.models.lab_report import LabReport
 from app.infrastructure.database.models.user import User
 
 router = APIRouter(
@@ -205,6 +206,8 @@ async def capabilities() -> dict[str, Any]:
     payload["patient_history_contract"] = PATIENT_LAB_HISTORY_CONTRACT
     payload["text_pdf_fast_path"] = True
     payload["text_pdf_fast_path_version"] = "fast_pdf_local_parser_v1"
+    payload["saved_report_evaluation"] = True
+    payload["saved_report_evaluation_endpoint"] = "/lab-ingestion/reports/{lab_report_id}/evaluate"
     return payload
 
 
@@ -413,5 +416,73 @@ async def ingest_integration(
             current_user=current_user,
         )
     except Exception as exc:
+        _raise_ingestion_error(exc)
+        raise
+
+
+@router.post("/reports/{lab_report_id}/evaluate")
+async def evaluate_saved_lab_report(
+    lab_report_id: uuid.UUID,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+) -> dict[str, Any]:
+    """Evaluate a persisted lab report without trusting client-supplied lab facts."""
+    try:
+        report = await session.get(LabReport, lab_report_id)
+        if report is None:
+            raise HTTPException(status_code=404, detail="Laboratuvar raporu bulunamadı.")
+
+        await ensure_patient_access(
+            session,
+            patient_id=report.patient_id,
+            current_user=current_user,
+        )
+
+        canonical_case = report.raw_payload
+        if not isinstance(canonical_case, dict):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Kaydedilmiş rapor yeniden değerlendirilebilecek canonical veri taşımıyor.",
+            )
+
+        trust_envelope = process_canonical_lab_case(canonical_case)
+        report_metadata = dict(report.metadata_json or {})
+        stored_trends = report_metadata.get("longitudinal_trends")
+        longitudinal_trends = (
+            [dict(item) for item in stored_trends if isinstance(item, dict)]
+            if isinstance(stored_trends, list)
+            else []
+        )
+
+        result = await run_native_trust_clinical_pipeline(
+            trust_envelope,
+            longitudinal_trends=longitudinal_trends,
+        )
+
+        report_metadata["clinical_pipeline"] = {
+            "contract_version": result.get("contract_version"),
+            "clinical_assessment": result.get("clinical_assessment"),
+            "ai_attempted": bool(result.get("ai_attempted")),
+            "ai_used": bool(result.get("ai_used")),
+            "native_trends_used_by_ai": int(result.get("native_trends_used_by_ai") or 0),
+        }
+        report.metadata_json = report_metadata
+        report.status = "analyzed"
+        await session.commit()
+
+        result["patient_history"] = {
+            "contract_version": PATIENT_LAB_HISTORY_CONTRACT,
+            "patient_id": str(report.patient_id),
+            "lab_report_id": str(report.id),
+            "persisted_result_count": int(trust_envelope.get("processed_row_count") or 0),
+            "trusted_count": int(trust_envelope.get("trusted_count") or 0),
+            "review_count": int(trust_envelope.get("review_count") or 0),
+            "trend_count": len(longitudinal_trends),
+            "doctor_review_required": bool(int(trust_envelope.get("review_count") or 0)),
+        }
+        result["history_contract_version"] = PATIENT_LAB_HISTORY_CONTRACT
+        return result
+    except Exception as exc:
+        await session.rollback()
         _raise_ingestion_error(exc)
         raise

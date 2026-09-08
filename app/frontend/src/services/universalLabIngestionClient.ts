@@ -174,3 +174,16 @@ export async function ingestLabIntegration(
   });
   return parseResponse(response);
 }
+
+export async function evaluateSavedLabReport(
+  labReportId: string,
+): Promise<UniversalLabIngestionResponse> {
+  const response = await fetch(
+    `${API_BASE_URL}/lab-ingestion/reports/${encodeURIComponent(labReportId)}/evaluate`,
+    {
+      method: 'POST',
+      headers: authHeaders(),
+    },
+  );
+  return parseResponse(response);
+}
