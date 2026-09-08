@@ -23,7 +23,7 @@ _CLINICAL_MAX_OUTPUT_TOKENS = 3200
 @lru_cache(maxsize=4)
 def _client_for_key(api_key: str, timeout_seconds: float) -> AsyncOpenAI:
     """Reuse the provider connection pool instead of rebuilding it per request."""
-    return AsyncOpenAI(api_key=api_key, timeout=timeout_seconds)
+    return AsyncOpenAI(api_key=api_key, timeout=timeout_seconds, max_retries=0)
 
 
 _CLINICAL_SCHEMA: dict[str, Any] = {
