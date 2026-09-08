@@ -120,17 +120,17 @@ def _rows_for_clinical_service(
 def _native_trend_metrics(
     trends: Sequence[Mapping[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Expose only native-C++ longitudinal facts to the generative layer.
+    """Expose only real native-C++ longitudinal comparisons to generative AI.
 
-    Python-fallback trends remain visible in the API/history response but are not
-    injected into AI evidence, keeping the trust statement literal and auditable.
+    Python-fallback trends and NO_PREVIOUS_RESULT rows remain visible in the
+    API/history response but are not injected into AI evidence.
     """
     metrics: list[dict[str, Any]] = []
     for trend in trends:
         if str(trend.get("backend") or "") != "native_cpp":
             continue
         status = str(trend.get("trend_status") or "").upper()
-        if status not in {"UP", "DOWN", "STABLE", "NO_PREVIOUS_RESULT"}:
+        if status not in {"UP", "DOWN", "STABLE"}:
             continue
         name = str(trend.get("test") or trend.get("parameter_code") or "Laboratory trend")
         value = trend.get("percentage_difference")
