@@ -22,6 +22,7 @@ import PatientHistoryPage from './pages/PatientHistoryPage';
 import PatientRecordPage from './pages/PatientRecordPage';
 import RadiologyEvaluationPage from './pages/RadiologyEvaluationPage';
 import SendPage from './pages/SendPage';
+import UniversalLabIngestionPage from './pages/UniversalLabIngestionPage';
 import UserFeedbackPage from './pages/UserFeedbackPage';
 
 export const router = createHashRouter([
@@ -50,6 +51,7 @@ export const router = createHashRouter([
           { path: '/feedback', element: <UserFeedbackPage /> },
           { path: '/patients/demo', element: <PatientRecordPage /> },
           { path: '/patient-detail', element: <PatientRecordPage /> },
+          { path: '/lab-ingestion', element: <UniversalLabIngestionPage /> },
           { path: '/analysis/mock', element: <MockAnalysisPage /> },
           { path: '/case-import', element: <CombinedCaseWorkspacePage /> },
           { path: '/radiology', element: <RadiologyEvaluationPage /> },
