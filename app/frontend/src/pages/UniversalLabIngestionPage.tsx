@@ -1,9 +1,10 @@
-import { useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 
 import { getActivePatientId } from '../services/patientClient';
 import {
   evaluateSavedLabReport,
+  getLatestPatientLabReport,
   ingestLabFile,
   ingestLabIntegration,
   ingestManualLabs,
@@ -49,7 +50,7 @@ const SOURCES: SourceCard[] = [
     icon: '🇹🇷',
     title: 'e-Nabız PDF',
     short: 'e-Nabızdan dışa aktarılan PDF',
-    details: 'PDF doğrudan belge okuma katmanına gider, ardından C++ trust motorundan geçer.',
+    details: 'PDF önce yerel hızlı parser ile okunur, ardından C++ trust motorundan geçer.',
   },
   {
     id: 'file_upload',
@@ -77,21 +78,21 @@ const SOURCES: SourceCard[] = [
     icon: '⌨️',
     title: 'Manuel Giriş',
     short: 'Test adı, değer, birim ve referans',
-    details: 'Sayısal değerler elle girilir; değerler sessizce düzeltilmeden C++ trust katmanına gönderilir.',
+    details: 'Sayısal değerler elle girilir ve C++ trust katmanına gönderilir.',
   },
   {
     id: 'email_attachment',
     icon: '📎',
     title: 'E-posta Eki',
     short: 'Yetkilendirilmiş eki yükle',
-    details: 'Mailbox erişimi yapılmaz; yalnız senin seçtiğin e-posta eki işlenir.',
+    details: 'Mailbox erişimi yapılmaz; yalnızca seçilen ek işlenir.',
   },
   {
     id: 'integration',
     icon: '🔌',
     title: 'HL7 / FHIR / API',
     short: 'Yapılandırılmış entegrasyon verisi',
-    details: 'HL7 ORU metni, FHIR JSON veya REST JSON doğrudan canonical modele alınır.',
+    details: 'HL7 ORU metni, FHIR JSON veya REST JSON canonical modele alınır.',
   },
 ];
 
@@ -142,20 +143,6 @@ function normalizeLabName(value: unknown) {
   return (displayScalar(value) ?? '').toLocaleLowerCase('tr-TR');
 }
 
-function findTrustedRowForTrend(
-  trendTest: string | null | undefined,
-  trustedRows: TrustedLabRow[],
-): TrustedLabRow | undefined {
-  const target = normalizeLabName(trendTest);
-  if (!target) return undefined;
-
-  return trustedRows.find((row) =>
-    [row.display_name, row.canonical_name, row.raw_parameter_name].some(
-      (candidate) => normalizeLabName(candidate) === target,
-    ),
-  );
-}
-
 function resultStatus(row?: TrustedLabRow) {
   return (displayScalar(row?.result_status) ?? '').toUpperCase();
 }
@@ -163,6 +150,19 @@ function resultStatus(row?: TrustedLabRow) {
 function isAbnormalTrustedRow(row?: TrustedLabRow) {
   const status = resultStatus(row);
   return status === 'LOW' || status === 'HIGH';
+}
+
+function findTrustedRowForTrend(
+  trendTest: string | null | undefined,
+  trustedRows: TrustedLabRow[],
+): TrustedLabRow | undefined {
+  const target = normalizeLabName(trendTest);
+  if (!target) return undefined;
+  return trustedRows.find((row) =>
+    [row.display_name, row.canonical_name, row.raw_parameter_name].some(
+      (candidate) => normalizeLabName(candidate) === target,
+    ),
+  );
 }
 
 function abnormalResultStatus(row?: TrustedLabRow) {
@@ -189,18 +189,15 @@ function formatLabValue(value: unknown, unit: string | null) {
 
 function formatReferenceRange(row: TrustedLabRow | undefined, unit: string | null) {
   if (!row) return null;
-
   const referenceText = displayScalar(row.reference_text);
   if (referenceText) return referenceText;
 
   const minimum = displayScalar(row.reference_min ?? row.extracted_reference_min);
   const maximum = displayScalar(row.reference_max ?? row.extracted_reference_max);
   let range: string | null = null;
-
   if (minimum !== null && maximum !== null) range = `${minimum} – ${maximum}`;
   else if (minimum !== null) range = `≥ ${minimum}`;
   else if (maximum !== null) range = `≤ ${maximum}`;
-
   return range && unit ? `${range} ${unit}` : range;
 }
 
@@ -230,6 +227,7 @@ function buildTechnicalResult(result: UniversalLabIngestionResponse) {
     review_rows: _reviewRows,
     longitudinal_trends: _longitudinalTrends,
     clinical_assessment: _clinicalAssessment,
+    results: _legacyResults,
     ...technicalMetadata
   } = result;
 
@@ -258,6 +256,7 @@ export default function UniversalLabIngestionPage() {
   const [integrationType, setIntegrationType] = useState<LabIntegrationType>('hl7_oru');
   const [integrationPayload, setIntegrationPayload] = useState('');
   const [busy, setBusy] = useState(false);
+  const [restoring, setRestoring] = useState(false);
   const [evaluating, setEvaluating] = useState(false);
   const [error, setError] = useState('');
   const [evaluationError, setEvaluationError] = useState('');
@@ -268,12 +267,47 @@ export default function UniversalLabIngestionPage() {
     [selectedSource],
   );
 
+  useEffect(() => {
+    let cancelled = false;
+    if (!patientId) {
+      setResult(null);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    async function restoreLatest() {
+      setRestoring(true);
+      try {
+        const latest = await getLatestPatientLabReport(patientId as string);
+        if (!cancelled && latest) {
+          setResult(latest);
+          setError('');
+        }
+      } catch (restoreError) {
+        if (!cancelled) {
+          setError(
+            restoreError instanceof Error
+              ? restoreError.message
+              : 'Kayıtlı son laboratuvar sonucu yüklenemedi.',
+          );
+        }
+      } finally {
+        if (!cancelled) setRestoring(false);
+      }
+    }
+
+    void restoreLatest();
+    return () => {
+      cancelled = true;
+    };
+  }, [patientId]);
+
   function chooseSource(source: SourceId) {
     setSelectedSource(source);
     setFile(null);
     setError('');
     setEvaluationError('');
-    setResult(null);
   }
 
   function updateManualRow(id: number, patch: Partial<ManualRowDraft>) {
@@ -323,7 +357,6 @@ export default function UniversalLabIngestionPage() {
     setBusy(true);
     setError('');
     setEvaluationError('');
-    setResult(null);
 
     try {
       const options = {
@@ -334,11 +367,10 @@ export default function UniversalLabIngestionPage() {
 
       let response: UniversalLabIngestionResponse;
       if (selectedSource === 'manual') {
-        const age = optionalNumber(patientAge);
         response = await ingestManualLabs(
           {
             labs: buildManualPayload(),
-            patient_age: age,
+            patient_age: optionalNumber(patientAge),
             patient_sex: patientSex.trim() || null,
             report_date: reportDate || null,
             source_record_id: sourceRecordId.trim() || null,
@@ -360,9 +392,7 @@ export default function UniversalLabIngestionPage() {
       setResult(response);
     } catch (submitError) {
       setError(
-        submitError instanceof Error
-          ? submitError.message
-          : 'Laboratuvar verisi işlenemedi.',
+        submitError instanceof Error ? submitError.message : 'Laboratuvar verisi işlenemedi.',
       );
     } finally {
       setBusy(false);
@@ -370,9 +400,11 @@ export default function UniversalLabIngestionPage() {
   }
 
   async function evaluateFindings() {
-    const labReportId = result?.patient_history?.lab_report_id;
+    const labReportId = result?.patient_history?.lab_report_id ?? result?.lab_report_id;
     if (!labReportId) {
-      setEvaluationError('Bulguları değerlendirmek için raporun aktif hastaya kaydedilmiş olması gerekir.');
+      setEvaluationError(
+        'Bulguları değerlendirmek için raporun aktif hastaya kaydedilmiş olması gerekir.',
+      );
       return;
     }
 
@@ -402,10 +434,10 @@ export default function UniversalLabIngestionPage() {
     const trustedRow = findTrustedRowForTrend(trend.test, trustedRows);
     return isAbnormalTrustedRow(trustedRow);
   });
-  const hiddenNormalCount = Math.max(0, trends.length - abnormalTrends.length);
+  const hiddenNormalCount = Math.max(0, trustedRows.length - abnormalRows.length);
   const technicalResult = result ? buildTechnicalResult(result) : null;
-  const isSaved = Boolean(result?.patient_history);
-  const canEvaluate = Boolean(result?.patient_history?.lab_report_id);
+  const isSaved = Boolean(result?.patient_history?.lab_report_id ?? result?.lab_report_id);
+  const canEvaluate = isSaved;
 
   return (
     <div className="space-y-7">
@@ -414,19 +446,17 @@ export default function UniversalLabIngestionPage() {
           <p className="text-sm font-semibold uppercase tracking-wide text-cyan-700">
             Universal Lab Ingestion
           </p>
-          <h1 className="mt-2 text-3xl font-semibold text-slate-950">
-            Laboratuvar Verisi Ekle
-          </h1>
+          <h1 className="mt-2 text-3xl font-semibold text-slate-950">Laboratuvar Verisi Ekle</h1>
           <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600">
-            Yedi kaynaktan gelen laboratuvar verisi aynı canonical modele, C++ trust motoruna,
-            hasta geçmişine ve isteğe bağlı klinik AI katmanına bağlanır.
+            Laboratuvar verisi canonical modele, C++ trust motoruna ve aktif hastanın kalıcı
+            geçmişine bağlanır. Kaydedilmiş son rapor sayfaya geri döndüğünde otomatik açılır.
           </p>
         </div>
         <Link
-          to="/analysis/mock"
+          to="/case-evaluation"
           className="inline-flex w-fit rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
         >
-          Eski analiz / arşiv görünümü
+          Vaka özetine git
         </Link>
       </header>
 
@@ -439,17 +469,17 @@ export default function UniversalLabIngestionPage() {
       >
         {patientId ? (
           <>
-            <strong>✓ Aktif hasta bağlı.</strong> Bu giriş hasta geçmişine kaydedilecek ve varsa
-            önceki trusted sonuçlarla trend hesaplanacak.
+            <strong>✓ Aktif hasta bağlı.</strong> Yeni sonuçlar hasta geçmişine kalıcı olarak
+            kaydedilir ve varsa önceki trusted sonuçlarla seyir hesaplanır.
+            {restoring ? <span className="ml-2">Son kayıt yükleniyor…</span> : null}
           </>
         ) : (
           <>
-            <strong>Aktif hasta seçilmedi.</strong> Veriyi yine işleyebilirsin ancak geçmişe
-            kaydetmek ve trend görmek için önce{' '}
+            <strong>Aktif hasta seçilmedi.</strong> Geçmişe kaydetmek ve seyir görmek için önce{' '}
             <Link to="/patients/demo" className="font-bold underline">
               Hasta Bilgileri
             </Link>{' '}
-            bölümünden hasta kaydı oluştur.
+            bölümünden hasta seç.
           </>
         )}
       </div>
@@ -514,7 +544,6 @@ export default function UniversalLabIngestionPage() {
                     value={patientAge}
                     onChange={(event) => setPatientAge(event.target.value)}
                     className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                    placeholder="23"
                   />
                 </label>
                 <label className="text-sm font-semibold text-slate-700">
@@ -523,7 +552,6 @@ export default function UniversalLabIngestionPage() {
                     value={patientSex}
                     onChange={(event) => setPatientSex(event.target.value)}
                     className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                    placeholder="M / F"
                   />
                 </label>
               </div>
@@ -547,53 +575,49 @@ export default function UniversalLabIngestionPage() {
                         value={row.name}
                         onChange={(event) => updateManualRow(row.id, { name: event.target.value })}
                         className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-                        placeholder="Test adı · HbA1c"
+                        placeholder="Test adı"
                       />
                       <input
                         value={row.value}
                         onChange={(event) => updateManualRow(row.id, { value: event.target.value })}
                         className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
                         inputMode="decimal"
-                        placeholder="Değer · 8.1"
+                        placeholder="Değer"
                       />
                       <input
                         value={row.unit}
                         onChange={(event) => updateManualRow(row.id, { unit: event.target.value })}
                         className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-                        placeholder="Birim · %"
+                        placeholder="Birim"
                       />
                       <input
                         type="date"
                         value={row.measuredAt}
                         onChange={(event) => updateManualRow(row.id, { measuredAt: event.target.value })}
                         className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-                        title="Ölçüm tarihi"
                       />
                       <input
                         value={row.refMin}
                         onChange={(event) => updateManualRow(row.id, { refMin: event.target.value })}
                         className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-                        inputMode="decimal"
                         placeholder="Referans min"
                       />
                       <input
                         value={row.refMax}
                         onChange={(event) => updateManualRow(row.id, { refMax: event.target.value })}
                         className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-                        inputMode="decimal"
                         placeholder="Referans max"
                       />
                       <input
                         value={row.refText}
                         onChange={(event) => updateManualRow(row.id, { refText: event.target.value })}
                         className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm md:col-span-2"
-                        placeholder="Referans metni · 4.0–6.5"
+                        placeholder="Referans metni"
                       />
                     </div>
                   </div>
                 ))}
               </div>
-
               <button
                 type="button"
                 onClick={addManualRow}
@@ -616,20 +640,13 @@ export default function UniversalLabIngestionPage() {
                   <option value="rest">REST / API JSON</option>
                 </select>
               </label>
-              <label className="block text-sm font-semibold text-slate-700">
-                Payload
-                <textarea
-                  rows={12}
-                  value={integrationPayload}
-                  onChange={(event) => setIntegrationPayload(event.target.value)}
-                  className="mt-1 block w-full rounded-xl border border-slate-300 bg-slate-950 p-4 font-mono text-xs leading-6 text-slate-100"
-                  placeholder={
-                    integrationType === 'hl7_oru'
-                      ? 'MSH|^~\\&|...\nPID|...\nOBR|...\nOBX|1|NM|4548-4^HbA1c^LN||8.1|%|4.0-6.5'
-                      : '{\n  "resourceType": "Observation"\n}'
-                  }
-                />
-              </label>
+              <textarea
+                rows={12}
+                value={integrationPayload}
+                onChange={(event) => setIntegrationPayload(event.target.value)}
+                className="block w-full rounded-xl border border-slate-300 bg-slate-950 p-4 font-mono text-xs leading-6 text-slate-100"
+                placeholder="HL7 metni veya FHIR/REST JSON"
+              />
             </div>
           ) : (
             <div className="rounded-xl border border-dashed border-blue-300 bg-blue-50/40 p-5">
@@ -693,11 +710,14 @@ export default function UniversalLabIngestionPage() {
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <p className="text-xs font-bold uppercase tracking-wide text-emerald-700">
-                İşlem tamamlandı
+                {restoring ? 'Kayıt yükleniyor' : 'Sonuç hazır'}
               </p>
               <h2 className="mt-1 text-xl font-semibold text-slate-950">
                 {sourceLabel(result.source_type)} sonucu
               </h2>
+              {result.report_date ? (
+                <p className="mt-1 text-xs text-slate-500">Rapor tarihi: {result.report_date}</p>
+              ) : null}
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <span
@@ -714,10 +734,8 @@ export default function UniversalLabIngestionPage() {
                 disabled
                 title={
                   isSaved
-                    ? result.patient_history?.lab_report_id
-                      ? `Rapor ID: ${result.patient_history.lab_report_id}`
-                      : 'Hasta geçmişine kayıt edildi.'
-                    : 'Kayıt için önce aktif hasta seçmelisin.'
+                    ? `Rapor ID: ${result.patient_history?.lab_report_id ?? result.lab_report_id ?? ''}`
+                    : 'Kaydetmek için aktif hasta gerekir.'
                 }
                 className={`rounded-lg px-4 py-2 text-sm font-semibold ${
                   isSaved
@@ -725,17 +743,12 @@ export default function UniversalLabIngestionPage() {
                     : 'cursor-not-allowed border border-slate-300 bg-slate-100 text-slate-400'
                 }`}
               >
-                {isSaved ? '✓ Kayıt Edildi' : 'Kayıt Et'}
+                {isSaved ? '✓ Kaydedildi' : 'Kaydet'}
               </button>
               <button
                 type="button"
-                onClick={evaluateFindings}
+                onClick={() => void evaluateFindings()}
                 disabled={!canEvaluate || evaluating}
-                title={
-                  canEvaluate
-                    ? 'Kaydedilmiş trusted laboratuvar bulgularını klinik AI ile değerlendir.'
-                    : 'Bulguları değerlendirmek için önce aktif hastaya kayıt gerekir.'
-                }
                 className="rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500"
               >
                 {evaluating ? 'Değerlendiriliyor…' : 'Bulguları Değerlendir'}
@@ -768,11 +781,11 @@ export default function UniversalLabIngestionPage() {
             </div>
           </div>
 
-          {result.patient_history ? (
+          {isSaved ? (
             <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm leading-6 text-emerald-900">
-              <strong>✓ Hasta geçmişine kayıt edildi.</strong>{' '}
-              {result.patient_history.lab_report_id
-                ? `Rapor ID: ${result.patient_history.lab_report_id}`
+              <strong>✓ Hasta geçmişinde kalıcı olarak kayıtlı.</strong>{' '}
+              {result.patient_history?.lab_report_id ?? result.lab_report_id
+                ? `Rapor ID: ${result.patient_history?.lab_report_id ?? result.lab_report_id}`
                 : ''}
             </div>
           ) : null}
@@ -780,26 +793,32 @@ export default function UniversalLabIngestionPage() {
           {result.clinical_assessment?.headline || result.clinical_assessment?.overview ? (
             <div className="rounded-xl border border-blue-200 bg-blue-50 p-4">
               <p className="text-xs font-bold uppercase tracking-wide text-blue-700">
-                Bulguların değerlendirmesi
+                Bulguların klinik değerlendirmesi
               </p>
               {result.clinical_assessment.headline ? (
-                <h3 className="mt-2 font-semibold text-blue-950">{result.clinical_assessment.headline}</h3>
+                <h3 className="mt-2 font-semibold text-blue-950">
+                  {result.clinical_assessment.headline}
+                </h3>
               ) : null}
               {result.clinical_assessment.overview ? (
-                <p className="mt-2 text-sm leading-6 text-blue-900">{result.clinical_assessment.overview}</p>
+                <p className="mt-2 text-sm leading-6 text-blue-900">
+                  {result.clinical_assessment.overview}
+                </p>
               ) : null}
             </div>
           ) : (
             <div className="rounded-xl border border-blue-100 bg-blue-50/50 p-4 text-sm leading-6 text-blue-900">
-              Klinik değerlendirme henüz çalıştırılmadı. İstersen <strong>Bulguları Değerlendir</strong>{' '}
-              butonuyla kaydedilmiş raporu ayrıca değerlendirebilirsin.
+              Klinik değerlendirme henüz çalıştırılmadı. <strong>Bulguları Değerlendir</strong>{' '}
+              butonu kaydedilmiş trusted sonuçları ayrıca değerlendirir.
             </div>
           )}
 
-          {abnormalTrends.length > 0 ? (
+          {abnormalRows.length > 0 ? (
             <div>
               <div className="flex flex-wrap items-end justify-between gap-2">
-                <h3 className="text-sm font-semibold text-slate-900">Anormal laboratuvar sonuçları ve seyir</h3>
+                <h3 className="text-sm font-semibold text-slate-900">
+                  Anormal laboratuvar sonuçları ve seyir
+                </h3>
                 {hiddenNormalCount > 0 ? (
                   <span className="text-xs font-medium text-slate-500">
                     {hiddenNormalCount} normal sonuç gizlendi
@@ -807,26 +826,33 @@ export default function UniversalLabIngestionPage() {
                 ) : null}
               </div>
               <div className="mt-3 grid gap-3 md:grid-cols-2">
-                {abnormalTrends.map((trend, index) => {
-                  const trustedRow = findTrustedRowForTrend(trend.test, trustedRows);
+                {abnormalRows.map((trustedRow, index) => {
+                  const name =
+                    displayScalar(trustedRow.display_name) ??
+                    displayScalar(trustedRow.canonical_name) ??
+                    displayScalar(trustedRow.raw_parameter_name) ??
+                    'Laboratuvar sonucu';
+                  const trend = trends.find(
+                    (item) => normalizeLabName(item.test) === normalizeLabName(name),
+                  );
                   const abnormalStatus = abnormalResultStatus(trustedRow);
-                  const unit = displayScalar(trustedRow?.unit);
+                  const unit = displayScalar(trustedRow.unit);
                   const referenceRange = formatReferenceRange(trustedRow, unit);
+                  const currentValue =
+                    trend?.current_value ?? trustedRow.normalized_value ?? trustedRow.raw_value;
                   const hasPreviousValue =
-                    trend.previous_value !== null && trend.previous_value !== undefined;
+                    trend?.previous_value !== null && trend?.previous_value !== undefined;
 
                   return (
                     <div
-                      key={`${trend.parameter_code ?? trend.test ?? 'trend'}-${index}`}
+                      key={`${displayScalar(trustedRow.parameter_code) ?? name}-${index}`}
                       className="rounded-xl border border-slate-200 bg-slate-50 p-4"
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div>
-                          <p className="font-semibold text-slate-900">
-                            {trend.test || trend.parameter_code || 'Laboratuvar sonucu'}
-                          </p>
+                          <p className="font-semibold text-slate-900">{name}</p>
                           <p className="mt-1 text-lg font-bold text-slate-950">
-                            {formatLabValue(trend.current_value, unit)}
+                            {formatLabValue(currentValue, unit)}
                           </p>
                         </div>
                         {abnormalStatus ? (
@@ -837,22 +863,20 @@ export default function UniversalLabIngestionPage() {
                           </span>
                         ) : null}
                       </div>
-
                       {referenceRange ? (
                         <p className="mt-2 text-xs leading-5 text-slate-500">
                           Referans: {referenceRange}
                         </p>
                       ) : null}
-
                       <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
                         <span className="rounded-full bg-white px-2.5 py-1 font-bold text-slate-700 ring-1 ring-slate-200">
-                          {formatTrendStatus(trend.trend_status)}
+                          {formatTrendStatus(trend?.trend_status)}
                         </span>
                         {hasPreviousValue ? (
                           <span className="text-slate-500">
-                            Önceki: {formatLabValue(trend.previous_value, unit)}
-                            {trend.percentage_difference !== null &&
-                            trend.percentage_difference !== undefined
+                            Önceki: {formatLabValue(trend?.previous_value, unit)}
+                            {trend?.percentage_difference !== null &&
+                            trend?.percentage_difference !== undefined
                               ? ` · ${trend.percentage_difference > 0 ? '+' : ''}${trend.percentage_difference.toFixed(2)}%`
                               : ''}
                           </span>

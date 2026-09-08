@@ -21,6 +21,7 @@ import {
   getAnalysisRunResults,
   LAST_ANALYSIS_RUN_ID_KEY,
   type ClinicalIntakeInput,
+  type LabAnalysisResult,
 } from '../services/labAnalysisClient';
 import {
   evaluateMultisourceCase,
@@ -36,6 +37,7 @@ import {
   deleteSourceOnlyEvaluationsForPatient,
   getSourceOnlyEvaluationsForPatient,
 } from '../services/sourceOnlyEvaluationClient';
+import { getLatestPatientLabReport } from '../services/universalLabIngestionClient';
 
 const ACTIVE_CLINICAL_INTAKE_KEY = 'medicore:activeClinicalIntake';
 const CASE_SUMMARY_UPDATED_EVENT = 'medicore:case-summary-updated';
@@ -213,6 +215,7 @@ export default function CaseEvaluationPage() {
   const [clinicalIntake, setClinicalIntake] = useState<ClinicalIntakeInput | null>(null);
   const [radiologyReports, setRadiologyReports] = useState<RadiologyReport[]>([]);
   const [brain, setBrain] = useState<ClinicalBrainResult | null>(null);
+  const [usingPersistedLab, setUsingPersistedLab] = useState(false);
   const [loading, setLoading] = useState(true);
   const [evaluating, setEvaluating] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -230,11 +233,15 @@ export default function CaseEvaluationPage() {
       setLoading(true);
       setError('');
       setBrain(null);
+      setUsingPersistedLab(false);
 
       const intake = readClinicalIntake();
       if (!cancelled) setClinicalIntake(intake);
 
-      const [labsResult, reportsResult] = await Promise.allSettled([
+      const [persistedLabResult, legacyLabsResult, reportsResult] = await Promise.allSettled([
+        activePatientId
+          ? getLatestPatientLabReport(activePatientId)
+          : Promise.resolve(null),
         analysisRunId
           ? getAnalysisRunResults(analysisRunId)
           : Promise.resolve([]),
@@ -245,7 +252,15 @@ export default function CaseEvaluationPage() {
 
       if (cancelled) return;
 
-      const labs = labsResult.status === 'fulfilled' ? labsResult.value : [];
+      const persistedLabs =
+        persistedLabResult.status === 'fulfilled' && persistedLabResult.value?.results
+          ? (persistedLabResult.value.results as unknown as LabAnalysisResult[])
+          : [];
+      const legacyLabs = legacyLabsResult.status === 'fulfilled' ? legacyLabsResult.value : [];
+      const usePersisted = persistedLabs.length > 0;
+      const labs = usePersisted ? persistedLabs : legacyLabs;
+      setUsingPersistedLab(usePersisted);
+
       const reports = reportsResult.status === 'fulfilled' ? reportsResult.value : [];
       setRadiologyReports(reports);
 
@@ -277,6 +292,7 @@ export default function CaseEvaluationPage() {
       try {
         if (
           analysisRunId &&
+          !usePersisted &&
           brainResult?.source_availability.laboratory === true
         ) {
           hypotheses = await getClinicalHypothesesForAnalysisRun(analysisRunId);
@@ -289,7 +305,7 @@ export default function CaseEvaluationPage() {
       if (cancelled) return;
       setStoredHypotheses(hypotheses);
 
-      const failures = [labsResult, reportsResult]
+      const failures = [persistedLabResult, legacyLabsResult, reportsResult]
         .filter(
           (entry): entry is PromiseRejectedResult => entry.status === 'rejected',
         )
@@ -393,7 +409,7 @@ export default function CaseEvaluationPage() {
 
   const patientId =
     activePatientId ?? latestUltrasound?.patient_id ?? radiologyReports[0]?.patient_id ?? null;
-  const evaluationAnalysisRunId = labReady ? analysisRunId : null;
+  const evaluationAnalysisRunId = labReady && !usingPersistedLab ? analysisRunId : null;
   const canEvaluate =
     availableSourceCount > 0 && Boolean(evaluationAnalysisRunId || patientId);
 
@@ -528,7 +544,7 @@ export default function CaseEvaluationPage() {
 
       <div className="grid gap-3 md:grid-cols-3">
         <SourceStatus title="Hasta bilgileri" ready={clinicalReady} link="/patients/demo" />
-        <SourceStatus title="Laboratuvar" ready={labReady} link="/analysis/mock" />
+        <SourceStatus title="Laboratuvar" ready={labReady} link="/lab-ingestion" />
         <SourceStatus title="Radyoloji / Görüntüleme" ready={radiologyReady} link="/radiology" />
       </div>
 
