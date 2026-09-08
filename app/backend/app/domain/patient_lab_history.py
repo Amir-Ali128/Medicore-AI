@@ -12,6 +12,7 @@ never corrected, and only trusted rows are eligible for longitudinal AI evidence
 from __future__ import annotations
 
 import re
+import unicodedata
 import uuid
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
@@ -21,7 +22,6 @@ from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.enums import ResultStatus, TrendStatus, UserRole
-from app.domain.native_lab_engine import native_lab_deterministic_available
 from app.domain.trend_engine import TrendEngine
 from app.infrastructure.database.models.lab_report import LabReport
 from app.infrastructure.database.models.lab_result import LabResult
@@ -33,6 +33,23 @@ from app.schemas.trend import TrendComparisonInput
 
 PATIENT_LAB_HISTORY_CONTRACT = "medicore-patient-lab-history-v1"
 LONGITUDINAL_TREND_CONTRACT = "medicore-longitudinal-trend-v1"
+
+_TURKISH_ASCII_TRANSLATION = str.maketrans(
+    {
+        "ı": "i",
+        "İ": "I",
+        "ğ": "g",
+        "Ğ": "G",
+        "ş": "s",
+        "Ş": "S",
+        "ç": "c",
+        "Ç": "C",
+        "ö": "o",
+        "Ö": "O",
+        "ü": "u",
+        "Ü": "U",
+    }
+)
 
 
 def _json_safe(value: Any) -> Any:
@@ -74,6 +91,12 @@ def _as_date(value: Any) -> date | None:
         return None
 
 
+def _fold_identity_name(value: str) -> str:
+    translated = value.translate(_TURKISH_ASCII_TRANSLATION).casefold()
+    decomposed = unicodedata.normalize("NFKD", translated)
+    return decomposed.encode("ascii", "ignore").decode("ascii")
+
+
 def _identity_code(row: Mapping[str, Any]) -> str:
     """Stable non-PII identity used to join repeated measurements over time."""
     loinc = str(row.get("loinc_code") or "").strip()
@@ -85,8 +108,9 @@ def _identity_code(row: Mapping[str, Any]) -> str:
         or row.get("display_name")
         or row.get("raw_parameter_name")
         or "unknown"
-    ).strip().casefold()
-    normalized = re.sub(r"[^a-z0-9]+", "_", name).strip("_") or "unknown"
+    ).strip()
+    folded = _fold_identity_name(name)
+    normalized = re.sub(r"[^a-z0-9]+", "_", folded).strip("_") or "unknown"
     return f"NAME:{normalized}"[:64]
 
 
@@ -134,10 +158,13 @@ async def build_longitudinal_trends(
     patient: Patient,
     trust_envelope: Mapping[str, Any],
 ) -> list[dict[str, Any]]:
-    """Compare each current trusted row with the latest prior trusted measurement."""
+    """Compare each current trusted row with the latest prior trusted measurement.
+
+    A current measurement without a trustworthy date never consumes a historical row;
+    without temporal ordering there is no defensible meaning of "previous".
+    """
     repository = LabResultRepository(session)
     engine = TrendEngine()
-    backend = "native_cpp" if native_lab_deterministic_available() else "python_fallback"
     default_date = _as_date(trust_envelope.get("report_date"))
 
     trends: list[dict[str, Any]] = []
@@ -151,15 +178,18 @@ async def build_longitudinal_trends(
         canonical_name = str(source.get("canonical_name") or "").strip() or None
         raw_name = str(source.get("raw_parameter_name") or "").strip() or None
 
-        previous = await repository.latest_previous_match(
-            patient.id,
-            parameter_code=identity_code,
-            canonical_name=canonical_name,
-            raw_parameter_name=raw_name,
-            before_date=measured_at,
-            trusted_only=True,
-        )
-        trend = engine.compare(
+        previous = None
+        if measured_at is not None:
+            previous = await repository.latest_previous_match(
+                patient.id,
+                parameter_code=identity_code,
+                canonical_name=canonical_name,
+                raw_parameter_name=raw_name,
+                before_date=measured_at,
+                trusted_only=True,
+            )
+
+        trend, backend = engine.compare_with_backend(
             TrendComparisonInput(
                 parameter_id=None,
                 parameter_code=identity_code,
