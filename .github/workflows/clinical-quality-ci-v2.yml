@@ -56,6 +56,7 @@ jobs:
             tests/test_radiology_image_review.py \
             tests/test_openai_radiology_second_reader.py \
             tests/test_openai_lab_extraction_service.py \
+            tests/test_enabiz_table_fastpath.py \
             tests/test_openai_lab_clinical_service.py \
             tests/test_openai_case_document_service.py \
             tests/test_gemini_radiology_third_reader.py \

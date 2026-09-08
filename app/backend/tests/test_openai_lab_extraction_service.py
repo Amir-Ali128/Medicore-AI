@@ -48,11 +48,14 @@ def test_batch_images_are_sent_in_one_stateless_structured_request(monkeypatch) 
             return SimpleNamespace(output_text=json.dumps(_payload()))
 
     class FakeClient:
-        def __init__(self, *, api_key):
+        def __init__(self, *, api_key, timeout=None, max_retries=None):
             captured["api_key"] = api_key
+            captured["client_timeout"] = timeout
+            captured["client_max_retries"] = max_retries
             self.responses = FakeResponses()
 
     monkeypatch.setattr(lab_reader, "AsyncOpenAI", FakeClient)
+    lab_reader._client_for_key.cache_clear()
     monkeypatch.setattr(
         lab_reader,
         "get_settings",
@@ -77,6 +80,8 @@ def test_batch_images_are_sent_in_one_stateless_structured_request(monkeypatch) 
     assert captured["store"] is False
     assert captured["text"]["format"]["type"] == "json_schema"
     assert captured["text"]["format"]["strict"] is True
+    assert captured["client_timeout"] == lab_reader._EXTRACTION_TIMEOUT_SECONDS
+    assert captured["client_max_retries"] == 0
 
     request = captured["input"]
     assert isinstance(request, list)
@@ -97,10 +102,13 @@ def test_pdf_is_sent_directly_as_input_file(monkeypatch) -> None:
             return SimpleNamespace(output_text=json.dumps(_payload()))
 
     class FakeClient:
-        def __init__(self, *, api_key):
+        def __init__(self, *, api_key, timeout=None, max_retries=None):
+            captured["client_timeout"] = timeout
+            captured["client_max_retries"] = max_retries
             self.responses = FakeResponses()
 
     monkeypatch.setattr(lab_reader, "AsyncOpenAI", FakeClient)
+    lab_reader._client_for_key.cache_clear()
     monkeypatch.setattr(
         lab_reader,
         "get_settings",
@@ -123,6 +131,8 @@ def test_pdf_is_sent_directly_as_input_file(monkeypatch) -> None:
     file_part = next(part for part in parts if part["type"] == "input_file")
     assert file_part["filename"] == "labs.pdf"
     assert file_part["file_data"].startswith("data:application/pdf;base64,")
+    assert captured["client_timeout"] == lab_reader._EXTRACTION_TIMEOUT_SECONDS
+    assert captured["client_max_retries"] == 0
 
 
 def test_missing_api_key_fails_before_provider_call(monkeypatch) -> None:
