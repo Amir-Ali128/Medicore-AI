@@ -23,6 +23,7 @@ from app.api.routes import (
     lab_pdf_system_extract_runtime,
     lab_reports,
     lab_results,
+    patient_lab_history,
     patient_timeline,
     patients,
     radiology_image_review,
@@ -65,14 +66,15 @@ api_router.include_router(analytics.router)
 api_router.include_router(ai_cost_analytics.router)
 api_router.include_router(feedback.router)
 api_router.include_router(patients.router)
+api_router.include_router(patient_lab_history.router)
 # Stable, unique endpoint used by the frontend for PDF-first parsing.
 api_router.include_router(lab_pdf_direct_alias.router)
 # Keep /lab-analysis/upload direct-first for backwards compatibility.
 api_router.include_router(lab_pdf_direct_upload.router)
 api_router.include_router(lab_pdf_system_extract.router)
 api_router.include_router(lab_analysis.router)
-# New seven-source gateway emits only the canonical lab contract. Native C++ and
-# clinical AI remain downstream so all sources share one trust boundary.
+# Seven-source gateway: canonical -> native C++ trust -> optional patient history,
+# longitudinal native trends and clinical AI.
 api_router.include_router(lab_ingestion.router)
 api_router.include_router(lab_manual_entry.router)
 api_router.include_router(combined_case_import.router)

@@ -22,10 +22,23 @@ class TrendEngine:
     """Pure service: describes numeric movement, nothing more."""
 
     def compare(self, data: TrendComparisonInput) -> TrendResult:
+        result, _backend = self.compare_with_backend(data)
+        return result
+
+    def compare_with_backend(
+        self,
+        data: TrendComparisonInput,
+    ) -> tuple[TrendResult, str]:
+        """Return the result plus the backend that actually produced it.
+
+        This distinction matters at the AI trust boundary: the native extension may
+        be installed but an individual native call can still fail closed and fall back
+        to the behavior-compatible Python implementation.
+        """
         native = self._compare_native(data)
         if native is not None:
-            return native
-        return self._compare_python(data)
+            return native, "native_cpp"
+        return self._compare_python(data), "python_fallback"
 
     def _compare_native(self, data: TrendComparisonInput) -> TrendResult | None:
         try:
