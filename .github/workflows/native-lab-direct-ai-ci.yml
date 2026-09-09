@@ -1,0 +1,93 @@
+name: Native Lab Direct AI CI
+
+on:
+  push:
+    branches:
+      - feature/native-lab-direct-ai-v1
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  native-lab-direct-ai:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++ pybind11-dev libcurl4-openssl-dev
+
+      - name: Configure native lab with direct AI HTTP
+        run: >-
+          cmake -S native/lab -B native/lab/build-direct-ai
+          -DCMAKE_BUILD_TYPE=Release
+          -DMEDICORE_ENABLE_AI_HTTP=ON
+
+      - name: Build native lab direct AI module
+        run: cmake --build native/lab/build-direct-ai --config Release --parallel 2
+
+      - name: Run native lab tests
+        run: ctest --test-dir native/lab/build-direct-ai --output-on-failure
+
+      - name: Verify HTTP transport is compiled
+        run: |
+          python3 - <<'PY'
+          import sys
+          sys.path.insert(0, "native/lab/build-direct-ai")
+          import medicore_lab_ai
+
+          assert medicore_lab_ai.AI_DISPATCH_VERSION == "medicore-lab-ai-dispatch-v1"
+          assert medicore_lab_ai.HTTP_AVAILABLE is True
+
+          request = medicore_lab_ai.build_request(
+              [{
+                  "raw_parameter_name": "Glucose",
+                  "canonical_name": "Glucose",
+                  "raw_value": "105",
+                  "normalized_value": 105.0,
+                  "unit": "mg/dL",
+                  "reference_min": 70.0,
+                  "reference_max": 100.0,
+                  "reference_text": "70-100",
+                  "reference_type": "range",
+                  "confidence": 0.99,
+              }],
+              77,
+              "female",
+              "gpt-test",
+              1200,
+          )
+          assert '"test":"Glucose"' in request
+          assert '"result_status"' not in request
+          print("Native lab direct AI HTTP module compiled and request contract verified")
+          PY
+
+  python-bridge-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app/backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: app/backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest
+
+      - name: Run direct AI bridge tests
+        run: PYTHONPATH=. python -m pytest -q tests/test_native_lab_direct_ai.py
