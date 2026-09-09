@@ -7,11 +7,15 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(MEDICORE_ENABLE_SANITIZERS "Enable ASan/UBSan for native lab targets" OFF)
 option(MEDICORE_ENABLE_FUZZING "Build libFuzzer targets (Clang only)" OFF)
-option(MEDICORE_ENABLE_AI_HTTP "Enable direct HTTPS dispatch from native lab C++ to AI provider" OFF)
+option(MEDICORE_ENABLE_AI_HTTP "Enable direct HTTPS dispatch from native lab C++ to AI provider" ON)
 
 find_package(pybind11 CONFIG REQUIRED)
 if(MEDICORE_ENABLE_AI_HTTP)
-    find_package(CURL REQUIRED)
+    find_package(CURL QUIET)
+    if(NOT CURL_FOUND)
+        message(WARNING "libcurl was not found; native lab direct AI HTTP transport will be disabled")
+        set(MEDICORE_ENABLE_AI_HTTP OFF)
+    endif()
 endif()
 
 add_library(
@@ -35,8 +39,7 @@ if(MEDICORE_ENABLE_AI_HTTP)
     target_link_libraries(medicore_lab_core PUBLIC CURL::libcurl)
 endif()
 
-if(MEDICORE_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-    target_compile_options(medicore_lab_core PUBLIC -fno-omit-frame-pointer -fsanitize=address,undefined)
+if(MEDICORE_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")n    target_compile_options(medicore_lab_core PUBLIC -fno-omit-frame-pointer -fsanitize=address,undefined)
     target_link_options(medicore_lab_core PUBLIC -fno-omit-frame-pointer -fsanitize=address,undefined)
 endif()
 
