@@ -7,8 +7,12 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(MEDICORE_ENABLE_SANITIZERS "Enable ASan/UBSan for native lab targets" OFF)
 option(MEDICORE_ENABLE_FUZZING "Build libFuzzer targets (Clang only)" OFF)
+option(MEDICORE_ENABLE_AI_HTTP "Enable direct HTTPS dispatch from native lab C++ to AI provider" OFF)
 
 find_package(pybind11 CONFIG REQUIRED)
+if(MEDICORE_ENABLE_AI_HTTP)
+    find_package(CURL REQUIRED)
+endif()
 
 add_library(
     medicore_lab_core
@@ -17,6 +21,7 @@ add_library(
     src/deterministic_core.cpp
     src/lab_extensions.cpp
     src/clinical_metrics.cpp
+    src/ai_dispatch.cpp
 )
 set_target_properties(medicore_lab_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(
@@ -24,6 +29,11 @@ target_include_directories(
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
+
+if(MEDICORE_ENABLE_AI_HTTP)
+    target_compile_definitions(medicore_lab_core PUBLIC MEDICORE_ENABLE_AI_HTTP=1)
+    target_link_libraries(medicore_lab_core PUBLIC CURL::libcurl)
+endif()
 
 if(MEDICORE_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(medicore_lab_core PUBLIC -fno-omit-frame-pointer -fsanitize=address,undefined)
@@ -38,8 +48,12 @@ pybind11_add_module(medicore_lab_ext src/extensions_bindings.cpp)
 target_link_libraries(medicore_lab_ext PRIVATE medicore_lab_core)
 target_compile_definitions(medicore_lab_ext PRIVATE MEDICORE_LAB_EXT_VERSION="1.0.0")
 
+pybind11_add_module(medicore_lab_ai src/ai_bindings.cpp)
+target_link_libraries(medicore_lab_ai PRIVATE medicore_lab_core)
+target_compile_definitions(medicore_lab_ai PRIVATE MEDICORE_LAB_AI_VERSION="1.0.0")
+
 install(
-    TARGETS medicore_lab medicore_lab_ext
+    TARGETS medicore_lab medicore_lab_ext medicore_lab_ai
     LIBRARY DESTINATION .
     RUNTIME DESTINATION .
 )
@@ -56,6 +70,10 @@ add_test(NAME medicore_lab_deterministic COMMAND medicore_lab_deterministic_test
 add_executable(medicore_lab_extensions_tests tests/test_lab_extensions.cpp)
 target_link_libraries(medicore_lab_extensions_tests PRIVATE medicore_lab_core)
 add_test(NAME medicore_lab_extensions COMMAND medicore_lab_extensions_tests)
+
+add_executable(medicore_lab_ai_dispatch_tests tests/test_ai_dispatch.cpp)
+target_link_libraries(medicore_lab_ai_dispatch_tests PRIVATE medicore_lab_core)
+add_test(NAME medicore_lab_ai_dispatch COMMAND medicore_lab_ai_dispatch_tests)
 
 if(MEDICORE_ENABLE_FUZZING)
     if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
