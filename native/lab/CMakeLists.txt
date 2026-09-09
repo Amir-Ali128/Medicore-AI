@@ -39,7 +39,8 @@ if(MEDICORE_ENABLE_AI_HTTP)
     target_link_libraries(medicore_lab_core PUBLIC CURL::libcurl)
 endif()
 
-if(MEDICORE_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")n    target_compile_options(medicore_lab_core PUBLIC -fno-omit-frame-pointer -fsanitize=address,undefined)
+if(MEDICORE_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(medicore_lab_core PUBLIC -fno-omit-frame-pointer -fsanitize=address,undefined)
     target_link_options(medicore_lab_core PUBLIC -fno-omit-frame-pointer -fsanitize=address,undefined)
 endif()
 
