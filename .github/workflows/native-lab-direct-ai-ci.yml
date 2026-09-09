@@ -35,9 +35,10 @@ jobs:
       - name: Run native lab tests
         run: ctest --test-dir native/lab/build-direct-ai --output-on-failure
 
-      - name: Verify HTTP transport is compiled
+      - name: Verify HTTP transport and request contract
         run: |
           python3 - <<'PY'
+          import json
           import sys
           sys.path.insert(0, "native/lab/build-direct-ai")
           import medicore_lab_ai
@@ -63,9 +64,24 @@ jobs:
               "gpt-test",
               1200,
           )
-          assert '"test":"Glucose"' in request
-          assert '"result_status"' not in request
-          print("Native lab direct AI HTTP module compiled and request contract verified")
+
+          outer = json.loads(request)
+          assert outer["model"] == "gpt-test"
+          assert outer["max_output_tokens"] == 1200
+          assert outer["text"]["format"]["type"] == "json_schema"
+
+          inner = json.loads(outer["input"][0]["content"][0]["text"])
+          assert inner["patient_context"] == {"age": 77, "sex": "female"}
+          assert len(inner["labs"]) == 1
+          row = inner["labs"][0]
+          assert row["test"] == "Glucose"
+          assert row["value"] == 105.0
+          assert row["reference_min"] == 70.0
+          assert row["reference_max"] == 100.0
+          assert "result_status" not in row
+          assert inner["policy"]["send_all_rows"] is True
+          assert inner["policy"]["ai_classifies_each_row"] is True
+          print("Native lab direct AI HTTP module and nested request contract verified")
           PY
 
   python-bridge-tests:
