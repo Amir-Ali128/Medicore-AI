@@ -186,6 +186,29 @@ class StructuredLabResultOutput(BaseModel):
     classification_confidence: float = 0.0
     trend_confidence: float = 0.0
 
+    @field_validator(
+        "normalized_value",
+        "reference_min",
+        "reference_max",
+        "previous_value",
+        "absolute_difference",
+        "percentage_difference",
+        mode="before",
+    )
+    @classmethod
+    def normalize_blank_optional_numeric_values(cls, value: object) -> object:
+        """Treat legacy empty-string numeric fields as missing values.
+
+        The persisted patient lab-history endpoint intentionally preserves a
+        backward-compatible UI shape. Rows without a numeric result are emitted
+        as an empty string by older snapshots; Clinical Brain accepts those rows
+        as missing numeric evidence instead of rejecting the whole request with
+        HTTP 422.
+        """
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
 
 class AnalysisCounts(BaseModel):
     model_config = ConfigDict(frozen=True)
