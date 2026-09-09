@@ -5,6 +5,7 @@ import FrontendTurkishLocalizer from '../components/FrontendTurkishLocalizer';
 import NewRecordTerminology from '../components/NewRecordTerminology';
 import PatientPersistenceBridge from '../components/PatientPersistenceBridge';
 import RadiologyTerminologyLocalizer from '../components/RadiologyTerminologyLocalizer';
+import UserFacingTerminologySimplifier from '../components/UserFacingTerminologySimplifier';
 import WorkflowViewSimplifier from '../components/WorkflowViewSimplifier';
 import { getAuthenticatedRole } from '../services/authClient';
 import AdminMobileNavigation from './AdminMobileNavigation';
@@ -26,6 +27,7 @@ export default function AppLayout() {
           <NewRecordTerminology />
           <PatientPersistenceBridge />
           <WorkflowViewSimplifier />
+          <UserFacingTerminologySimplifier />
         </>
       ) : null}
 
