@@ -1,8 +1,8 @@
 """Runtime wiring for the structured physician-report output contract.
 
 Loaded after universal_medical_report_runtime. It keeps backward-compatible
-result_text behavior while exposing distinct fields for the frontend:
-Ana Sonuç, Teknik Bulgular, Klinik Yorum and Kısaca.
+result_text behavior while exposing distinct fields for future UI clients and a
+labelled clinical block for the current report screen.
 """
 
 from __future__ import annotations
@@ -21,12 +21,25 @@ _original_merge_review_metadata = universal_runtime._merge_review_metadata
 def _structured_result_text(review: MedicalReportReview) -> str:
     sections: list[str] = []
     if review.main_result:
-        sections.append(f"ANA SONUÇ\n{review.main_result}")
+        sections.append(f"ANA SONUÇ: {review.main_result}")
     if review.clinical_interpretation:
-        sections.append(f"KLİNİK YORUM\n{review.clinical_interpretation}")
+        sections.append(f"KLİNİK YORUM: {review.clinical_interpretation}")
     if review.brief_summary:
-        sections.append(f"KISACA\n{review.brief_summary}")
+        sections.append(f"KISACA: {review.brief_summary}")
     return "\n\n".join(sections) or review.doctor_summary
+
+
+def _visible_findings(review: MedicalReportReview) -> list[str]:
+    source_conclusion = universal_runtime._source_conclusion_finding(review.conclusion)
+    technical = [f"Teknik bulgu: {item}" for item in review.technical_findings]
+    explicit_recommendations = [f"Rapordaki öneri: {item}" for item in review.recommendations]
+    return universal_runtime._dedupe(
+        technical
+        + ([source_conclusion] if source_conclusion else [])
+        + list(review.key_findings)
+        + explicit_recommendations,
+        limit=48,
+    )
 
 
 def _merge_review_metadata_structured(
@@ -41,8 +54,10 @@ def _merge_review_metadata_structured(
             "clinical_interpretation": review.clinical_interpretation,
             "brief_summary": review.brief_summary,
             "doctor_summary": review.doctor_summary,
-            # Preserve legacy callers while making the primary result source-grounded.
-            "result_text": review.main_result or review.doctor_summary,
+            # The current frontend renders result_text and key_findings. Keep those
+            # paths useful while also storing the structured fields separately.
+            "result_text": _structured_result_text(review),
+            "key_findings": _visible_findings(review),
         }
     )
     return metadata
@@ -68,16 +83,23 @@ async def _enhance_report_document_structured(
     source_conclusion = review.result_text or clinical.conclusion
     conclusion_item = universal_runtime._source_conclusion_finding(source_conclusion)
     technical_items = [f"Teknik bulgu: {item}" for item in clinical.technical_findings]
+    explicit_recommendations = [
+        f"Rapordaki öneri: {item}" for item in clinical.recommendations
+    ]
     result_items = universal_runtime._dedupe(
         ([conclusion_item] if conclusion_item else [])
         + technical_items
         + list(review.result_items)
-        + list(clinical.key_findings),
-        limit=40,
+        + list(clinical.key_findings)
+        + explicit_recommendations,
+        limit=48,
     )
     key_findings = universal_runtime._dedupe(
-        technical_items + list(review.key_findings) + list(clinical.key_findings),
-        limit=40,
+        technical_items
+        + list(review.key_findings)
+        + list(clinical.key_findings)
+        + explicit_recommendations,
+        limit=48,
     )
     recommendations = universal_runtime._dedupe(
         list(review.recommendations) + list(clinical.recommendations),
@@ -92,7 +114,7 @@ async def _enhance_report_document_structured(
         review,
         summary=clinical.doctor_summary,
         # RadiologyMediaReview has no dedicated structured contract fields, so use
-        # a deterministic labelled block for photographed report documents.
+        # a labelled source-faithful block for photographed report documents.
         result_text=_structured_result_text(clinical),
         result_items=tuple(result_items),
         key_findings=tuple(key_findings),
