@@ -7,8 +7,12 @@ also upgrades photographed written reports after multimodal extraction.
 
 from __future__ import annotations
 
+import io
+import zipfile
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
+from xml.etree import ElementTree
 
 from app.api.routes import radiology_image_review, radiology_reports
 from app.domain.medical_report_summary_ai import (
@@ -19,9 +23,12 @@ from app.domain.report_document_image_ai import RadiologyMediaReview
 
 
 _original_persist_report = radiology_reports._persist_report
+_original_extract_upload_text = radiology_reports._extract_upload_text
 _original_anthropic_image_reader = radiology_image_review.review_radiology_media
 _original_openai_image_reader = radiology_image_review.review_radiology_media_openai
 _original_gemini_image_reader = radiology_image_review.review_radiology_media_gemini
+
+_DOCX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 
 def _dedupe(values: list[str], *, limit: int = 40) -> list[str]:
@@ -38,6 +45,55 @@ def _dedupe(values: list[str], *, limit: int = 40) -> list[str]:
 def _source_conclusion_finding(conclusion: str) -> str | None:
     text = " ".join(conclusion.split()).strip()
     return f"Kaynak sonuç / kanaat: {text}" if text else None
+
+
+def _extract_docx_text(content: bytes) -> str:
+    """Extract visible paragraph text from a DOCX using only the stdlib."""
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(content)) as archive:
+            document_xml = archive.read("word/document.xml")
+        root = ElementTree.fromstring(document_xml)
+    except (KeyError, OSError, ValueError, zipfile.BadZipFile, ElementTree.ParseError) as exc:
+        raise ValueError("DOCX rapor metni okunamadı.") from exc
+
+    paragraphs: list[str] = []
+    for paragraph in root.iter():
+        if not paragraph.tag.endswith("}p"):
+            continue
+        pieces: list[str] = []
+        for node in paragraph.iter():
+            if node.tag.endswith("}t") and node.text:
+                pieces.append(node.text)
+            elif node.tag.endswith("}tab"):
+                pieces.append("\t")
+            elif node.tag.endswith("}br"):
+                pieces.append("\n")
+        text = "".join(pieces).strip()
+        if text:
+            paragraphs.append(text)
+
+    extracted = "\n".join(paragraphs).strip()
+    if len(extracted) < 10:
+        raise ValueError("DOCX dosyasından kullanılabilir klinik rapor metni çıkarılamadı.")
+    return extracted
+
+
+def _extract_upload_text_with_docx(
+    filename: str,
+    content_type: str | None,
+    content: bytes,
+) -> tuple[str | None, str]:
+    suffix = Path(filename).suffix.lower()
+    normalized_content_type = (content_type or "").split(";", 1)[0].lower().strip()
+    if suffix == ".docx" or normalized_content_type == _DOCX_CONTENT_TYPE:
+        try:
+            return _extract_docx_text(content), "docx_upload"
+        except ValueError:
+            # Preserve the original file rather than losing a report whose text
+            # cannot be extracted safely. The UI can keep it in the review queue.
+            return None, "binary_file_upload"
+    return _original_extract_upload_text(filename, content_type, content)
 
 
 def _merge_review_metadata(metadata: dict[str, Any], review: MedicalReportReview) -> dict[str, Any]:
@@ -217,6 +273,10 @@ async def _gemini_reader_with_clinical_summary(*args: Any, **kwargs: Any):
         await _original_gemini_image_reader(*args, **kwargs)
     )
 
+
+if not getattr(radiology_reports._extract_upload_text, "_medicore_docx_report_reader", False):
+    setattr(_extract_upload_text_with_docx, "_medicore_docx_report_reader", True)
+    radiology_reports._extract_upload_text = _extract_upload_text_with_docx
 
 if not getattr(radiology_reports._persist_report, "_medicore_universal_report_reader", False):
     setattr(_persist_report_with_universal_reader, "_medicore_universal_report_reader", True)
