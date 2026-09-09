@@ -1,9 +1,9 @@
-"""Claude Sonnet 5 request compatibility and diagnostics.
+"""Claude 5 request compatibility and diagnostics.
 
-Sonnet 5 rejects non-default sampling parameters such as ``temperature=0`` and
-runs adaptive thinking by default. MediCore's compact clinical call needs a tiny,
-deterministic JSON response, so this runtime shim removes legacy sampling knobs
-and disables thinking for Sonnet 5 while preserving the existing 120-token cap.
+Current Claude 5 models reject legacy non-default sampling parameters such as
+``temperature=0`` and may run adaptive thinking by default. MediCore still has a
+few compact clinical/radiology call sites that send those legacy knobs, so this
+runtime shim normalizes requests before they reach the Anthropic SDK.
 
 The wrapper also logs a sanitized Anthropic error classification (status/type/
 request id/model) before the existing clinical fallback handles the failure.
@@ -25,31 +25,33 @@ logger = logging.getLogger(__name__)
 _original_create = AsyncMessages.create
 
 
-def _is_sonnet5(model: object) -> bool:
-    return str(model or "").strip().lower().startswith("claude-sonnet-5")
+def _is_claude5(model: object) -> bool:
+    normalized = str(model or "").strip().lower()
+    return normalized.startswith("claude-sonnet-5") or normalized.startswith("claude-opus-5")
 
 
 def _compatible_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
-    """Return request kwargs compatible with Sonnet 5 compact inference."""
+    """Return request kwargs compatible with Claude 5 inference."""
 
     adjusted = dict(kwargs)
-    if not _is_sonnet5(adjusted.get("model")):
+    if not _is_claude5(adjusted.get("model")):
         return adjusted
 
-    # Sonnet 5 rejects non-default sampling values with HTTP 400. The compact
-    # clinical service historically sent temperature=0, which is not accepted.
+    # Claude 5 rejects deprecated/non-default sampling values with HTTP 400.
+    # Radiology document/image review historically sent temperature=0; removing
+    # these knobs lets the provider use the model's supported defaults.
     adjusted.pop("temperature", None)
     adjusted.pop("top_p", None)
     adjusted.pop("top_k", None)
 
-    # Adaptive thinking is enabled by default on Sonnet 5 and counts against
-    # max_tokens. This call only needs a tiny JSON object, so explicitly disable
-    # thinking to keep the existing 120-token budget meaningful and predictable.
+    # Adaptive thinking can consume the output budget of compact JSON calls.
+    # Explicitly disable it for these legacy request shapes so both radiology and
+    # clinical synthesis receive a predictable response budget.
     adjusted.setdefault("thinking", {"type": "disabled"})
     return adjusted
 
 
-async def _create_with_sonnet5_compat(self: Any, *args: Any, **kwargs: Any) -> Any:
+async def _create_with_claude5_compat(self: Any, *args: Any, **kwargs: Any) -> Any:
     adjusted = _compatible_kwargs(kwargs)
     model = adjusted.get("model")
 
@@ -67,6 +69,6 @@ async def _create_with_sonnet5_compat(self: Any, *args: Any, **kwargs: Any) -> A
         raise
 
 
-if not getattr(AsyncMessages.create, "_medicore_sonnet5_compat", False):
-    setattr(_create_with_sonnet5_compat, "_medicore_sonnet5_compat", True)
-    AsyncMessages.create = _create_with_sonnet5_compat  # type: ignore[method-assign]
+if not getattr(AsyncMessages.create, "_medicore_claude5_compat", False):
+    setattr(_create_with_claude5_compat, "_medicore_claude5_compat", True)
+    AsyncMessages.create = _create_with_claude5_compat  # type: ignore[method-assign]
