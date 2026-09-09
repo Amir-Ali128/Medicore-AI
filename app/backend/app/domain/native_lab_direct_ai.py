@@ -5,9 +5,11 @@ are then passed to ``medicore_lab_ai``. The native C++ module rebuilds/validates
 contract and performs the HTTPS request itself, so the second clinical AI hop no longer
 needs the Python OpenAI SDK when native HTTP support is available.
 
-If the optional native HTTP transport was not compiled (or the provider call fails), the
-existing Python clinical service remains the resilience fallback. This keeps deployments
-working while the C++ transport is rolled out progressively.
+When the native AI returns a complete one-to-one per-row classification set, those AI
+statuses become the primary persisted/display status. The pre-existing native C++ status
+is retained in the audit reason; any C++/AI disagreement is forced to physician review.
+If the direct transport is unavailable or fails, the established Python clinical service
+remains the resilience fallback.
 """
 
 from __future__ import annotations
@@ -26,6 +28,8 @@ from app.domain.openai_lab_clinical_service import (
 
 AI_DISPATCH_CONTRACT = "medicore-lab-ai-dispatch-v1"
 _DEFAULT_ENDPOINT = "https://api.openai.com/v1/responses"
+_AI_STATUSES = {"NORMAL", "LOW", "HIGH", "UNDETERMINED"}
+_NATIVE_STATUSES = {"NORMAL", "LOW", "HIGH", "NEEDS_REVIEW"}
 
 
 @lru_cache(maxsize=1)
@@ -85,13 +89,137 @@ def _validate_assessment_shape(value: Any) -> dict[str, Any]:
         "priority_actions",
         "limitations",
         "narrative_tr",
+        "lab_classifications",
     }
     missing = sorted(required.difference(value))
     if missing:
         raise OpenAILabClinicalError(
             "Native C++ AI yanıtında zorunlu alanlar eksik: " + ", ".join(missing)
         )
+    if not isinstance(value.get("lab_classifications"), list):
+        raise OpenAILabClinicalError("Native C++ AI lab_classifications alanı liste değil.")
     return dict(value)
+
+
+def _normalized_name(value: Any) -> str:
+    return " ".join(str(value or "").strip().casefold().split())
+
+
+def _row_name(row: Mapping[str, Any]) -> str:
+    return str(
+        row.get("display_name")
+        or row.get("canonical_name")
+        or row.get("raw_parameter_name")
+        or ""
+    ).strip()
+
+
+def _append_limitation(assessment: dict[str, Any], message: str) -> None:
+    limitations = assessment.get("limitations")
+    if isinstance(limitations, list):
+        if message not in limitations:
+            limitations.append(message)
+    else:
+        assessment["limitations"] = [message]
+
+
+def _apply_ai_classifications_to_rows(
+    rows: Sequence[Mapping[str, Any]],
+    assessment: dict[str, Any],
+) -> bool:
+    """Promote AI row statuses only when the response maps one-to-one safely.
+
+    The mutation is transactional: every row/classification pair is validated first.
+    If count, test name, status, or mutability is inconsistent, no row is changed and
+    the existing deterministic C++ statuses remain authoritative for that request.
+    """
+    classifications = assessment.get("lab_classifications")
+    if not isinstance(classifications, list) or len(classifications) != len(rows):
+        _append_limitation(
+            assessment,
+            "AI satır sınıflamaları laboratuvar satırlarıyla bire bir eşleşmedi; native C++ durumları korundu.",
+        )
+        return False
+
+    staged: list[tuple[dict[str, Any], str, str]] = []
+    for row, classification in zip(rows, classifications, strict=True):
+        if not isinstance(row, dict) or not isinstance(classification, Mapping):
+            _append_limitation(
+                assessment,
+                "AI satır sınıflaması güvenli biçimde eşlenemedi; native C++ durumları korundu.",
+            )
+            return False
+
+        row_name = _row_name(row)
+        ai_name = str(classification.get("test") or "").strip()
+        if not row_name or _normalized_name(row_name) != _normalized_name(ai_name):
+            _append_limitation(
+                assessment,
+                "AI test sıralaması kaynak laboratuvar satırlarıyla uyuşmadı; native C++ durumları korundu.",
+            )
+            return False
+
+        ai_status = str(classification.get("status") or "").strip().upper()
+        if ai_status not in _AI_STATUSES:
+            _append_limitation(
+                assessment,
+                "AI geçersiz bir laboratuvar durum etiketi döndürdü; native C++ durumları korundu.",
+            )
+            return False
+        ai_reason = str(classification.get("reason") or "").strip()
+        staged.append((row, ai_status, ai_reason))
+
+    for row, ai_status, ai_reason in staged:
+        native_status = str(row.get("result_status") or "NEEDS_REVIEW").strip().upper()
+        native_reason = str(row.get("reason") or "").strip()
+        native_rule = str(row.get("rule_applied") or "").strip()
+
+        row["native_result_status"] = native_status
+        row["native_reason"] = native_reason
+        row["native_rule_applied"] = native_rule
+        row["ai_result_status"] = ai_status
+        row["ai_classification_reason"] = ai_reason
+
+        final_status = "NEEDS_REVIEW" if ai_status == "UNDETERMINED" else ai_status
+        disagreement = (
+            native_status in _NATIVE_STATUSES
+            and native_status != "NEEDS_REVIEW"
+            and final_status != "NEEDS_REVIEW"
+            and native_status != final_status
+        )
+
+        row["result_status"] = final_status
+        row["status_source"] = "native_cpp_direct_ai"
+        row["rule_applied"] = (
+            "native_cpp_direct_ai_disagreement"
+            if disagreement
+            else "native_cpp_direct_ai_classification"
+        )
+
+        audit_parts = []
+        if ai_reason:
+            audit_parts.append(f"AI sınıflaması: {ai_reason}")
+        native_audit = f"Native C++ ön sınıflaması: {native_status}"
+        if native_rule:
+            native_audit += f" ({native_rule})"
+        if native_reason:
+            native_audit += f" — {native_reason}"
+        audit_parts.append(native_audit)
+
+        if ai_status == "UNDETERMINED":
+            row["needs_review"] = True
+            row["classification_confidence"] = 0.0
+            audit_parts.append("AI bu satırı güvenilir biçimde sınıflayamadı; hekim/kaynak kontrolü gerekli.")
+        elif disagreement:
+            row["needs_review"] = True
+            row["classification_confidence"] = 0.0
+            audit_parts.append("AI ve native C++ sınıflaması farklı; hekim/kaynak kontrolü gerekli.")
+
+        row["reason"] = " ".join(part for part in audit_parts if part).strip()
+
+    assessment["status_source"] = "native_cpp_direct_ai"
+    assessment["ai_statuses_applied"] = True
+    return True
 
 
 async def _native_synthesis(
@@ -160,6 +288,7 @@ async def _native_synthesis(
         raise OpenAILabClinicalError("Native C++ AI klinik çıktısı geçerli JSON değil.") from exc
 
     result = _validate_assessment_shape(assessment)
+    _apply_ai_classifications_to_rows(rows, result)
     result["model"] = str(native_result.get("model") or model)
     result["synthesis_source"] = "native_cpp_direct_ai"
     return result
