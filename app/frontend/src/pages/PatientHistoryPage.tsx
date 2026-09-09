@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 
 import type { LabReportSummary } from '../services/labAnalysisClient';
 import {
+  deleteLabReport,
   listPatientLabReports,
   openLabReportPdf,
 } from '../services/labArchiveClient';
@@ -15,6 +16,7 @@ import {
   type PatientRecord,
 } from '../services/patientClient';
 import {
+  deleteRadiologyReport,
   listPatientRadiologyReports,
   type RadiologyReport,
 } from '../services/radiologyClient';
@@ -123,19 +125,25 @@ function RecordCard({
   attachments,
   active,
   deleting,
+  deletingAttachmentKey,
   onOpen,
   onAddLab,
   onAddRadiology,
   onDelete,
+  onDeleteLab,
+  onDeleteRadiology,
 }: {
   record: PatientRecord;
   attachments?: AttachmentSummary;
   active: boolean;
   deleting: boolean;
+  deletingAttachmentKey: string | null;
   onOpen: (record: PatientRecord) => void;
   onAddLab: (record: PatientRecord) => void;
   onAddRadiology: (record: PatientRecord) => void;
   onDelete: (record: PatientRecord) => void;
+  onDeleteLab: (record: PatientRecord, report: LabReportSummary) => void;
+  onDeleteRadiology: (record: PatientRecord, report: RadiologyReport) => void;
 }) {
   const [openingLabId, setOpeningLabId] = useState<string | null>(null);
   const [labError, setLabError] = useState('');
@@ -271,6 +279,8 @@ function RecordCard({
             <div className="mt-3 space-y-2">
               {visibleLabs.map((report) => {
                 const canOpen = report.metadata_json?.original_file_stored === true;
+                const deleteKey = `lab:${report.id}`;
+                const isDeleting = deletingAttachmentKey === deleteKey;
                 return (
                   <div key={report.id} className="rounded-lg border border-emerald-100 bg-white p-2.5">
                     <div className="flex items-start justify-between gap-2">
@@ -280,16 +290,26 @@ function RecordCard({
                           Tahlil tarihi: {formatShortDate(report.report_date || report.created_at)}
                         </p>
                       </div>
-                      {canOpen ? (
+                      <div className="flex shrink-0 items-center gap-2">
+                        {canOpen ? (
+                          <button
+                            type="button"
+                            onClick={() => void handleOpenLab(report)}
+                            disabled={openingLabId === report.id || isDeleting}
+                            className="text-[11px] font-semibold text-emerald-700 hover:text-emerald-900 disabled:opacity-50"
+                          >
+                            {openingLabId === report.id ? 'Açılıyor…' : 'Aç'}
+                          </button>
+                        ) : null}
                         <button
                           type="button"
-                          onClick={() => void handleOpenLab(report)}
-                          disabled={openingLabId === report.id}
-                          className="shrink-0 text-[11px] font-semibold text-emerald-700 hover:text-emerald-900 disabled:opacity-50"
+                          onClick={() => onDeleteLab(record, report)}
+                          disabled={isDeleting}
+                          className="text-[11px] font-semibold text-red-600 hover:text-red-800 disabled:opacity-50"
                         >
-                          {openingLabId === report.id ? 'Açılıyor…' : 'Aç'}
+                          {isDeleting ? 'Siliniyor…' : 'Sil'}
                         </button>
-                      ) : null}
+                      </div>
                     </div>
                   </div>
                 );
@@ -318,17 +338,33 @@ function RecordCard({
             <p className="mt-3 text-sm text-slate-500">Henüz tetkik kaydı yok.</p>
           ) : (
             <div className="mt-3 space-y-2">
-              {visibleRadiology.map((report) => (
-                <div key={report.id} className="rounded-lg border border-violet-100 bg-white p-2.5">
-                  <p className="truncate text-xs font-semibold text-slate-900">{radiologyTitle(report)}</p>
-                  <p className="mt-1 text-[11px] text-slate-500">
-                    Tetkik tarihi: {formatShortDate(report.report_date || report.created_at)}
-                  </p>
-                  {clip(report.summary, 100) ? (
-                    <p className="mt-1 text-[11px] leading-4 text-slate-600">{clip(report.summary, 100)}</p>
-                  ) : null}
-                </div>
-              ))}
+              {visibleRadiology.map((report) => {
+                const deleteKey = `radiology:${report.id}`;
+                const isDeleting = deletingAttachmentKey === deleteKey;
+                return (
+                  <div key={report.id} className="rounded-lg border border-violet-100 bg-white p-2.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="truncate text-xs font-semibold text-slate-900">{radiologyTitle(report)}</p>
+                        <p className="mt-1 text-[11px] text-slate-500">
+                          Tetkik tarihi: {formatShortDate(report.report_date || report.created_at)}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => onDeleteRadiology(record, report)}
+                        disabled={isDeleting}
+                        className="shrink-0 text-[11px] font-semibold text-red-600 hover:text-red-800 disabled:opacity-50"
+                      >
+                        {isDeleting ? 'Siliniyor…' : 'Sil'}
+                      </button>
+                    </div>
+                    {clip(report.summary, 100) ? (
+                      <p className="mt-1 text-[11px] leading-4 text-slate-600">{clip(report.summary, 100)}</p>
+                    ) : null}
+                  </div>
+                );
+              })}
               {radiology.length > 4 ? (
                 <button
                   type="button"
@@ -361,6 +397,7 @@ export default function PatientHistoryPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deletingAttachmentKey, setDeletingAttachmentKey] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [sexFilter, setSexFilter] = useState('all');
   const [page, setPage] = useState(1);
@@ -473,6 +510,62 @@ export default function PatientHistoryPage() {
       setError(deleteError instanceof Error ? deleteError.message : 'Hasta kaydı silinemedi.');
     } finally {
       setDeletingId(null);
+    }
+  }
+
+  async function handleDeleteLab(record: PatientRecord, report: LabReportSummary) {
+    if (!window.confirm(`“${labTitle(report)}” laboratuvar kaydı kalıcı olarak silinsin mi? Bu işlem geri alınamaz.`)) return;
+
+    const deleteKey = `lab:${report.id}`;
+    setDeletingAttachmentKey(deleteKey);
+    setError('');
+    try {
+      await deleteLabReport(report.id);
+      setAttachments((current) => {
+        const summary = current[record.id];
+        if (!summary) return current;
+        const labReports = summary.labReports.filter((item) => item.id !== report.id);
+        return {
+          ...current,
+          [record.id]: {
+            ...summary,
+            labReports,
+            labCount: labReports.length,
+          },
+        };
+      });
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : 'Laboratuvar kaydı silinemedi.');
+    } finally {
+      setDeletingAttachmentKey(null);
+    }
+  }
+
+  async function handleDeleteRadiology(record: PatientRecord, report: RadiologyReport) {
+    if (!window.confirm(`“${radiologyTitle(report)}” tetkik kaydı kalıcı olarak silinsin mi? Bu işlem geri alınamaz.`)) return;
+
+    const deleteKey = `radiology:${report.id}`;
+    setDeletingAttachmentKey(deleteKey);
+    setError('');
+    try {
+      await deleteRadiologyReport(report.id);
+      setAttachments((current) => {
+        const summary = current[record.id];
+        if (!summary) return current;
+        const radiologyReports = summary.radiologyReports.filter((item) => item.id !== report.id);
+        return {
+          ...current,
+          [record.id]: {
+            ...summary,
+            radiologyReports,
+            radiologyCount: radiologyReports.length,
+          },
+        };
+      });
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : 'Tetkik kaydı silinemedi.');
+    } finally {
+      setDeletingAttachmentKey(null);
     }
   }
 
@@ -595,10 +688,13 @@ export default function PatientHistoryPage() {
             attachments={attachments[record.id]}
             active={getActivePatientId() === record.id}
             deleting={deletingId === record.id}
+            deletingAttachmentKey={deletingAttachmentKey}
             onOpen={(item) => openRecord(item, '/patients/demo')}
             onAddLab={(item) => openRecord(item, '/analysis/mock')}
             onAddRadiology={(item) => openRecord(item, '/radiology')}
             onDelete={(item) => void handleDelete(item)}
+            onDeleteLab={(item, report) => void handleDeleteLab(item, report)}
+            onDeleteRadiology={(item, report) => void handleDeleteRadiology(item, report)}
           />
         ))}
       </div>

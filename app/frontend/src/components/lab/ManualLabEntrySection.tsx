@@ -458,16 +458,15 @@ export default function ManualLabEntrySection({ onAnalyzed, onSaved }: Props) {
         >
           {isAnalyzing ? 'Analiz ediliyor…' : 'Manuel sonuçları analiz et'}
         </button>
-        {analysisResult ? (
-          <button
-            type="button"
-            onClick={() => void handleSave()}
-            disabled={saved || isSaving}
-            className="rounded-lg bg-emerald-700 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-default disabled:bg-emerald-100 disabled:text-emerald-800"
-          >
-            {isSaving ? 'Kaydediliyor…' : saved ? '✓ Kaydedildi' : 'Kaydet'}
-          </button>
-        ) : null}
+        <button
+          type="button"
+          onClick={() => void handleSave()}
+          disabled={!analysisResult || saved || isSaving}
+          title={!analysisResult ? 'Önce manuel sonuçları analiz et.' : undefined}
+          className="rounded-lg bg-emerald-700 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-emerald-100 disabled:text-emerald-800"
+        >
+          {isSaving ? 'Kaydediliyor…' : saved ? '✓ Kaydedildi' : 'Kaydet'}
+        </button>
       </div>
 
       {message ? (

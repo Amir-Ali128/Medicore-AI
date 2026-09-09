@@ -8,7 +8,12 @@ import ManualLabEntrySection from '../components/lab/ManualLabEntrySection';
 import SectionCard from '../components/ui/SectionCard';
 import { createAnonymizedClinicalFixture } from '../fixtures/anonymizedClinicalFixture';
 import { getStoredUser } from '../services/authClient';
-import type { ClinicalIntakeInput } from '../services/labAnalysisClient';
+import type { ClinicalIntakeInput, LabReportSummary } from '../services/labAnalysisClient';
+import {
+  deleteLabReport,
+  listPatientLabReports,
+  openLabReportPdf,
+} from '../services/labArchiveClient';
 import {
   ACTIVE_CLINICAL_INTAKE_KEY,
   activatePatientRecord,
@@ -20,6 +25,7 @@ import {
 } from '../services/patientClient';
 import {
   createManualRadiologyReport,
+  deleteRadiologyReport,
   listPatientRadiologyReports,
   type RadiologyReport,
 } from '../services/radiologyClient';
@@ -76,6 +82,23 @@ function formatDate(value: string | null | undefined) {
   }
 }
 
+function formatShortDate(value: string | null | undefined) {
+  if (!value) return 'Tarih yok';
+  try {
+    return new Intl.DateTimeFormat('tr-TR', { dateStyle: 'medium' }).format(new Date(value));
+  } catch {
+    return value;
+  }
+}
+
+function labReportTitle(report: LabReportSummary) {
+  return report.file_name?.trim() || 'Manuel laboratuvar kaydı';
+}
+
+function radiologyReportTitle(report: RadiologyReport) {
+  return report.file_name?.trim() || report.modality || 'Manuel tetkik raporu';
+}
+
 export default function PatientRecordPage() {
   const user = getStoredUser();
   const navigate = useNavigate();
@@ -96,9 +119,14 @@ export default function PatientRecordPage() {
   const [restoreMessage, setRestoreMessage] = useState('');
   const [saveError, setSaveError] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const [labReports, setLabReports] = useState<LabReportSummary[]>([]);
+  const [labOpeningId, setLabOpeningId] = useState<string | null>(null);
+  const [labDeletingId, setLabDeletingId] = useState<string | null>(null);
+  const [labRecordError, setLabRecordError] = useState('');
   const [radiologyText, setRadiologyText] = useState('');
   const [radiologyReports, setRadiologyReports] = useState<RadiologyReport[]>([]);
   const [radiologyBusy, setRadiologyBusy] = useState(false);
+  const [radiologyDeletingId, setRadiologyDeletingId] = useState<string | null>(null);
   const [radiologyMessage, setRadiologyMessage] = useState('');
   const [radiologyError, setRadiologyError] = useState('');
   const privacyLabel = privacyModeLabel();
@@ -114,6 +142,8 @@ export default function PatientRecordPage() {
     setSavedMessage('');
     setRestoreMessage('');
     setSaveError('');
+    setLabReports([]);
+    setLabRecordError('');
     setRadiologyText('');
     setRadiologyReports([]);
     setNewModeReady(true);
@@ -185,17 +215,19 @@ export default function PatientRecordPage() {
     let cancelled = false;
     const patientId = getActivePatientId();
     if (!patientId) {
+      setLabReports([]);
       setRadiologyReports([]);
       return;
     }
 
-    listPatientRadiologyReports(patientId, { includeUnanalyzed: true })
-      .then((reports) => {
-        if (!cancelled) setRadiologyReports(reports);
-      })
-      .catch(() => {
-        if (!cancelled) setRadiologyReports([]);
-      });
+    Promise.all([
+      listPatientLabReports(patientId).catch(() => []),
+      listPatientRadiologyReports(patientId, { includeUnanalyzed: true }).catch(() => []),
+    ]).then(([labs, radiology]) => {
+      if (cancelled) return;
+      setLabReports(labs);
+      setRadiologyReports(radiology);
+    });
 
     return () => {
       cancelled = true;
@@ -208,6 +240,8 @@ export default function PatientRecordPage() {
     setProtocolNo('');
     setSavedMessage('');
     setSaveError('');
+    setLabReports([]);
+    setLabRecordError('');
     setRadiologyText('');
     setRadiologyReports([]);
     navigate('/patients/demo?new=1', { replace: true });
@@ -245,6 +279,34 @@ export default function PatientRecordPage() {
     }
   }
 
+  async function handleOpenLab(report: LabReportSummary) {
+    if (report.metadata_json?.original_file_stored !== true) return;
+    setLabOpeningId(report.id);
+    setLabRecordError('');
+    try {
+      await openLabReportPdf(report.id, report.file_name);
+    } catch (error) {
+      setLabRecordError(error instanceof Error ? error.message : 'Laboratuvar dosyası açılamadı.');
+    } finally {
+      setLabOpeningId(null);
+    }
+  }
+
+  async function handleDeleteLab(report: LabReportSummary) {
+    if (!window.confirm(`“${labReportTitle(report)}” laboratuvar kaydı kalıcı olarak silinsin mi? Bu işlem geri alınamaz.`)) return;
+
+    setLabDeletingId(report.id);
+    setLabRecordError('');
+    try {
+      await deleteLabReport(report.id);
+      setLabReports((current) => current.filter((item) => item.id !== report.id));
+    } catch (error) {
+      setLabRecordError(error instanceof Error ? error.message : 'Laboratuvar kaydı silinemedi.');
+    } finally {
+      setLabDeletingId(null);
+    }
+  }
+
   async function handleSaveRadiology() {
     const patientId = getActivePatientId();
     if (!patientId) {
@@ -276,6 +338,23 @@ export default function PatientRecordPage() {
       );
     } finally {
       setRadiologyBusy(false);
+    }
+  }
+
+  async function handleDeleteRadiology(report: RadiologyReport) {
+    if (!window.confirm(`“${radiologyReportTitle(report)}” tetkik kaydı kalıcı olarak silinsin mi? Bu işlem geri alınamaz.`)) return;
+
+    setRadiologyDeletingId(report.id);
+    setRadiologyError('');
+    try {
+      await deleteRadiologyReport(report.id);
+      setRadiologyReports((current) => current.filter((item) => item.id !== report.id));
+      setRadiologyMessage('Radyoloji / ultrason / tetkik kaydı silindi.');
+      window.setTimeout(() => setRadiologyMessage(''), 3000);
+    } catch (error) {
+      setRadiologyError(error instanceof Error ? error.message : 'Tetkik kaydı silinemedi.');
+    } finally {
+      setRadiologyDeletingId(null);
     }
   }
 
@@ -336,7 +415,7 @@ export default function PatientRecordPage() {
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Ek kayıtlar</p>
           <p className="mt-2 text-lg font-semibold text-slate-950">
-            {radiologyReports.length} radyoloji / tetkik
+            {labReports.length} lab · {radiologyReports.length} radyoloji / tetkik
           </p>
         </div>
       </div>
@@ -415,7 +494,7 @@ export default function PatientRecordPage() {
           <div>
             <h2 className="text-xl font-semibold text-slate-950">Laboratuvar</h2>
             <p className="mt-1 text-sm text-slate-500">
-              Her parametreyi manuel ekleyip ayrı ayrı kaydedebilir veya toplu analiz edip hasta arşivine ekleyebilirsin.
+              Her parametreyi manuel ekleyip Kaydet ile hasta geçmişine ekleyebilir veya toplu analizden sonra kaydedebilirsin.
             </p>
           </div>
           {!getActivePatientId() ? (
@@ -431,11 +510,74 @@ export default function PatientRecordPage() {
             window.setTimeout(() => setSavedMessage(''), 3000);
           }}
         />
+
+        <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50/40 p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-950">Kayıtlı laboratuvar raporları</h3>
+              <p className="mt-1 text-xs text-slate-500">Bu hastaya bağlı laboratuvar kayıtlarını buradan açabilir veya silebilirsin.</p>
+            </div>
+            <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200">
+              {labReports.length} kayıt
+            </span>
+          </div>
+
+          {labReports.length === 0 ? (
+            <p className="mt-3 rounded-lg bg-white/70 p-4 text-sm text-slate-500">
+              Bu hasta için henüz laboratuvar kaydı yok.
+            </p>
+          ) : (
+            <div className="mt-3 space-y-2">
+              {labReports.slice(0, 10).map((report) => {
+                const canOpen = report.metadata_json?.original_file_stored === true;
+                return (
+                  <div
+                    key={report.id}
+                    className="flex flex-col gap-2 rounded-lg border border-emerald-100 bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-slate-900">{labReportTitle(report)}</p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {formatShortDate(report.report_date || report.created_at)} · {report.source_type}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      {canOpen ? (
+                        <button
+                          type="button"
+                          onClick={() => void handleOpenLab(report)}
+                          disabled={labOpeningId === report.id || labDeletingId === report.id}
+                          className="rounded-lg border border-emerald-200 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
+                        >
+                          {labOpeningId === report.id ? 'Açılıyor…' : 'Aç'}
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => void handleDeleteLab(report)}
+                        disabled={labDeletingId === report.id}
+                        className="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"
+                      >
+                        {labDeletingId === report.id ? 'Siliniyor…' : 'Sil'}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {labRecordError ? (
+            <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+              {labRecordError}
+            </div>
+          ) : null}
+        </div>
       </div>
 
       <SectionCard
         title="Radyoloji / Ultrason / Diğer Tetkikler"
-        description="Rapor metnini manuel girip doğrudan aktif hasta kaydına ekleyin. Görsel veya dosya yüklemek için ayrıntılı radyoloji ekranını kullanabilirsiniz."
+        description="Rapor metnini manuel girip doğrudan aktif hasta kaydına ekleyin. Görsel veya dosya yüklemek için ayrıntılı radyoloji ekranını kullanabilirsiniz. Kayıtlı raporları bu bölümden tek tek silebilirsiniz."
       >
         <textarea
           rows={6}
@@ -488,22 +630,32 @@ export default function PatientRecordPage() {
             </p>
           ) : (
             <div className="mt-3 space-y-2">
-              {radiologyReports.slice(0, 5).map((report) => (
+              {radiologyReports.slice(0, 10).map((report) => (
                 <div
                   key={report.id}
                   className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
                 >
                   <div className="min-w-0">
                     <p className="truncate text-sm font-semibold text-slate-900">
-                      {report.file_name || report.modality || 'Manuel tetkik raporu'}
+                      {radiologyReportTitle(report)}
                     </p>
                     <p className="mt-1 text-xs text-slate-500">
                       {formatDate(report.created_at)} · {report.body_part || 'Bölge belirtilmedi'}
                     </p>
                   </div>
-                  <span className="shrink-0 rounded-full bg-violet-100 px-2.5 py-1 text-xs font-semibold text-violet-700">
-                    Kaydedildi
-                  </span>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <span className="rounded-full bg-violet-100 px-2.5 py-1 text-xs font-semibold text-violet-700">
+                      Kaydedildi
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => void handleDeleteRadiology(report)}
+                      disabled={radiologyDeletingId === report.id}
+                      className="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"
+                    >
+                      {radiologyDeletingId === report.id ? 'Siliniyor…' : 'Sil'}
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
