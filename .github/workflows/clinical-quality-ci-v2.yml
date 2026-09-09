@@ -184,6 +184,7 @@ jobs:
           medicore_lab_core_tests
           medicore_lab_deterministic_tests
           medicore_lab_extensions_tests
+          medicore_lab_ai_dispatch_tests
       - name: Run lab sanitizer tests
         env:
           ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
