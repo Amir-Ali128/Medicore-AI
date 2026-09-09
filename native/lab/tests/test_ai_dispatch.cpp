@@ -1,12 +1,22 @@
 #include "medicore/lab/ai_dispatch.hpp"
 
-#include <cassert>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
 using medicore::lab::AiPatientContext;
 using medicore::lab::LabRow;
 using medicore::lab::ProcessedLabRow;
+
+namespace {
+
+void require(bool condition, const char* message) {
+    if (!condition) {
+        throw std::runtime_error(message);
+    }
+}
+
+}  // namespace
 
 int main() {
     LabRow glucose;
@@ -37,9 +47,9 @@ int main() {
     hemoglobin.extraction_confidence = 0.99;
 
     const std::vector<ProcessedLabRow> processed = medicore::lab::process_rows({glucose, hemoglobin});
-    assert(processed.size() == 2);
-    assert(processed[0].status == "HIGH");
-    assert(processed[1].status == "NORMAL");
+    require(processed.size() == 2, "Expected both laboratory rows to remain processable");
+    require(processed[0].status == "HIGH", "Native Glucose safety classification should be HIGH");
+    require(processed[1].status == "NORMAL", "Native Hemoglobin safety classification should be NORMAL");
 
     AiPatientContext patient;
     patient.age = 77;
@@ -52,22 +62,22 @@ int main() {
         1200
     );
 
-    assert(request.find("\"model\":\"gpt-test\"") != std::string::npos);
-    assert(request.find("\"max_output_tokens\":1200") != std::string::npos);
-    assert(request.find("\"age\":77") != std::string::npos);
-    assert(request.find("\"sex\":\"female\"") != std::string::npos);
-    assert(request.find("\"test\":\"Glucose\"") != std::string::npos);
-    assert(request.find("\"test\":\"Hemoglobin\"") != std::string::npos);
-    assert(request.find("\"value\":105") != std::string::npos);
-    assert(request.find("\"reference_min\":70") != std::string::npos);
-    assert(request.find("\"reference_max\":100") != std::string::npos);
-    assert(request.find("\"ai_classifies_each_row\":true") != std::string::npos);
+    require(request.find("\"model\":\"gpt-test\"") != std::string::npos, "Model missing from request");
+    require(request.find("\"max_output_tokens\":1200") != std::string::npos, "Token limit missing from request");
+    require(request.find("\\\"age\\\":77") != std::string::npos, "Patient age missing from nested payload");
+    require(request.find("\\\"sex\\\":\\\"female\\\"") != std::string::npos, "Patient sex missing from nested payload");
+    require(request.find("\\\"test\\\":\\\"Glucose\\\"") != std::string::npos, "Glucose missing from nested payload");
+    require(request.find("\\\"test\\\":\\\"Hemoglobin\\\"") != std::string::npos, "Hemoglobin missing from nested payload");
+    require(request.find("\\\"value\\\":105") != std::string::npos, "Measured value missing from nested payload");
+    require(request.find("\\\"reference_min\\\":70") != std::string::npos, "Reference minimum missing from nested payload");
+    require(request.find("\\\"reference_max\\\":100") != std::string::npos, "Reference maximum missing from nested payload");
+    require(request.find("\\\"ai_classifies_each_row\\\":true") != std::string::npos, "AI classification policy missing");
 
     // The deterministic native status is intentionally not sent as the model's
     // answer. The model receives values/references and classifies independently.
-    assert(request.find("\"result_status\"") == std::string::npos);
-    assert(request.find("\"status\":\"HIGH\"") == std::string::npos);
-    assert(request.find("\"status\":\"NORMAL\"") == std::string::npos);
+    require(request.find("result_status") == std::string::npos, "Native result_status leaked into AI input");
+    require(request.find("\\\"status\\\":\\\"HIGH\\\"") == std::string::npos, "Native HIGH leaked into AI input");
+    require(request.find("\\\"status\\\":\\\"NORMAL\\\"") == std::string::npos, "Native NORMAL leaked into AI input");
 
     // Request generation is always available; network dispatch depends on whether
     // libcurl support was compiled into this build.
