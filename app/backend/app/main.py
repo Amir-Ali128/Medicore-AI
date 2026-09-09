@@ -39,6 +39,7 @@ from app.domain import pathological_source_runtime as _pathological_source_runti
 from app.domain import clinical_quality_runtime as _clinical_quality_runtime  # noqa: F401
 from app.domain import clinical_quality_scope_runtime as _clinical_quality_scope_runtime  # noqa: F401
 from app.domain import clinical_domain_router_runtime as _clinical_domain_router_runtime  # noqa: F401
+from app.domain import universal_medical_report_runtime as _universal_medical_report_runtime  # noqa: F401
 from app.infrastructure.admin_bootstrap import ensure_bootstrap_admin
 from app.infrastructure.database.feedback_migrations import ensure_user_feedback
 from app.infrastructure.database.session import AsyncSessionFactory, engine
