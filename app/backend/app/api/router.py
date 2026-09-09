@@ -30,12 +30,20 @@ from app.api.routes import (
     radiology_reports,
     scanned_medical_report_pdf,
 )
+from app.domain.native_lab_direct_ai import synthesize_lab_clinical_assessment_native
 from app.domain.radiology_report_safety import analyze_radiology_report_safely
 from app.schemas.lab_analysis import PatientMetadataOutput
 
 # Keep the existing radiology routes intact while enforcing the conservative
 # findings-only evidence filter for every manual-text and PDF analysis request.
 radiology_reports.analyze_radiology_report = analyze_radiology_report_safely
+
+# Prefer the new native C++ -> AI transport for the clinical lab synthesis hop.
+# The bridge itself falls back to the established Python provider client when the
+# optional native HTTP transport is unavailable, so rollout stays backwards compatible.
+lab_pdf_direct_upload.synthesize_lab_clinical_assessment = (
+    synthesize_lab_clinical_assessment_native
+)
 
 
 def _privacy_safe_lab_patient_metadata(text: str) -> PatientMetadataOutput:
