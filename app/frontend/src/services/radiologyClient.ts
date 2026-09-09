@@ -137,6 +137,11 @@ async function parseReportResponse(response: Response): Promise<RadiologyReport>
   return report;
 }
 
+function isPdfFile(file: File): boolean {
+  const mediaType = (file.type || '').split(';', 1)[0].toLowerCase();
+  return mediaType === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+}
+
 export async function createManualRadiologyReport(
   input: RadiologyReportInput,
 ): Promise<RadiologyReport> {
@@ -170,7 +175,14 @@ export async function uploadRadiologyReportFile(
   if (input.modality) formData.append('modality', input.modality);
   if (input.bodyPart) formData.append('body_part', input.bodyPart);
 
-  const response = await fetch(`${API_BASE_URL}/radiology-reports/upload`, {
+  // All PDFs use the universal PDF endpoint. It takes the cheap embedded-text path
+  // for normal PDFs and automatically switches to multimodal extraction for
+  // scanned/image-only reports, so callers do not need to know which kind they have.
+  const endpoint = isPdfFile(file)
+    ? '/radiology-reports/scanned-pdf'
+    : '/radiology-reports/upload';
+
+  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
     method: 'POST',
     headers: authHeaders(),
     body: formData,
