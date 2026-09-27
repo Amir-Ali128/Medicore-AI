@@ -1,12 +1,11 @@
-"""Persistent patient laboratory history for the seven-source native pipeline.
+"""Persistent patient laboratory history for the Python CDSS pipeline.
 
-This module connects the source-preserving canonical/native trust contracts to the
-existing PostgreSQL LabReport/LabResult tables. It also resolves the most recent
-trusted comparable result and delegates numeric movement to TrendEngine, which is
-native-C++ first with a behavior-compatible Python fallback.
+This module connects source-preserving canonical/Python trust contracts to the
+existing PostgreSQL LabReport/LabResult tables. It resolves the most recent trusted
+comparable result and delegates deterministic numeric movement to TrendEngine.
 
-Native trust is immutable here: review rows stay review rows, suspicious values are
-never corrected, and only trusted rows are eligible for longitudinal AI evidence.
+Trust is immutable here: review rows stay review rows, suspicious values are never
+silently corrected, and only trusted rows are eligible for longitudinal AI evidence.
 """
 
 from __future__ import annotations
@@ -245,7 +244,7 @@ async def persist_patient_lab_case(
     longitudinal_trends: Sequence[Mapping[str, Any]],
     clinical_pipeline: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
-    """Atomically persist report, native rows, trends, provenance and AI snapshot."""
+    """Atomically persist report, validated rows, trends, provenance and AI snapshot."""
     source = trust_envelope.get("source") if isinstance(trust_envelope.get("source"), Mapping) else {}
     report_date = _as_date(trust_envelope.get("report_date"))
     file_name = str(source.get("file_name") or source.get("source_file_name") or "").strip() or None

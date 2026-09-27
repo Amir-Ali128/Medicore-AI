@@ -82,7 +82,6 @@ class Settings(BaseSettings):
     openai_lab_model: str = "gpt-6-astra"
     openai_lab_clinical_model: str = "gpt-5.6-luna"
     openai_lab_extraction_enabled: bool = True
-    native_lab_required: bool = True
 
     # --- Gemini independent radiology third reader -----------------------
     # Maximum-quality multimodal profile. Gemini 3.1 Pro is currently preview;
@@ -122,9 +121,8 @@ class Settings(BaseSettings):
         le=25 * 1024 * 1024,
     )
 
-    # The configured ONNX engine is CPU-safe by default on small Render workers.
-    # Model manifests still own the clinical batch limit; these settings only bound
-    # process resources and concurrent execution.
+    # Optional Python ONNX inference settings. These are separate from the core
+    # PDF + clinical-context + report CDSS path.
     onnx_max_concurrency: int = Field(default=2, ge=1, le=16)
     onnx_concurrency_wait_seconds: float = Field(default=2.0, ge=0.05, le=30.0)
     onnx_intra_op_threads: int = Field(default=1, ge=1, le=16)

@@ -1,8 +1,6 @@
 """TrendEngine.
 
-Pure, deterministic numeric-movement describer. Production execution prefers the
-native C++ deterministic core; the Decimal-based Python implementation remains as a
-behavior-compatible fallback for dev/rolling deploys.
+Pure-Python deterministic numeric movement describer using Decimal arithmetic.
 """
 
 from __future__ import annotations
@@ -29,49 +27,8 @@ class TrendEngine:
         self,
         data: TrendComparisonInput,
     ) -> tuple[TrendResult, str]:
-        """Return the result plus the backend that actually produced it.
-
-        This distinction matters at the AI trust boundary: the native extension may
-        be installed but an individual native call can still fail closed and fall back
-        to the behavior-compatible Python implementation.
-        """
-        native = self._compare_native(data)
-        if native is not None:
-            return native, "native_cpp"
-        return self._compare_python(data), "python_fallback"
-
-    def _compare_native(self, data: TrendComparisonInput) -> TrendResult | None:
-        try:
-            from app.domain.native_lab_engine import (
-                native_compare_trend,
-                native_lab_deterministic_available,
-            )
-
-            if not native_lab_deterministic_available():
-                return None
-
-            days = self._days_between(data)
-            result = native_compare_trend(
-                current_value=data.current_value,
-                previous_value=data.previous_value,
-                time_difference_days=days,
-                stable_relative_threshold=STABLE_RELATIVE_THRESHOLD,
-            )
-            return TrendResult(
-                parameter_id=data.parameter_id,
-                parameter_code=data.parameter_code,
-                trend_status=TrendStatus(str(result["status"]).lower()),
-                previous_value=self._to_decimal(result.get("previous_value")),
-                current_value=self._to_decimal(result.get("current_value")),
-                absolute_difference=self._to_decimal(result.get("absolute_difference")),
-                percentage_difference=result.get("percentage_difference"),
-                time_difference_days=result.get("time_difference_days"),
-                confidence=float(result.get("confidence") or 0.0),
-                reason=str(result.get("reason") or ""),
-                needs_review=bool(result.get("needs_review")),
-            )
-        except (ImportError, RuntimeError, OSError, ValueError, KeyError, TypeError):
-            return None
+        """Return the deterministic result and its implementation label."""
+        return self._compare_python(data), "python"
 
     def _compare_python(self, data: TrendComparisonInput) -> TrendResult:
         if data.previous_value is None:

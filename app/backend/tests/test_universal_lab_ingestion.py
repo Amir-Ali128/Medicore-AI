@@ -87,7 +87,7 @@ def test_manual_entry_becomes_canonical_without_clinical_classification() -> Non
     assert row["reference_min"] == 0.0
     assert row["normalized_value"] == 6.4
     assert "result_status" not in row
-    assert row["native_ready"] if "native_ready" in row else case["native_ready"]
+    assert row["python_ready"] if "python_ready" in row else case["python_ready"]
 
 
 @pytest.mark.parametrize(
@@ -331,13 +331,13 @@ def test_saved_report_evaluation_uses_persisted_canonical_data(monkeypatch: pyte
             },
             "ai_attempted": True,
             "ai_used": True,
-            "native_trends_used_by_ai": 1,
+            "python_trends_used_by_ai": 1,
             "doctor_review_required": False,
         }
 
     monkeypatch.setattr(lab_routes, "ensure_patient_access", fake_ensure_patient_access)
     monkeypatch.setattr(lab_routes, "process_canonical_lab_case", fake_process)
-    monkeypatch.setattr(lab_routes, "run_native_trust_clinical_pipeline", fake_pipeline)
+    monkeypatch.setattr(lab_routes, "run_python_trust_clinical_pipeline", fake_pipeline)
 
     session = FakeSession()
     result = asyncio.run(

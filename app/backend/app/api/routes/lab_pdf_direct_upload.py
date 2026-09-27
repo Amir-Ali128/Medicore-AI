@@ -1,10 +1,9 @@
 """Astra-first laboratory document upload path.
 
 The original PDF/image files are sent directly to the configured OpenAI multimodal
-model for document reading, preprocessing, extraction and semantic normalization.
-The returned rows are validated/classified and mathematically enriched by MediCore's
-native C++ lab core before a second, physician-assistive AI synthesis. The legacy
-Python PDF parser is intentionally not part of this route anymore.
+model for document reading and structured extraction. Returned rows then pass through
+MediCore's deterministic Python validation/classification layer before optional
+physician-assistive synthesis.
 """
 
 from __future__ import annotations
@@ -20,10 +19,9 @@ from app.api.dependencies import SessionDep
 from app.api.routes import lab_analysis
 from app.core.config import get_settings
 from app.domain.enums import ResultStatus, TrendStatus
-from app.domain.native_lab_engine import (
-    NativeLabUnavailable,
-    compute_native_lab_metrics,
-    process_astra_lab_rows,
+from app.domain.python_lab_engine import (
+    compute_python_lab_metrics,
+    process_lab_rows,
 )
 from app.domain.openai_lab_clinical_service import (
     OpenAILabClinicalError,
@@ -49,7 +47,7 @@ from app.schemas.lab_analysis import (
 
 router = APIRouter(prefix="/lab-analysis", tags=["lab-analysis"])
 
-_PARSER_SOURCE = "astra_native_cpp_lab_v2"
+_PARSER_SOURCE = "astra_python_lab_v3"
 _EXTENSION_MEDIA_TYPES = {
     ".pdf": "application/pdf",
     ".png": "image/png",
@@ -99,7 +97,7 @@ def _status(value: Any) -> ResultStatus:
 
 
 def _python_fallback(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Development-only fallback; production defaults to native_lab_required=true."""
+    """Legacy-compatible deterministic Python classifier."""
     processed: list[dict[str, Any]] = []
     for source in rows:
         row = dict(source)
@@ -246,17 +244,7 @@ async def _analyze_prepared_documents(
             detail="Astra/OpenAI dosyalarda güvenilir laboratuvar sonucu bulamadı.",
         )
 
-    try:
-        rows = process_astra_lab_rows(raw_rows)
-    except NativeLabUnavailable as exc:
-        if settings.native_lab_required:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=str(exc),
-            ) from exc
-        rows = _python_fallback([dict(row) for row in raw_rows])
-    except (RuntimeError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail=f"Native lab işleme hatası: {exc}") from exc
+    rows = process_lab_rows([dict(row) for row in raw_rows])
 
     if not rows:
         raise HTTPException(status_code=400, detail="İşlenebilir laboratuvar satırı bulunamadı.")
@@ -271,19 +259,11 @@ async def _analyze_prepared_documents(
         birth_date=None,
     )
 
-    try:
-        derived_metric_dicts = compute_native_lab_metrics(
-            raw_rows,
-            patient_age=patient_metadata.age,
-            patient_sex=patient_metadata.sex,
-        )
-    except (NativeLabUnavailable, RuntimeError, ValueError) as exc:
-        if settings.native_lab_required:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=f"Native C++ clinical metrics kullanılamıyor: {exc}",
-            ) from exc
-        derived_metric_dicts = []
+    derived_metric_dicts = compute_python_lab_metrics(
+        rows,
+        patient_age=patient_metadata.age,
+        patient_sex=patient_metadata.sex,
+    )
 
     derived_metrics = [DerivedLabMetricOutput.model_validate(item) for item in derived_metric_dicts]
 
@@ -327,8 +307,8 @@ async def _analyze_prepared_documents(
         },
         metadata_json={
             "parser_source": _PARSER_SOURCE,
-            "native_contract": rows[0].get("contract_version"),
-            "native_metrics_contract": (
+            "python_contract": rows[0].get("contract_version"),
+            "python_metrics_contract": (
                 derived_metric_dicts[0].get("metrics_version") if derived_metric_dicts else None
             ),
             "reference_policy": "source_document_reference_first",
@@ -350,8 +330,8 @@ async def _analyze_prepared_documents(
             "source": _PARSER_SOURCE,
             "model": model_name,
             "source_file_count": len(source_names),
-            "native_contract": rows[0].get("contract_version"),
-            "native_metric_codes": [metric.code for metric in derived_metrics],
+            "python_contract": rows[0].get("contract_version"),
+            "python_metric_codes": [metric.code for metric in derived_metrics],
             "clinical_synthesis_source": clinical_assessment.synthesis_source,
         },
     )
@@ -419,7 +399,7 @@ async def _analyze_prepared_documents(
                 "source_page": row.get("source_page"),
                 "reference_text": row.get("reference_text"),
                 "extraction_confidence": extraction_confidence,
-                "native_contract": row.get("contract_version"),
+                "python_contract": row.get("contract_version"),
             },
         )
         persisted.append(lab_result)
@@ -465,7 +445,7 @@ async def analyze_uploaded_pdf_direct(
     session: SessionDep,
     file: UploadFile = File(...),
 ) -> AnalysisPipelineResult:
-    """Backward-compatible single file endpoint; now Astra + C++ powered."""
+    """Backward-compatible single-file endpoint; Astra + Python powered."""
     documents = await _prepare_uploads([file])
     return await _analyze_prepared_documents(session=session, documents=documents)
 

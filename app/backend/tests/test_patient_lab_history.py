@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.api.routes import lab_ingestion
-from app.domain import native_trust_clinical_ai as clinical_bridge
+from app.domain import python_trust_clinical_ai as clinical_bridge
 from app.domain import patient_lab_history as history
 from app.domain.enums import TrendStatus
 from app.domain.trend_engine import TrendEngine
@@ -33,7 +33,7 @@ def _trusted_row(*, name: str = "HbA1c", value: float = 8.1) -> dict:
         "needs_review": False,
         "trusted_for_ai": True,
         "trust_status": "TRUSTED",
-        "provenance_contract_version": "medicore-lab-provenance-v1",
+        "provenance_contract_version": "medicore-lab-provenance-python-v1",
     }
 
 
@@ -55,8 +55,8 @@ def _envelope() -> dict:
     trusted = _trusted_row()
     review = _review_row()
     return {
-        "contract_version": "medicore-native-trust-v1",
-        "provenance_contract_version": "medicore-lab-provenance-v1",
+        "contract_version": "medicore-python-trust-v1",
+        "provenance_contract_version": "medicore-lab-provenance-python-v1",
         "report_date": "2026-09-08",
         "trusted_count": 1,
         "review_count": 1,
@@ -76,9 +76,9 @@ def test_identity_prefers_loinc_and_is_stable_for_names() -> None:
     assert history._identity_code({"canonical_name": "İdrar Şekeri"}) == "NAME:idrar_sekeri"
 
 
-def test_native_trend_metrics_exclude_python_fallback() -> None:
-    native = {
-        "backend": "native_cpp",
+def test_python_trend_metrics_include_python_backend_only() -> None:
+    python_trend = {
+        "backend": "python",
         "test": "HbA1c",
         "parameter_code": "LOINC:4548-4",
         "trend_status": "up",
@@ -87,20 +87,17 @@ def test_native_trend_metrics_exclude_python_fallback() -> None:
         "percentage_difference": 10.96,
         "time_difference_days": 88,
     }
-    fallback = {**native, "backend": "python_fallback", "test": "CRP"}
+    ignored = {**python_trend, "backend": "legacy", "test": "CRP"}
 
-    metrics = clinical_bridge._native_trend_metrics([native, fallback])
+    metrics = clinical_bridge._python_trend_metrics([python_trend, ignored])
 
     assert len(metrics) == 1
     assert metrics[0]["name"] == "HbA1c longitudinal trend"
     assert metrics[0]["value"] == 10.96
 
 
-def test_trend_engine_reports_actual_fallback_backend(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_trend_engine_reports_python_backend() -> None:
     engine = TrendEngine()
-    monkeypatch.setattr(engine, "_compare_native", lambda _data: None)
 
     result, backend = engine.compare_with_backend(
         TrendComparisonInput(
@@ -111,7 +108,7 @@ def test_trend_engine_reports_actual_fallback_backend(
         )
     )
 
-    assert backend == "python_fallback"
+    assert backend == "python"
     assert result.trend_status == TrendStatus.UP
 
 
@@ -150,7 +147,7 @@ def test_longitudinal_builder_uses_only_trusted_rows(
                     reason="Value increased.",
                     needs_review=False,
                 ),
-                "native_cpp",
+                "python",
             )
 
     monkeypatch.setattr(history, "LabResultRepository", FakeRepository)
@@ -166,7 +163,7 @@ def test_longitudinal_builder_uses_only_trusted_rows(
 
     assert lookups == ["LOINC:4548-4"]
     assert len(trends) == 1
-    assert trends[0]["backend"] == "native_cpp"
+    assert trends[0]["backend"] == "python"
     assert trends[0]["trend_status"] == "up"
     assert trends[0]["previous_value"] == 7.3
     assert trends[0]["current_value"] == 8.1
@@ -200,7 +197,7 @@ def test_missing_current_date_never_consumes_a_previous_result(
                     confidence=0.0,
                     reason="No previous result available for comparison.",
                 ),
-                "python_fallback",
+                "python",
             )
 
     monkeypatch.setattr(history, "LabResultRepository", FakeRepository)
@@ -236,7 +233,7 @@ def test_finalize_persists_patient_history_and_passes_trends_to_ai(
     async def fake_trends(session, *, patient, trust_envelope):
         return [
             {
-                "backend": "native_cpp",
+                "backend": "python",
                 "test": "HbA1c",
                 "parameter_code": "LOINC:4548-4",
                 "trend_status": "up",
@@ -247,7 +244,7 @@ def test_finalize_persists_patient_history_and_passes_trends_to_ai(
     async def fake_ai(trust_envelope, *, longitudinal_trends):
         seen["ai_trends"] = longitudinal_trends
         return {
-            "contract_version": "medicore-native-trust-clinical-ai-v1",
+            "contract_version": "medicore-python-trust-clinical-ai-v1",
             "ai_used": True,
             "longitudinal_trends": longitudinal_trends,
         }
@@ -261,7 +258,7 @@ def test_finalize_persists_patient_history_and_passes_trends_to_ai(
 
     monkeypatch.setattr(lab_ingestion, "ensure_patient_access", fake_access)
     monkeypatch.setattr(lab_ingestion, "build_longitudinal_trends", fake_trends)
-    monkeypatch.setattr(lab_ingestion, "run_native_trust_clinical_pipeline", fake_ai)
+    monkeypatch.setattr(lab_ingestion, "run_python_trust_clinical_pipeline", fake_ai)
     monkeypatch.setattr(lab_ingestion, "persist_patient_lab_case", fake_persist)
 
     patient_id = uuid.uuid4()

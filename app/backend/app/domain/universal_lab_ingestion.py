@@ -1,8 +1,8 @@
-"""Seven-source laboratory ingestion gateway.
+"""Multi-source laboratory ingestion gateway.
 
 The gateway terminates source-specific formats and emits only
-``medicore-canonical-lab-v1``. It deliberately stops before native C++ validation;
-that boundary is wired in the next pipeline phase.
+``medicore-canonical-lab-v1``. Deterministic Python validation is applied in the
+next pipeline phase.
 """
 
 from __future__ import annotations

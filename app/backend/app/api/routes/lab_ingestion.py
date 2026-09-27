@@ -1,9 +1,9 @@
-"""Authenticated seven-source laboratory ingestion -> C++ trust -> history -> AI.
+"""Authenticated multi-source laboratory ingestion -> Python trust -> history -> AI.
 
-Every source is normalized into ``medicore-canonical-lab-v1`` and must cross the
-native C++ trust boundary. When ``patient_id`` is supplied, trusted longitudinal
-comparisons are resolved from PostgreSQL before clinical synthesis and the complete
-source/trust/trend/AI snapshot is persisted atomically to the patient's history.
+Every source is normalized into ``medicore-canonical-lab-v1`` and crosses a
+deterministic Python validation boundary. When ``patient_id`` is supplied,
+longitudinal comparisons are resolved from PostgreSQL before optional clinical
+synthesis and the source/trust/trend snapshot is persisted to patient history.
 """
 
 from __future__ import annotations
@@ -24,15 +24,14 @@ from app.domain.canonical_lab_model import (
     SOURCE_PHOTO,
     SOURCE_SCREENSHOT,
 )
-from app.domain.canonical_native_trust import (
-    NATIVE_TRUST_CONTRACT,
+from app.domain.canonical_python_trust import (
+    PYTHON_TRUST_CONTRACT,
     process_canonical_lab_case,
 )
 from app.domain.fast_pdf_lab_parser import try_fast_pdf_lab_case
-from app.domain.native_lab_engine import NativeLabUnavailable
-from app.domain.native_trust_clinical_ai import (
-    NATIVE_TRUST_CLINICAL_AI_CONTRACT,
-    run_native_trust_clinical_pipeline,
+from app.domain.python_trust_clinical_ai import (
+    PYTHON_TRUST_CLINICAL_AI_CONTRACT,
+    run_python_trust_clinical_pipeline,
 )
 from app.domain.openai_lab_extraction_service import OpenAILabExtractionError
 from app.domain.patient_lab_history import (
@@ -76,7 +75,7 @@ class IntegrationLabIngestionInput(BaseModel):
 def _raise_ingestion_error(exc: Exception) -> None:
     if isinstance(exc, HTTPException):
         raise exc
-    if isinstance(exc, (OpenAILabExtractionError, NativeLabUnavailable, RuntimeError)):
+    if isinstance(exc, (OpenAILabExtractionError, RuntimeError)):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(exc),
@@ -111,7 +110,7 @@ async def _finalize_canonical_case(
         )
 
     if clinical_ai:
-        result = await run_native_trust_clinical_pipeline(
+        result = await run_python_trust_clinical_pipeline(
             trust_envelope,
             longitudinal_trends=longitudinal_trends,
         )
@@ -196,11 +195,11 @@ async def _ingest_file_with_fast_pdf_fallback(
 @router.get("/capabilities")
 async def capabilities() -> dict[str, Any]:
     payload = ingestion_capabilities()
-    payload["downstream_contract"] = NATIVE_TRUST_CONTRACT
-    payload["native_trust_required"] = True
+    payload["downstream_contract"] = PYTHON_TRUST_CONTRACT
+    payload["python_trust_required"] = True
     payload["clinical_ai_optional"] = True
     payload["clinical_ai_query_parameter"] = "clinical_ai=true"
-    payload["clinical_pipeline_contract"] = NATIVE_TRUST_CLINICAL_AI_CONTRACT
+    payload["clinical_pipeline_contract"] = PYTHON_TRUST_CLINICAL_AI_CONTRACT
     payload["patient_history_optional"] = True
     payload["patient_history_query_parameter"] = "patient_id=<uuid>"
     payload["patient_history_contract"] = PATIENT_LAB_HISTORY_CONTRACT
@@ -454,7 +453,7 @@ async def evaluate_saved_lab_report(
             else []
         )
 
-        result = await run_native_trust_clinical_pipeline(
+        result = await run_python_trust_clinical_pipeline(
             trust_envelope,
             longitudinal_trends=longitudinal_trends,
         )
@@ -464,7 +463,7 @@ async def evaluate_saved_lab_report(
             "clinical_assessment": result.get("clinical_assessment"),
             "ai_attempted": bool(result.get("ai_attempted")),
             "ai_used": bool(result.get("ai_used")),
-            "native_trends_used_by_ai": int(result.get("native_trends_used_by_ai") or 0),
+            "python_trends_used_by_ai": int(result.get("python_trends_used_by_ai") or 0),
         }
         report.metadata_json = report_metadata
         report.status = "analyzed"

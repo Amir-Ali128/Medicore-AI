@@ -1,9 +1,8 @@
-"""Physician-assistive laboratory synthesis built on native-validated facts.
+"""Physician-facing laboratory synthesis built on Python-validated facts.
 
-The language model never performs deterministic laboratory arithmetic here. It receives
-rows already normalized/classified by MediCore's C++ core plus derived metrics calculated
-by that same native core. Rows that fail or weaken native validation are separated from
-AI-eligible facts and are presented only as review items.
+The language model receives rows already normalized and classified by MediCore's
+deterministic Python layer. Rows that require review remain non-authoritative and
+cannot be promoted into verified evidence by the generative layer.
 """
 
 from __future__ import annotations
@@ -86,56 +85,59 @@ _CLINICAL_SCHEMA: dict[str, Any] = {
 
 
 _INSTRUCTIONS = """
-You are the clinical laboratory synthesis layer of MediCore-AI, a physician-assistive
-clinical decision support system. Write in clear, natural Turkish suitable for a
-physician and an informed patient reading together.
+You are MediCore's physician-facing clinical laboratory synthesis layer.
 
-The input contains three fact layers:
-1) lab_rows: measured values whose deterministic comparison passed MediCore's native
-   C++ validation and can be used as primary laboratory facts.
-2) review_rows: rows marked WARNING, NEEDS_REVIEW or INVALID by the C++ core. They are
-   supplied only so you can state limitations/review needs; NEVER use them as verified
-   evidence for a clinical conclusion and NEVER silently repair or reinterpret them.
-3) derived_metrics: deterministic calculations produced by the native C++ core.
+Write in formal, concise Turkish medical-report language intended for a licensed
+physician. The output should sound like a clinical assessment note, not a chatbot,
+patient education article, marketing text, or AI explanation.
 
-Hard rules:
-- NEVER recalculate a value or derived metric yourself. Use the supplied C++ values.
-- NEVER override a C++ result_status or validation_status.
-- NEVER promote review_rows into trusted facts, even if a value looks clinically plausible.
-- NEVER infer a missing digit, decimal separator, unit, comparator or reference range.
-- Clearly distinguish measured laboratory values from calculated metrics.
-- Never invent a reference range, diagnosis, symptom, medication, history or test.
-- Do not prescribe medication, dose changes, or treatment. Follow-up may recommend
-  physician review or clinically relevant confirmatory/monitoring tests.
-- Do not call one reduced eGFR value chronic kidney disease. A chronic diagnosis
-  requires persistence over time and/or other evidence of kidney damage.
-- FIB-4 is a risk index, not a fibrosis diagnosis. In adults over 65, explicitly note
-  that age can raise FIB-4 and reduce specificity when that metric is present.
-- eAG is calculated from HbA1c and is not an independently measured glucose result.
-- Glycemic targets in older adults are individualized. If glucose/HbA1c are clearly
-  elevated, explain the pattern and the need for clinician review without choosing a
-  treatment target for the patient.
-- If existing diabetes history is not provided, use language such as "diyabet ile
-  uyumlu olabilir / diyabet olasılığını güçlü destekleyebilir; klinik doğrulama gerekir"
-  rather than claiming a definitive diagnosis.
+Input layers:
+1) lab_rows: measured values that passed MediCore's deterministic Python validation
+   and may be used as laboratory evidence.
+2) review_rows: uncertain/incomplete rows. They may only be mentioned as limitations
+   or items requiring verification; never use them as confirmed evidence.
+3) derived_metrics: deterministic calculations supplied by the backend. Never
+   recalculate them.
+
+Clinical-language rules:
+- Use impersonal professional wording such as "mevcut bulgular birlikte
+  değerlendirildiğinde", "ile uyumlu olabilir", "ön planda düşünülebilir",
+  "ayırıcı tanıda değerlendirilebilir" and "klinik korelasyon önerilir".
+- Prefer "bulgular", "değerlendirme", "klinik korelasyon", "izlem" and
+  "doğrulama" over conversational phrases.
+- Do not address the reader as "sen/siz" and do not say "AI düşünüyor".
+- Do not state a definitive diagnosis unless the input explicitly contains a
+  clinician-established diagnosis; laboratory data alone must not be converted into
+  a final diagnosis.
+- Never invent symptoms, history, medications, imaging findings, reference ranges,
+  units, thresholds, or missing digits.
+- Never silently repair uncertain rows.
+- Do not prescribe a drug, dose, duration, or treatment regimen.
+- Follow-up may suggest physician review, repeat/confirmatory testing, monitoring,
+  correlation with examination/history, or specialist assessment when supported.
+- A single reduced eGFR does not establish chronic kidney disease.
+- FIB-4 is a risk index, not a fibrosis diagnosis.
+- eAG calculated from HbA1c is not an independently measured glucose value.
+- If diabetes history is not supplied, describe compatible glycemic patterns without
+  declaring diabetes as a final diagnosis.
 - A missing printed reference range means deterministic normality cannot be claimed.
-  Preserve that uncertainty.
-- Reserve severity "critical" for findings whose urgency is clearly supported by the
-  supplied evidence. Do not invent emergency cutoffs.
-- Mention reassuring normal findings compactly; do not narrate every normal row one-by-one.
-- Rank the most important clinical pattern first. Group related values by system only
-  when evidence for that group exists.
-- Every substantive claim must be traceable to supplied evidence strings.
-- Do not include patient name, identity number, address, phone, email, protocol number
+- Reserve "critical" for urgency clearly supported by supplied evidence; never invent
+  emergency cutoffs.
+- Summarize normal findings compactly. Prioritize abnormalities and clinically
+  coherent patterns.
+- Every substantive statement must be traceable to supplied evidence.
+- Never expose patient name, identity number, address, phone, email, protocol number,
   or exact date of birth.
-- Keep the JSON compact: prefer at most 6 priority findings, 6 systems, 8 reassuring
-  findings, 6 priority actions and 6 limitations. Avoid repeating the same evidence
-  across sections when one concise reference is sufficient.
+- Keep JSON concise: at most 6 priority findings, 6 systems, 8 reassuring findings,
+  6 priority actions and 6 limitations.
 
-narrative_tr should read like a concise high-quality clinical explanation: start with
-"Bu sonuçlarda en önemli konu ..." when there is a clear leading issue, then use short
-section headings and paragraphs, and finish with an explicit priority order. It is a
-clinical decision-support summary, not a diagnosis or treatment order.
+narrative_tr must read like a short physician assessment:
+1) dominant laboratory pattern,
+2) supporting/contradictory findings,
+3) limitations or missing context,
+4) clinically appropriate next evaluation steps.
+Do not use numeric disease probabilities. This is clinical decision support, not a
+diagnosis or treatment order.
 """.strip()
 
 
@@ -154,7 +156,7 @@ def _json_safe(value: Any) -> Any:
 
 
 def _validation_state(row: Mapping[str, Any]) -> str:
-    """Normalize native validation state while remaining compatible with v1 rows."""
+    """Normalize Python validation state while remaining compatible with v1 rows."""
     explicit = str(row.get("validation_status") or "").strip().upper()
     if explicit in {"VALID", "WARNING", "NEEDS_REVIEW", "INVALID"}:
         return explicit
@@ -200,11 +202,10 @@ def _metric_input(metric: Mapping[str, Any]) -> dict[str, Any]:
 def partition_rows_for_ai(
     rows: Sequence[Mapping[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Separate C++-validated facts from rows that must remain review-only.
+    """Separate Python-validated facts from rows that must remain review-only.
 
-    This is the trust boundary between deterministic native processing and generative
-    clinical synthesis. The AI gets review rows for transparency, but they cannot enter
-    the trusted evidence list.
+    This is the trust boundary between deterministic Python validation and generative
+    clinical synthesis. Review rows remain transparent but non-authoritative.
     """
     trusted: list[dict[str, Any]] = []
     review: list[dict[str, Any]] = []
@@ -268,12 +269,12 @@ def build_fallback_clinical_assessment(
     if abnormal:
         narrative_parts.append("Öne çıkanlar:\n" + "\n".join(f"• {evidence(row)}" for row in abnormal[:8]))
     if metric_lines:
-        narrative_parts.append("C++ ile hesaplanan ek metrikler:\n" + "\n".join(f"• {line}" for line in metric_lines))
+        narrative_parts.append("Python ile hesaplanan ek metrikler:\n" + "\n".join(f"• {line}" for line in metric_lines))
     if normal_evidence:
         narrative_parts.append("Kaynak aralığı içinde doğrulanmış bazı sonuçlar:\n" + "\n".join(f"• {line}" for line in normal_evidence))
     if review_rows:
         narrative_parts.append(
-            f"{len(review_rows)} sonuç C++ doğrulama katmanı tarafından kaynak/hekim kontrolüne ayrıldı ve klinik kanıt olarak kullanılmadı."
+            f"{len(review_rows)} sonuç doğrulama katmanı tarafından kaynak/hekim kontrolüne ayrıldı ve klinik kanıt olarak kullanılmadı."
         )
     narrative_parts.append("Bu çıktı klinik karar desteğidir; tanı veya tedavi kararı değildir.")
 
@@ -288,7 +289,7 @@ def build_fallback_clinical_assessment(
 
     return {
         "headline": headline,
-        "overview": "Laboratuvar sonuçları native C++ sınıflandırması, doğrulama durumu ve kaynak referansları temel alınarak özetlendi.",
+        "overview": "Laboratuvar sonuçları Python sınıflandırması, doğrulama durumu ve kaynak referansları temel alınarak özetlendi.",
         "priority_findings": priority_findings,
         "systems": [],
         "reassuring_findings": normal_evidence,
@@ -327,7 +328,7 @@ async def synthesize_lab_clinical_assessment(
         "review_rows": review_rows,
         "derived_metrics": [_metric_input(metric) for metric in derived_metrics],
         "trust_policy": {
-            "primary_lab_facts": "native_cpp_validation_status_VALID_only",
+            "primary_lab_facts": "python_validation_status_VALID_only",
             "review_rows_are_non_authoritative": True,
             "silent_correction_allowed": False,
         },
@@ -378,5 +379,5 @@ async def synthesize_lab_clinical_assessment(
     if not isinstance(assessment, dict):
         raise OpenAILabClinicalError("OpenAI klinik laboratuvar sentezi beklenen şemada değil.")
     assessment["model"] = model
-    assessment["synthesis_source"] = "ai_after_native_cpp"
+    assessment["synthesis_source"] = "ai_after_python_validation"
     return assessment
