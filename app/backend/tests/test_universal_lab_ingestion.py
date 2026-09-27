@@ -87,7 +87,7 @@ def test_manual_entry_becomes_canonical_without_clinical_classification() -> Non
     assert row["reference_min"] == 0.0
     assert row["normalized_value"] == 6.4
     assert "result_status" not in row
-    assert row["python_ready"] if "python_ready" in row else case["python_ready"]
+    assert case["contract_version"] == "medicore-canonical-lab-v1"
 
 
 @pytest.mark.parametrize(
