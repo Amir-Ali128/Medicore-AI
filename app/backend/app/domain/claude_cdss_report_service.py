@@ -21,6 +21,23 @@ from app.schemas.extraction import LabExtractionResult
 
 _MAX_TOKENS = 6000
 
+_CHAT_STYLE_MARKERS = (
+    "ai'ya göre",
+    "bir yapay zeka olarak",
+    "merhaba",
+    "bence",
+    "sana önerim",
+    "size önerim",
+)
+_TREATMENT_ORDER_MARKERS = (
+    "ilaç başlan",
+    "tedavi başlan",
+    "reçete",
+    "şu ilacı",
+    "kullanmaya başla",
+    "kullanmaya başlayın",
+)
+
 _SYSTEM_PROMPT = """
 You are MediCore's physician-facing clinical decision-support report writer.
 
@@ -173,7 +190,7 @@ class ClaudeCDSSReportService:
                 "CDSS model output did not match the expected report schema."
             ) from exc
 
-        return report.model_copy(
+        report = report.model_copy(
             update={
                 "physician_review_required": True,
                 "disclaimer": (
@@ -182,6 +199,36 @@ class ClaudeCDSSReportService:
                 ),
             }
         )
+        self._validate_physician_style(report)
+        return report
+
+    @staticmethod
+    def _validate_physician_style(report: CDSSReport) -> None:
+        """Fail closed if the model slips into chatty or prescriptive language."""
+        general_texts = [
+            report.clinical_information,
+            report.imaging_findings,
+            report.clinical_assessment,
+            report.conclusion,
+            *report.laboratory_findings,
+            *report.attention_points,
+            *report.limitations,
+            *(item.condition for item in report.differential_diagnosis),
+            *(item.rationale for item in report.differential_diagnosis),
+        ]
+        folded = "\n".join(str(item or "") for item in general_texts).casefold()
+        if any(marker in folded for marker in _CHAT_STYLE_MARKERS):
+            raise ValueError(
+                "CDSS output failed physician-style validation."
+            )
+
+        action_text = "\n".join(
+            str(item or "") for item in report.recommended_clinical_evaluation
+        ).casefold()
+        if any(marker in action_text for marker in _TREATMENT_ORDER_MARKERS):
+            raise ValueError(
+                "CDSS output contained treatment-order language."
+            )
 
     @staticmethod
     def _collect_text(response: Any) -> str:
