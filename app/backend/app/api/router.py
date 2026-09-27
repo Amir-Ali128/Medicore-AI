@@ -5,6 +5,7 @@ from app.api.routes import (
     analysis_runs,
     analytics,
     auth,
+    cdss_report,
     clinical_brain,
     clinical_copilot,
     clinical_fusion,
@@ -30,21 +31,12 @@ from app.api.routes import (
     radiology_reports,
     scanned_medical_report_pdf,
 )
-from app.domain.native_lab_direct_ai import synthesize_lab_clinical_assessment_native
 from app.domain.radiology_report_safety import analyze_radiology_report_safely
 from app.schemas.lab_analysis import PatientMetadataOutput
 
 # Keep the existing radiology routes intact while enforcing the conservative
 # findings-only evidence filter for every manual-text and PDF analysis request.
 radiology_reports.analyze_radiology_report = analyze_radiology_report_safely
-
-# Prefer the new native C++ -> AI transport for the clinical lab synthesis hop.
-# The bridge itself falls back to the established Python provider client when the
-# optional native HTTP transport is unavailable, so rollout stays backwards compatible.
-lab_pdf_direct_upload.synthesize_lab_clinical_assessment = (
-    synthesize_lab_clinical_assessment_native
-)
-
 
 def _privacy_safe_lab_patient_metadata(text: str) -> PatientMetadataOutput:
     """Keep useful coarse demographics while dropping direct PDF identifiers.
@@ -82,8 +74,8 @@ api_router.include_router(lab_pdf_direct_alias.router)
 api_router.include_router(lab_pdf_direct_upload.router)
 api_router.include_router(lab_pdf_system_extract.router)
 api_router.include_router(lab_analysis.router)
-# Seven-source gateway: canonical -> native C++ trust -> optional patient history,
-# longitudinal native trends and clinical AI.
+# Multi-source gateway: canonical -> deterministic Python trust -> optional
+# patient history, longitudinal trends and clinical AI.
 api_router.include_router(lab_ingestion.router)
 api_router.include_router(lab_manual_entry.router)
 api_router.include_router(combined_case_import.router)
@@ -94,6 +86,7 @@ api_router.include_router(clinical_hypotheses.router)
 api_router.include_router(doctor_reviews.router)
 api_router.include_router(extraction.router)
 api_router.include_router(clinical_copilot.router)
+api_router.include_router(cdss_report.router)
 api_router.include_router(clinical_fusion.router)
 api_router.include_router(clinical_brain.router)
 api_router.include_router(extraction_review.router)

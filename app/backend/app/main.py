@@ -52,7 +52,6 @@ from app.infrastructure.database.startup_migrations import (
 )
 from app.infrastructure.runtime_health import (
     build_readiness_snapshot,
-    refresh_native_runtime_health,
     run_noncritical_startup_step,
 )
 
@@ -97,13 +96,6 @@ async def lifespan(_: FastAPI):
             f"removed {purged_analytics_rows} stale presence row(s)."
         )
 
-    # Native modules are probed outside this API process. A broken pybind library or
-    # native crash therefore degrades readiness metadata without killing FastAPI.
-    settings = get_settings()
-    await refresh_native_runtime_health(
-        timeout_seconds=settings.health_check_timeout_seconds,
-    )
-
     yield
 
 
@@ -138,7 +130,7 @@ async def liveness() -> dict[str, str]:
 
 @app.get("/health/ready", tags=["health"])
 async def readiness() -> JSONResponse:
-    """Readiness: database is critical; optional AI/model/native failures are degraded."""
+    """Readiness: database is critical; optional AI/provider failures are degraded."""
     settings = get_settings()
     snapshot = await build_readiness_snapshot(
         engine,

@@ -5,7 +5,7 @@ from app.domain.openai_lab_clinical_service import (
 from app.schemas.lab_analysis import LabClinicalAssessmentOutput
 
 
-def test_fallback_clinical_assessment_preserves_native_status_and_metrics() -> None:
+def test_fallback_clinical_assessment_preserves_python_status_and_metrics() -> None:
     rows = [
         {
             "display_name": "HbA1c",
@@ -99,7 +99,7 @@ def test_fallback_does_not_promote_warning_abnormal_row_to_clinical_finding() ->
     validated = LabClinicalAssessmentOutput.model_validate(payload)
 
     assert validated.priority_findings == []
-    assert "1 sonuç C++ doğrulama katmanı" in validated.narrative_tr
+    assert "1 sonuç doğrulama katmanı" in validated.narrative_tr
     assert any("klinik kanıta dahil edilmedi" in item for item in validated.limitations)
 
 
