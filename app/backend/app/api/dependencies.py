@@ -17,6 +17,7 @@ from app.core.config import get_settings
 
 from app.domain.alias_engine import AliasEngine
 from app.domain.analysis_pipeline import AnalysisPipeline
+from app.domain.claude_cdss_report_service import ClaudeCDSSReportService
 from app.domain.claude_clinical_hypothesis_service import (
     ClaudeClinicalHypothesisService,
 )
@@ -331,6 +332,33 @@ def get_claude_clinical_hypothesis_service(
 ClaudeClinicalHypothesisServiceDep = Annotated[
     ClaudeClinicalHypothesisService,
     Depends(get_claude_clinical_hypothesis_service),
+]
+
+
+# --- Simplified physician-facing CDSS ------------------------------------
+def get_claude_cdss_report_service() -> ClaudeCDSSReportService:
+    settings = get_settings()
+    model = (
+        settings.claude_cdss_model
+        or settings.claude_hypothesis_model
+        or settings.claude_vision_model
+    )
+
+    try:
+        return ClaudeCDSSReportService(
+            api_key=settings.anthropic_api_key,
+            model=model,
+        )
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="CDSS report service is not configured.",
+        ) from None
+
+
+ClaudeCDSSReportServiceDep = Annotated[
+    ClaudeCDSSReportService,
+    Depends(get_claude_cdss_report_service),
 ]
 
 
