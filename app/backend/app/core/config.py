@@ -58,6 +58,10 @@ class Settings(BaseSettings):
     # --- Claude clinical hypothesis copilot (Module J) ------------------
     claude_hypothesis_model: str | None = None
 
+    # --- Simplified physician-facing CDSS -------------------------------
+    # Optional. Falls back to the configured hypothesis/vision model.
+    claude_cdss_model: str | None = None
+
     # --- Experimental X-ray / ultrasound image review -------------------
     # Maximum-quality Claude vision profile. Runtime deployments can override this
     # with CLAUDE_VISION_MODEL without changing code.
