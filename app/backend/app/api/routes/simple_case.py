@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import io
 import uuid
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Annotated
 
@@ -348,6 +348,53 @@ async def ai_interpret_case(payload: SimpleCaseRequest) -> CaseAIInterpretationR
             status_code=503,
             detail=f"AI klinik yorum tamamlanamadı: {exc}",
         ) from exc
+
+    return CaseAIInterpretationResponse(
+        report_text=result.report_text,
+        model=result.model,
+    )
+
+
+@router.post(
+    "/patients/{patient_id}/ai-interpretation",
+    response_model=CaseAIInterpretationResponse,
+)
+async def ai_interpret_patient_case(
+    patient_id: uuid.UUID,
+    payload: SimpleCaseRequest,
+    session: SessionDep,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+) -> CaseAIInterpretationResponse:
+    """Generate and persist the physician-style AI report for a saved patient case."""
+
+    patient = await session.get(Patient, patient_id)
+    if patient is None:
+        raise HTTPException(status_code=404, detail="Hasta kaydı bulunamadı.")
+
+    if current_user.role == UserRole.PATIENT:
+        owner_user_id = (patient.metadata_json or {}).get("owner_user_id")
+        if owner_user_id != str(current_user.id):
+            raise HTTPException(status_code=404, detail="Hasta kaydı bulunamadı.")
+
+    try:
+        result = await interpret_simple_case(payload)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"AI klinik yorum tamamlanamadı: {exc}",
+        ) from exc
+
+    metadata = dict(patient.metadata_json or {})
+    metadata["simple_case_ai_report"] = {
+        "report_text": result.report_text,
+        "model": result.model,
+        "generated_at": datetime.now(UTC).isoformat(),
+    }
+    patient.metadata_json = metadata
+    await session.commit()
+    await session.refresh(patient)
 
     return CaseAIInterpretationResponse(
         report_text=result.report_text,
