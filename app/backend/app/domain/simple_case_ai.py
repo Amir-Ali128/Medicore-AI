@@ -127,47 +127,72 @@ async def interpret_simple_case(payload: SimpleCaseRequest) -> CaseAIInterpretat
     prompt = json.dumps(case_payload, ensure_ascii=False, separators=(",", ":"))
     client = AsyncAnthropic(api_key=settings.anthropic_api_key)
 
-    try:
-        response = await client.messages.create(
-            model=model,
-            max_tokens=4200,
-            system=_SYSTEM_PROMPT,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": prompt[:160_000],
-                        }
-                    ],
-                }
-            ],
-        )
-    except Exception as exc:
-        raise RuntimeError(f"AI klinik rapor üretimi başarısız: {exc}") from exc
-
-    text = "".join(
-        block.text
-        for block in response.content
-        if getattr(block, "type", None) == "text" and getattr(block, "text", None)
-    ).strip()
-
-    if not text:
-        raise RuntimeError("AI klinik rapor modeli boş yanıt döndürdü.")
-
     required_headings = (
         "KLİNİK ÖZET",
         "ÖNE ÇIKAN LABORATUVAR BULGULARI",
         "TETKİK / RAPOR BULGULARI",
         "ENTEGRE KLİNİK DEĞERLENDİRME",
         "OLASI KLİNİK DURUMLAR / AYIRICI TANI",
-        "SONUÇ / KANAAT",
         "ÖNERİLEN İLERİ TETKİK / İZLEM",
+        "SONUÇ / KANAAT",
         "HEKİM NOTU",
     )
-    if not any(heading in text.upper() for heading in required_headings):
-        text = "KLİNİK DEĞERLENDİRME RAPORU\n\n" + text
+
+    async def generate(extra_instruction: str | None = None) -> str:
+        user_text = prompt[:160_000]
+        if extra_instruction:
+            user_text += "\n\n" + extra_instruction
+
+        response = await client.messages.create(
+            model=model,
+            max_tokens=5200,
+            system=_SYSTEM_PROMPT,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": user_text}],
+                }
+            ],
+        )
+
+        return "".join(
+            block.text
+            for block in response.content
+            if getattr(block, "type", None) == "text" and getattr(block, "text", None)
+        ).strip()
+
+    def missing_headings(report_text: str) -> list[str]:
+        upper = report_text.upper()
+        return [heading for heading in required_headings if heading not in upper]
+
+    try:
+        text = await generate()
+    except Exception as exc:
+        raise RuntimeError(f"AI klinik rapor üretimi başarısız: {exc}") from exc
+
+    if not text:
+        raise RuntimeError("AI klinik rapor modeli boş yanıt döndürdü.")
+
+    missing = missing_headings(text)
+    if missing:
+        retry_instruction = (
+            "Önceki yanıt eksik bölümler içerdi. Vaka verisini yeniden değerlendir ve raporu baştan yaz. "
+            "Aşağıdaki başlıkların TAMAMINI, tam bu yazımla ve bu sırayla kullan: "
+            + " | ".join(required_headings)
+            + ". Hiçbir bölümü atlama. Kısa ve taranabilir yaz."
+        )
+        try:
+            retried = await generate(retry_instruction)
+            if retried:
+                text = retried
+        except Exception:
+            pass
+
+    missing = missing_headings(text)
+    if missing:
+        raise RuntimeError(
+            "AI klinik raporu eksik üretildi. Eksik bölümler: " + ", ".join(missing)
+        )
 
     return CaseAIInterpretation(
         report_text=text[:24_000],
