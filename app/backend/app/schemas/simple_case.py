@@ -102,11 +102,5 @@ class SimpleCaseResponse(BaseModel):
 
 
 class CaseAIInterpretationResponse(BaseModel):
-    clinical_summary: str
-    integrated_findings: list[str] = Field(default_factory=list)
-    correlations: list[str] = Field(default_factory=list)
-    attention_points: list[str] = Field(default_factory=list)
-    missing_or_conflicting_data: list[str] = Field(default_factory=list)
-    clinician_conclusion: str
-    limitations: list[str] = Field(default_factory=list)
+    report_text: str
     model: str
