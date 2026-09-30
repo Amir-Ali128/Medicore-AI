@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 
 import {
   createPatient,
@@ -40,7 +40,7 @@ function fileNameFromMetadata(metadata?: Record<string, unknown>) {
 }
 
 export default function SimpleCaseWorkspacePage() {
-  const location = useLocation();
+  const [searchParams] = useSearchParams();
   const [step, setStep] = useState<Step>('patient');
 
   const [protocolNo, setProtocolNo] = useState('');
@@ -69,8 +69,8 @@ export default function SimpleCaseWorkspacePage() {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    const routeState = location.state as { patientId?: string; step?: Step } | null;
-    const activePatientId = routeState?.patientId || getActivePatientId();
+    const requestedPatientId = searchParams.get('patient');
+    const activePatientId = requestedPatientId || getActivePatientId();
     if (!activePatientId) return;
     const patientIdToLoad: string = activePatientId;
 
@@ -135,7 +135,7 @@ export default function SimpleCaseWorkspacePage() {
 
         setAiInterpretation(saved.ai_report);
 
-        const requestedStep = routeState?.step ?? null;
+        const requestedStep = searchParams.get('step') as Step | null;
         const validStep = steps.some((item) => item.key === requestedStep)
           ? (requestedStep as Step)
           : null;
@@ -151,7 +151,7 @@ export default function SimpleCaseWorkspacePage() {
     return () => {
       cancelled = true;
     };
-  }, [location.key]);
+  }, [searchParams]);
 
   const payload = useMemo<SimpleCaseRequest>(
     () => ({
