@@ -19,6 +19,10 @@ from app.domain.openai_lab_extraction_service import (
     OpenAILabExtractionError,
     extract_lab_document_with_openai,
 )
+from app.domain.scanned_medical_report_pdf_ai import (
+    ScannedMedicalReportExtractionError,
+    extract_scanned_medical_report_pdf,
+)
 from app.domain.simple_case import normalize_simple_case
 from app.infrastructure.database.models.patient import Patient
 from app.infrastructure.database.models.user import User
@@ -179,17 +183,59 @@ async def upload_report_pdf(
     if len(content) > _MAX_PDF_BYTES:
         raise HTTPException(status_code=413, detail="PDF dosyası 15 MB sınırını aşıyor.")
 
-    text = _extract_pdf_text(content)
+    try:
+        text = _extract_pdf_text(content)
+        source_type = "pdf_text"
+        detected_report_type = report_type.strip() or "Tıbbi Rapor"
+        warnings: list[str] = []
+        confidence = None
+        model = None
+    except HTTPException as exc:
+        if exc.status_code != 400:
+            raise
+        try:
+            extraction = await extract_scanned_medical_report_pdf(
+                content=content,
+                file_name=file.filename or "medical-report.pdf",
+            )
+        except ScannedMedicalReportExtractionError as extraction_exc:
+            raise HTTPException(
+                status_code=422,
+                detail=str(extraction_exc),
+            ) from extraction_exc
+
+        if extraction is None:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "PDF taranmış/görüntü tabanlı ve görüntüden metin çıkarma "
+                    "sağlayıcısı yapılandırılmamış."
+                ),
+            )
+
+        text = extraction.deidentified_text
+        source_type = "scanned_pdf_vision"
+        detected_report_type = (
+            report_type.strip()
+            if report_type.strip() and report_type.strip() != "Tıbbi Rapor"
+            else extraction.document_type
+        )
+        warnings = list(extraction.warnings)
+        confidence = extraction.confidence
+        model = extraction.model
 
     return MedicalReportInput(
-        report_type=report_type.strip() or "Tıbbi Rapor",
+        report_type=detected_report_type or "Tıbbi Rapor",
         body_region=body_region.strip() if body_region else None,
         findings=text,
         impression=None,
         raw_text=text,
         metadata={
             "source_file_name": file.filename,
-            "source_type": "pdf_upload",
+            "source_type": source_type,
+            "extraction_warnings": warnings,
+            "extraction_confidence": confidence,
+            "extraction_model": model,
         },
     )
 
