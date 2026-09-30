@@ -16,6 +16,7 @@ import {
   type SimpleCaseResponse,
 } from '../services/simpleCaseClient';
 import { getActivePatientId } from '../services/patientClient';
+import { simpleCaseInputKey } from '../services/simpleCaseInputKey';
 
 type Step = 'patient' | 'clinical' | 'labs' | 'reports' | 'summary';
 
@@ -226,13 +227,10 @@ export default function SimpleCaseWorkspacePage() {
 
         setAiResult(saved.ai_report && simpleCase ? {
           report: saved.ai_report,
-          inputKey: JSON.stringify({
-            patientId: saved.patient_id,
-            payload: {
-              clinical: simpleCase.clinical,
-              labs: restoredLabs,
-              reports: simpleCase.reports,
-            },
+          inputKey: simpleCaseInputKey(saved.patient_id, {
+            clinical: simpleCase.clinical,
+            labs: restoredLabs,
+            reports: simpleCase.reports,
           }),
         } : null);
         if (saved.ai_report && !isCurrentClinicalReport(saved.ai_report.report_text)) {
@@ -276,7 +274,7 @@ export default function SimpleCaseWorkspacePage() {
   );
 
   // Hide responses produced for earlier inputs, including late AI responses.
-  const inputKey = JSON.stringify({ patientId, payload });
+  const inputKey = simpleCaseInputKey(patientId, payload);
   const aiInterpretation = aiResult?.inputKey === inputKey ? aiResult.report : null;
 
   const completed = {
