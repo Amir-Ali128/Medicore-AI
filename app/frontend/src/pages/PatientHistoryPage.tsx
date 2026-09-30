@@ -289,6 +289,22 @@ function RecordCard({
                         <p className="mt-1 text-[11px] text-slate-500">
                           Tahlil tarihi: {formatShortDate(report.report_date || report.created_at)}
                         </p>
+                        {report.metadata_json?.simple_case_results?.length ? (
+                          <div className="mt-2 space-y-1 border-t border-emerald-100 pt-2">
+                            {report.metadata_json.simple_case_results.slice(0, 6).map((item, itemIndex) => (
+                              <p key={`${item.test_name}-${itemIndex}`} className="text-[11px] leading-4 text-slate-700">
+                                <span className="font-semibold">{item.test_name}:</span>{' '}
+                                {[item.value, item.unit].filter((value) => value !== null && value !== '').join(' ')}
+                                {item.reference_text ? ` · Ref: ${item.reference_text}` : ''}
+                              </p>
+                            ))}
+                            {report.metadata_json.simple_case_results.length > 6 ? (
+                              <p className="text-[11px] font-medium text-emerald-700">
+                                +{report.metadata_json.simple_case_results.length - 6} sonuç daha
+                              </p>
+                            ) : null}
+                          </div>
+                        ) : null}
                       </div>
                       <div className="flex shrink-0 items-center gap-2">
                         {canOpen ? (
