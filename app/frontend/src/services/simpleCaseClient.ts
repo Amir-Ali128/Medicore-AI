@@ -26,6 +26,7 @@ export type LabInput = {
   test_name: string;
   value: string | number | null;
   unit: string | null;
+  measured_at?: string | null;
   source_reference: string | null;
   source_references: LabReference[];
   source_metadata?: Record<string, unknown>;
@@ -33,6 +34,7 @@ export type LabInput = {
 
 export type MedicalReportInput = {
   report_type: string;
+  report_date?: string | null;
   body_region: string | null;
   findings: string | null;
   impression: string | null;

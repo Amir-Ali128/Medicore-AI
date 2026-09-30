@@ -174,12 +174,12 @@ async def update_patient_record(
 
     patient.protocol_no = payload.protocol_no
     patient.sex = payload.sex
+    updated_metadata = _metadata_from_payload(payload, owner_user_id=current_user.id)
+    # Editing demographics must never transfer ownership to the editor.
+    updated_metadata.pop("owner_user_id")
     patient.metadata_json = {
         **dict(patient.metadata_json or {}),
-        **_metadata_from_payload(
-            payload,
-            owner_user_id=current_user.id,
-        ),
+        **updated_metadata,
     }
     patient.metadata_json.pop("full_name", None)
 

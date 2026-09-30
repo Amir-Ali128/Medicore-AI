@@ -118,10 +118,13 @@ async def _ensure_lab_file_columns(session: SessionDep) -> None:
 async def get_lab_report(
     lab_report_id: uuid.UUID,
     repository: LabReportRepositoryDep,
+    session: SessionDep,
+    current_user: Annotated[User, Depends(get_current_active_user)],
 ) -> LabReportSummary:
     report = await repository.get_by_id(lab_report_id)
     if report is None:
         raise HTTPException(status_code=404, detail="Lab report not found.")
+    await _get_accessible_patient(report.patient_id, session, current_user)
     return report
 
 
@@ -134,11 +137,13 @@ async def update_lab_report_patient_metadata(
     payload: LabReportPatientMetadataUpdate,
     repository: LabReportRepositoryDep,
     session: SessionDep,
+    current_user: Annotated[User, Depends(get_current_active_user)],
 ) -> LabReportSummary:
     """Persist only coarse demographics; never copy direct PDF identifiers."""
     report = await repository.get_by_id(lab_report_id)
     if report is None:
         raise HTTPException(status_code=404, detail="Lab report not found.")
+    await _get_accessible_patient(report.patient_id, session, current_user)
 
     metadata = dict(report.metadata_json or {})
 
@@ -167,11 +172,13 @@ async def update_lab_report_clinical_context(
     payload: LabReportClinicalContextUpdate,
     repository: LabReportRepositoryDep,
     session: SessionDep,
+    current_user: Annotated[User, Depends(get_current_active_user)],
 ) -> LabReportSummary:
     """Attach structured intake, examination, imaging, and file metadata."""
     report = await repository.get_by_id(lab_report_id)
     if report is None:
         raise HTTPException(status_code=404, detail="Lab report not found.")
+    await _get_accessible_patient(report.patient_id, session, current_user)
 
     context = payload.model_dump(mode="json")
     metadata = dict(report.metadata_json or {})
@@ -217,6 +224,7 @@ async def save_lab_report_to_patient(
     if report is None:
         raise HTTPException(status_code=404, detail="Laboratuvar raporu bulunamadı.")
 
+    await _get_accessible_patient(report.patient_id, session, current_user)
     await _get_accessible_patient(payload.patient_id, session, current_user)
 
     report.patient_id = payload.patient_id

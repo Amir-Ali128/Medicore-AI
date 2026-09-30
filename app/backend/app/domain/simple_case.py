@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+from typing import Any
+
 from app.schemas.simple_case import (
     ClinicalContext,
     LabReferenceRange,
@@ -10,6 +14,12 @@ from app.schemas.simple_case import (
     SimpleCaseRequest,
     SimpleCaseResponse,
 )
+
+
+def case_fingerprint(case: dict[str, Any]) -> str:
+    """Bind an AI report to the exact normalized case used to generate it."""
+    encoded = json.dumps(case, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 def _reference_matches_patient(

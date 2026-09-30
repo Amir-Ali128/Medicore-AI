@@ -7,8 +7,9 @@ no clinical interpretation.
 from __future__ import annotations
 
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.dependencies import (
     PatientTimelineRepositoryDep,
@@ -20,10 +21,25 @@ from app.schemas.patient_timeline import (
     PatientTimelineEventResponse,
     PatientTimelineListResponse,
 )
+from app.api.routes.auth import get_current_active_user
+from app.api.routes.patients import _ensure_patient_access
+from app.infrastructure.database.models.patient import Patient
+from app.infrastructure.database.models.user import User
 
 router = APIRouter(prefix="/timeline", tags=["patient-timeline"])
 
 _EVENT_NOT_FOUND = "Timeline event not found."
+
+
+async def _check_patient_access(
+    patient_id: uuid.UUID,
+    session: SessionDep,
+    current_user: User,
+) -> None:
+    patient = await session.get(Patient, patient_id)
+    if patient is None:
+        raise HTTPException(status_code=404, detail="Hasta kaydı bulunamadı.")
+    _ensure_patient_access(patient, current_user)
 
 
 @router.post(
@@ -35,7 +51,10 @@ async def create_timeline_event(
     payload: PatientTimelineEventCreate,
     session: SessionDep,
     service: PatientTimelineServiceDep,
+    current_user: Annotated[User, Depends(get_current_active_user)],
 ) -> PatientTimelineEventResponse:
+    await _check_patient_access(payload.patient_id, session, current_user)
+    payload = payload.model_copy(update={"actor_user_id": current_user.id})
     try:
         event = await service.create_event(payload)
         await session.commit()
@@ -57,12 +76,15 @@ async def create_timeline_event(
 async def get_timeline_event(
     timeline_event_id: uuid.UUID,
     repository: PatientTimelineRepositoryDep,
+    session: SessionDep,
+    current_user: Annotated[User, Depends(get_current_active_user)],
 ) -> PatientTimelineEventResponse:
     event = await repository.get_by_id(timeline_event_id)
     if event is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=_EVENT_NOT_FOUND
         )
+    await _check_patient_access(event.patient_id, session, current_user)
     return event
 
 
@@ -73,8 +95,11 @@ async def get_timeline_event(
 async def list_patient_timeline(
     patient_id: uuid.UUID,
     service: PatientTimelineServiceDep,
+    session: SessionDep,
+    current_user: Annotated[User, Depends(get_current_active_user)],
     limit: int | None = None,
 ) -> PatientTimelineListResponse:
+    await _check_patient_access(patient_id, session, current_user)
     events = await service.list_for_patient(patient_id, limit=limit)
     return PatientTimelineListResponse(
         patient_id=patient_id,
@@ -90,8 +115,11 @@ async def list_patient_timeline(
 async def list_patient_timeline_recent(
     patient_id: uuid.UUID,
     service: PatientTimelineServiceDep,
+    session: SessionDep,
+    current_user: Annotated[User, Depends(get_current_active_user)],
     limit: int = 50,
 ) -> PatientTimelineListResponse:
+    await _check_patient_access(patient_id, session, current_user)
     events = await service.list_for_patient(patient_id, limit=limit)
     return PatientTimelineListResponse(
         patient_id=patient_id,
@@ -105,7 +133,12 @@ async def delete_timeline_event(
     timeline_event_id: uuid.UUID,
     session: SessionDep,
     repository: PatientTimelineRepositoryDep,
+    current_user: Annotated[User, Depends(get_current_active_user)],
 ) -> dict[str, bool]:
+    event = await repository.get_by_id(timeline_event_id)
+    if event is None:
+        raise HTTPException(status_code=404, detail=_EVENT_NOT_FOUND)
+    await _check_patient_access(event.patient_id, session, current_user)
     deleted = await repository.delete_by_id(timeline_event_id)
     if not deleted:
         await session.rollback()

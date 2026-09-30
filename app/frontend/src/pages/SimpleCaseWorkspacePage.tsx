@@ -16,6 +16,7 @@ import {
   type SimpleCaseResponse,
 } from '../services/simpleCaseClient';
 import { getActivePatientId } from '../services/patientClient';
+import { simpleCaseInputKey } from '../services/simpleCaseInputKey';
 
 type Step = 'patient' | 'clinical' | 'labs' | 'reports' | 'summary';
 
@@ -147,7 +148,10 @@ export default function SimpleCaseWorkspacePage() {
   const [reportBusy, setReportBusy] = useState(false);
 
   const [result, setResult] = useState<SimpleCaseResponse | null>(null);
-  const [aiInterpretation, setAiInterpretation] = useState<CaseAIInterpretation | null>(null);
+  const [aiResult, setAiResult] = useState<{
+    report: CaseAIInterpretation;
+    inputKey: string;
+  } | null>(null);
   const [aiReportWarning, setAiReportWarning] = useState('');
   const [aiBusy, setAiBusy] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -192,6 +196,7 @@ export default function SimpleCaseWorkspacePage() {
           test_name: item.test_name,
           value: item.value,
           unit: item.unit,
+          measured_at: item.measured_at,
           source_reference: item.reference_text,
           source_references: item.reference_details ? [item.reference_details] : [],
           source_metadata: item.source_metadata ?? {},
@@ -220,7 +225,14 @@ export default function SimpleCaseWorkspacePage() {
           setSaved(false);
         }
 
-        setAiInterpretation(saved.ai_report);
+        setAiResult(saved.ai_report && simpleCase ? {
+          report: saved.ai_report,
+          inputKey: simpleCaseInputKey(saved.patient_id, {
+            clinical: simpleCase.clinical,
+            labs: restoredLabs,
+            reports: simpleCase.reports,
+          }),
+        } : null);
         if (saved.ai_report && !isCurrentClinicalReport(saved.ai_report.report_text)) {
           setAiReportWarning(
             'Bu kayıt eski rapor formatında. Güncel klinik rapor için “Yeniden yorumla” düğmesini kullan.',
@@ -260,6 +272,10 @@ export default function SimpleCaseWorkspacePage() {
     }),
     [age, sex, complaints, history, medications, notes, labs, reports],
   );
+
+  // Hide responses produced for earlier inputs, including late AI responses.
+  const inputKey = simpleCaseInputKey(patientId, payload);
+  const aiInterpretation = aiResult?.inputKey === inputKey ? aiResult.report : null;
 
   const completed = {
     patient: Boolean(patientId),
@@ -333,7 +349,7 @@ export default function SimpleCaseWorkspacePage() {
       if (!isCurrentClinicalReport(interpretation.report_text)) {
         throw new Error('AI klinik raporu güncel bölüm sözleşmesini tamamlamadı.');
       }
-      setAiInterpretation(interpretation);
+      setAiResult({ report: interpretation, inputKey });
       setStep('summary');
     } catch (err) {
       const message = err instanceof Error ? err.message : 'AI klinik yorum tamamlanamadı.';
