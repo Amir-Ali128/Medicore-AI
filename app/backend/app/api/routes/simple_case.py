@@ -328,6 +328,34 @@ async def _persist_simple_case_sources(
     await session.flush()
 
 
+@router.get("/patients/{patient_id}")
+async def get_saved_simple_case(
+    patient_id: uuid.UUID,
+    session: SessionDep,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+) -> dict:
+    """Return the persisted simple-case snapshot and saved AI report."""
+
+    patient = await session.get(Patient, patient_id)
+    if patient is None:
+        raise HTTPException(status_code=404, detail="Hasta kaydı bulunamadı.")
+
+    if current_user.role == UserRole.PATIENT:
+        owner_user_id = (patient.metadata_json or {}).get("owner_user_id")
+        if owner_user_id != str(current_user.id):
+            raise HTTPException(status_code=404, detail="Hasta kaydı bulunamadı.")
+
+    metadata = dict(patient.metadata_json or {})
+    return {
+        "patient_id": str(patient.id),
+        "protocol_no": patient.protocol_no,
+        "sex": str(patient.sex.value if hasattr(patient.sex, "value") else patient.sex),
+        "age": metadata.get("age"),
+        "simple_case": metadata.get("simple_case"),
+        "ai_report": metadata.get("simple_case_ai_report"),
+    }
+
+
 @router.post("/normalize", response_model=SimpleCaseResponse)
 async def normalize_case(payload: SimpleCaseRequest) -> SimpleCaseResponse:
     """Normalize clinical + lab + report data without diagnostic classification."""
