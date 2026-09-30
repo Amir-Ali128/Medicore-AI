@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import uuid
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -32,6 +33,26 @@ from app.schemas.simple_case import (
 router = APIRouter(prefix="/simple-case", tags=["simple-case"])
 
 _MAX_PDF_BYTES = 15 * 1024 * 1024
+
+
+def _parse_measured_at(value):
+    if value in (None, ""):
+        return None
+    if isinstance(value, datetime):
+        return value
+    text = str(value).strip()
+    for fmt in (
+        "%d.%m.%Y %H:%M",
+        "%d.%m.%Y",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%d",
+    ):
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    return None
 
 
 def _extract_pdf_text(content: bytes) -> str:
@@ -116,7 +137,7 @@ async def upload_lab_pdf(file: UploadFile = File(...)) -> list[LabResultInput]:
                 test_name=test_name,
                 value=value,
                 unit=(str(row.get("unit")).strip() if row.get("unit") else None),
-                measured_at=row.get("measured_at"),
+                measured_at=_parse_measured_at(row.get("measured_at")),
                 source_reference=(
                     str(row.get("reference_text")).strip()
                     if row.get("reference_text")
