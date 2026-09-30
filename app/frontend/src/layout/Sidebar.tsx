@@ -1,27 +1,28 @@
-import { NavLink } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
 
 import { getStoredUser } from '../services/authClient';
 
 const clinicalItems = [
-  { label: 'Ana Sayfa', to: '/', icon: '⌂' },
-  { label: 'Yeni Vaka', to: '/case', icon: '+' },
-  { label: 'Geçmiş', to: '/history', icon: '↺' },
+  { label: 'Ana Sayfa', to: '/', href: '#/', icon: '⌂' },
+  { label: 'Yeni Vaka', to: '/case', href: '#/case', icon: '+' },
+  { label: 'Geçmiş', to: '/history', href: '#/history', icon: '↺' },
 ];
 
 const adminItems = [
-  { label: 'Analitik', to: '/admin/analytics', icon: '◫' },
-  { label: 'AI Kullanımı', to: '/admin/ai-costs', icon: '✦' },
-  { label: 'Geri Bildirim', to: '/admin/feedback', icon: '◌' },
+  { label: 'Analitik', to: '/admin/analytics', href: '#/admin/analytics', icon: '◫' },
+  { label: 'AI Kullanımı', to: '/admin/ai-costs', href: '#/admin/ai-costs', icon: '✦' },
+  { label: 'Geri Bildirim', to: '/admin/feedback', href: '#/admin/feedback', icon: '◌' },
 ];
 
 export default function Sidebar() {
   const user = getStoredUser();
+  const location = useLocation();
   const items = user?.role === 'admin' ? adminItems : clinicalItems;
 
   return (
     <aside className="fixed inset-y-0 left-0 z-40 hidden w-64 pointer-events-auto border-r border-slate-200/80 bg-white lg:flex lg:flex-col">
       <div className="px-6 py-7">
-        <NavLink to="/" className="flex items-center gap-3">
+        <a href="#/" className="flex items-center gap-3">
           <div className="grid h-10 w-10 place-items-center rounded-2xl bg-slate-950 text-sm font-bold text-white">
             M
           </div>
@@ -29,7 +30,7 @@ export default function Sidebar() {
             <p className="text-base font-semibold tracking-tight text-slate-950">MediCore</p>
             <p className="text-xs text-slate-400">Clinical workspace</p>
           </div>
-        </NavLink>
+        </a>
       </div>
 
       <nav className="relative z-50 px-3 pointer-events-auto">
@@ -37,26 +38,30 @@ export default function Sidebar() {
           {user?.role === 'admin' ? 'Yönetim' : 'Çalışma Alanı'}
         </p>
         <div className="space-y-1">
-          {items.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.to === '/'}
-              className={({ isActive }) =>
-                [
+          {items.map((item) => {
+            const isActive =
+              item.to === '/'
+                ? location.pathname === '/'
+                : location.pathname === item.to || location.pathname.startsWith(`${item.to}/`);
+
+            return (
+              <a
+                key={item.to}
+                href={item.href}
+                className={[
                   'flex items-center gap-3 rounded-2xl px-3 py-3 text-sm font-medium transition',
                   isActive
                     ? 'bg-slate-950 text-white shadow-sm'
                     : 'text-slate-500 hover:bg-slate-100 hover:text-slate-950',
-                ].join(' ')
-              }
-            >
-              <span className="grid h-7 w-7 place-items-center rounded-xl bg-current/5 text-base" aria-hidden="true">
-                {item.icon}
-              </span>
-              {item.label}
-            </NavLink>
-          ))}
+                ].join(' ')}
+              >
+                <span className="grid h-7 w-7 place-items-center rounded-xl bg-current/5 text-base" aria-hidden="true">
+                  {item.icon}
+                </span>
+                {item.label}
+              </a>
+            );
+          })}
         </div>
       </nav>
 
