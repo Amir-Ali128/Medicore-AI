@@ -65,6 +65,30 @@ export type CaseAIInterpretation = {
   model: string;
 };
 
+export type SavedSimpleCase = {
+  patient_id: string;
+  protocol_no: string;
+  sex: SexValue;
+  age: number | null;
+  simple_case: {
+    contract_version: 'medicore-simple-case-v1';
+    clinical: ClinicalContext;
+    labs: Array<{
+      test_name: string;
+      value: string | number | null;
+      unit: string | null;
+      measured_at?: string | null;
+      reference_text: string | null;
+      reference_source: 'report' | 'report_age_sex_match' | 'missing';
+      reference_details?: LabReference | null;
+      source_metadata?: Record<string, unknown>;
+    }>;
+    reports: MedicalReportInput[];
+    warnings: string[];
+  } | null;
+  ai_report: CaseAIInterpretation | null;
+};
+
 export type PatientRecord = {
   id: string;
   protocol_no: string;
@@ -147,4 +171,9 @@ export function interpretSimpleCase(
     ? `/simple-case/patients/${patientId}/ai-interpretation`
     : '/simple-case/ai-interpretation';
   return apiClient.post<CaseAIInterpretation>(path, payload);
+}
+
+
+export function getSavedSimpleCase(patientId: string) {
+  return apiClient.get<SavedSimpleCase>(`/simple-case/patients/${patientId}`);
 }
