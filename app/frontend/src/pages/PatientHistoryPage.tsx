@@ -510,7 +510,8 @@ export default function PatientHistoryPage() {
 
   function openCase(record: PatientRecord, step: 'patient' | 'labs' | 'reports' | 'summary' = 'patient') {
     activatePatientRecord(record);
-    navigate(`/case?patient=${record.id}&step=${step}`);
+    sessionStorage.setItem('medicore:case-open-step', step);
+    navigate('/case');
   }
 
   async function handleDelete(record: PatientRecord) {
