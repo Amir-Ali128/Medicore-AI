@@ -80,6 +80,13 @@ export type LabReportMetadata = {
   clinical_context?: ClinicalIntakeInput | null;
   derived_metrics?: DerivedLabMetric[];
   clinical_assessment?: LabClinicalAssessment | null;
+  simple_case_results?: Array<{
+    test_name: string;
+    value: string | number | null;
+    unit: string | null;
+    reference_text: string | null;
+    measured_at?: string | null;
+  }>;
   [key: string]: unknown;
 };
 
