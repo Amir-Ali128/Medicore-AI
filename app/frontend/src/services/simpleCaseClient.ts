@@ -61,13 +61,7 @@ export type SimpleCaseResponse = {
 };
 
 export type CaseAIInterpretation = {
-  clinical_summary: string;
-  integrated_findings: string[];
-  correlations: string[];
-  attention_points: string[];
-  missing_or_conflicting_data: string[];
-  clinician_conclusion: string;
-  limitations: string[];
+  report_text: string;
   model: string;
 };
 
