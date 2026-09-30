@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 
 import {
   createPatient,
+  getSavedSimpleCase,
   interpretSimpleCase,
   saveSimpleCase,
   uploadLabPdf,
@@ -13,7 +14,7 @@ import {
   type SimpleCaseRequest,
   type SimpleCaseResponse,
 } from '../services/simpleCaseClient';
-import { getActivePatientId, getPatientRecord } from '../services/patientClient';
+import { getActivePatientId } from '../services/patientClient';
 
 type Step = 'patient' | 'clinical' | 'labs' | 'reports' | 'summary';
 
@@ -76,110 +77,61 @@ export default function SimpleCaseWorkspacePage() {
     async function hydrateSavedCase() {
       setError('');
       try {
-        const patient = await getPatientRecord(patientIdToLoad);
+        const saved = await getSavedSimpleCase(patientIdToLoad);
         if (cancelled) return;
 
-        setPatientId(patient.id);
-        setProtocolNo(patient.protocol_no);
+        setPatientId(saved.patient_id);
+        setProtocolNo(saved.protocol_no);
 
-        const metadata = (patient.metadata_json ?? {}) as Record<string, unknown>;
-        const simpleCase = metadata.simple_case as
-          | {
-              clinical?: {
-                age?: number | null;
-                sex?: SexValue;
-                complaints?: string[];
-                history?: string[];
-                medications?: string[];
-                notes?: string | null;
-              };
-              labs?: Array<{
-                test_name?: string;
-                value?: string | number | null;
-                unit?: string | null;
-                measured_at?: string | null;
-                reference_text?: string | null;
-                reference_details?: {
-                  text: string;
-                  minimum?: number | null;
-                  maximum?: number | null;
-                  unit?: string | null;
-                  age_min?: number | null;
-                  age_max?: number | null;
-                  sex?: SexValue | null;
-                } | null;
-                source_metadata?: Record<string, unknown>;
-              }>;
-              reports?: MedicalReportInput[];
-              warnings?: string[];
-              contract_version?: 'medicore-simple-case-v1';
-            }
-          | undefined;
-
+        const simpleCase = saved.simple_case;
         const clinical = simpleCase?.clinical;
-        const fallbackAge =
-          typeof metadata.age === 'number' ? metadata.age : null;
 
         setAge(
           clinical?.age !== null && clinical?.age !== undefined
             ? String(clinical.age)
-            : fallbackAge !== null
-              ? String(fallbackAge)
+            : saved.age !== null && saved.age !== undefined
+              ? String(saved.age)
               : '',
         );
-        setSex((clinical?.sex ?? patient.sex ?? 'unknown') as SexValue);
+        setSex((clinical?.sex ?? saved.sex ?? 'unknown') as SexValue);
         setComplaints((clinical?.complaints ?? []).join('\n'));
         setHistory((clinical?.history ?? []).join('\n'));
         setMedications((clinical?.medications ?? []).join('\n'));
         setNotes(clinical?.notes ?? '');
 
-        const restoredLabs: LabInput[] = (simpleCase?.labs ?? [])
-          .filter((item) => Boolean(item.test_name))
-          .map((item) => ({
-            test_name: item.test_name ?? '',
-            value: item.value ?? null,
-            unit: item.unit ?? null,
-            source_reference: item.reference_text ?? null,
-            source_references: item.reference_details ? [item.reference_details] : [],
-            source_metadata: item.source_metadata ?? {},
-          }));
+        const restoredLabs: LabInput[] = (simpleCase?.labs ?? []).map((item) => ({
+          test_name: item.test_name,
+          value: item.value,
+          unit: item.unit,
+          source_reference: item.reference_text,
+          source_references: item.reference_details ? [item.reference_details] : [],
+          source_metadata: item.source_metadata ?? {},
+        }));
 
         setLabs(restoredLabs);
         setReports(simpleCase?.reports ?? []);
 
-        if (simpleCase?.contract_version === 'medicore-simple-case-v1') {
+        if (simpleCase) {
           setResult({
-            contract_version: 'medicore-simple-case-v1',
-            clinical: {
-              age: clinical?.age ?? null,
-              sex: clinical?.sex ?? 'unknown',
-              complaints: clinical?.complaints ?? [],
-              history: clinical?.history ?? [],
-              medications: clinical?.medications ?? [],
-              notes: clinical?.notes ?? null,
-            },
-            labs: (simpleCase.labs ?? []).map((item) => ({
-              test_name: item.test_name ?? '',
-              value: item.value ?? null,
-              unit: item.unit ?? null,
-              reference_text: item.reference_text ?? null,
-              reference_source: item.reference_text ? 'report' : 'missing',
+            contract_version: simpleCase.contract_version,
+            clinical: simpleCase.clinical,
+            labs: simpleCase.labs.map((item) => ({
+              test_name: item.test_name,
+              value: item.value,
+              unit: item.unit,
+              reference_text: item.reference_text,
+              reference_source: item.reference_source,
             })),
-            reports: simpleCase.reports ?? [],
-            warnings: simpleCase.warnings ?? [],
+            reports: simpleCase.reports,
+            warnings: simpleCase.warnings,
           });
           setSaved(true);
+        } else {
+          setResult(null);
+          setSaved(false);
         }
 
-        const savedAi = metadata.simple_case_ai_report as
-          | { report_text?: string; model?: string }
-          | undefined;
-        if (savedAi?.report_text) {
-          setAiInterpretation({
-            report_text: savedAi.report_text,
-            model: savedAi.model ?? 'saved',
-          });
-        }
+        setAiInterpretation(saved.ai_report);
 
         const requestedStep = sessionStorage.getItem('medicore:case-open-step');
         sessionStorage.removeItem('medicore:case-open-step');
@@ -187,7 +139,7 @@ export default function SimpleCaseWorkspacePage() {
         const validStep = steps.some((item) => item.key === requestedStep)
           ? (requestedStep as Step)
           : null;
-        setStep(validStep ?? (savedAi?.report_text ? 'summary' : 'patient'));
+        setStep(validStep ?? (saved.ai_report ? 'summary' : simpleCase ? 'clinical' : 'patient'));
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : 'Kayıtlı vaka açılamadı.');
