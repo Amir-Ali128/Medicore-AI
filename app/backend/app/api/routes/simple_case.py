@@ -25,7 +25,7 @@ from app.domain.scanned_medical_report_pdf_ai import (
     ScannedMedicalReportExtractionError,
     extract_scanned_medical_report_pdf,
 )
-from app.domain.simple_case import normalize_simple_case
+from app.domain.simple_case import case_fingerprint, normalize_simple_case
 from app.domain.simple_case_ai import interpret_simple_case
 from app.infrastructure.database.models.lab_report import LabReport
 from app.infrastructure.database.models.lab_result import LabResult
@@ -346,13 +346,21 @@ async def get_saved_simple_case(
             raise HTTPException(status_code=404, detail="Hasta kaydı bulunamadı.")
 
     metadata = dict(patient.metadata_json or {})
+    saved_case = metadata.get("simple_case")
+    ai_report = metadata.get("simple_case_ai_report")
+    if (
+        not isinstance(saved_case, dict)
+        or not isinstance(ai_report, dict)
+        or ai_report.get("case_fingerprint") != case_fingerprint(saved_case)
+    ):
+        ai_report = None
     return {
         "patient_id": str(patient.id),
         "protocol_no": patient.protocol_no,
         "sex": str(patient.sex.value if hasattr(patient.sex, "value") else patient.sex),
         "age": metadata.get("age"),
         "simple_case": metadata.get("simple_case"),
-        "ai_report": metadata.get("simple_case_ai_report"),
+        "ai_report": ai_report,
     }
 
 
@@ -364,7 +372,10 @@ async def normalize_case(payload: SimpleCaseRequest) -> SimpleCaseResponse:
 
 
 @router.post("/ai-interpretation", response_model=CaseAIInterpretationResponse)
-async def ai_interpret_case(payload: SimpleCaseRequest) -> CaseAIInterpretationResponse:
+async def ai_interpret_case(
+    payload: SimpleCaseRequest,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+) -> CaseAIInterpretationResponse:
     """Synthesize clinical + lab + reports for clinician review."""
 
     try:
@@ -419,6 +430,9 @@ async def ai_interpret_patient_case(
         "report_text": result.report_text,
         "model": result.model,
         "generated_at": datetime.now(UTC).isoformat(),
+        "case_fingerprint": case_fingerprint(
+            normalize_simple_case(payload).model_dump(mode="json")
+        ),
     }
     patient.metadata_json = metadata
     await session.commit()
@@ -431,7 +445,10 @@ async def ai_interpret_patient_case(
 
 
 @router.post("/labs/pdf", response_model=list[LabResultInput])
-async def upload_lab_pdf(file: UploadFile = File(...)) -> list[LabResultInput]:
+async def upload_lab_pdf(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    file: UploadFile = File(...),
+) -> list[LabResultInput]:
     """Extract laboratory rows from a PDF without classifying their values."""
 
     if (file.content_type or "").split(";", 1)[0].lower() != "application/pdf":
@@ -517,6 +534,7 @@ async def upload_lab_pdf(file: UploadFile = File(...)) -> list[LabResultInput]:
 
 @router.post("/reports/pdf", response_model=MedicalReportInput)
 async def upload_report_pdf(
+    current_user: Annotated[User, Depends(get_current_active_user)],
     file: UploadFile = File(...),
     report_type: str = Form("Tıbbi Rapor"),
     body_region: str | None = Form(None),
@@ -615,8 +633,15 @@ async def save_case_for_patient(
         current_user=current_user,
     )
     metadata = dict(patient.metadata_json or {})
+    case_snapshot = normalized.model_dump(mode="json")
+    ai_report = metadata.get("simple_case_ai_report")
+    if (
+        not isinstance(ai_report, dict)
+        or ai_report.get("case_fingerprint") != case_fingerprint(case_snapshot)
+    ):
+        metadata.pop("simple_case_ai_report", None)
     metadata["clinical_context"] = normalized.clinical.model_dump(mode="json")
-    metadata["simple_case"] = normalized.model_dump(mode="json")
+    metadata["simple_case"] = case_snapshot
     metadata["simple_case_contract_version"] = normalized.contract_version
     patient.metadata_json = metadata
 
