@@ -195,14 +195,19 @@ async def extract_lab_documents_with_openai(
 
     if total_bytes > settings.lab_extraction_max_bytes:
         raise ValueError("Laboratuvar dosyalarının toplamı izin verilen boyut sınırını aşıyor.")
-    if not settings.openai_api_key:
+    raw_api_key = settings.openai_api_key or ""
+    api_key = raw_api_key.strip()
+    if len(api_key) >= 2 and api_key[0] == api_key[-1] and api_key[0] in {"'", '"'}:
+        api_key = api_key[1:-1].strip()
+
+    if not api_key:
         raise OpenAILabExtractionError("OPENAI_API_KEY yapılandırılmamış.")
 
     model = (settings.openai_lab_model or "").strip()
     if not model:
         raise OpenAILabExtractionError("OPENAI_LAB_MODEL yapılandırılmamış.")
 
-    client = _client_for_key(settings.openai_api_key)
+    client = _client_for_key(api_key)
     try:
         response = await client.responses.create(
             model=model,
@@ -220,6 +225,12 @@ async def extract_lab_documents_with_openai(
             input=[{"role": "user", "content": content_parts}],
         )
     except Exception as exc:  # provider errors are translated at the API boundary
+        message = str(exc)
+        if "invalid_api_key" in message or "Incorrect API key" in message:
+            raise OpenAILabExtractionError(
+                "OpenAI API anahtarı sağlayıcı tarafından reddedildi. "
+                "Render'daki Medicore-AI servisinde OPENAI_API_KEY değerini kontrol edin."
+            ) from exc
         raise OpenAILabExtractionError(
             f"OpenAI laboratuvar analizi {_EXTRACTION_TIMEOUT_SECONDS:.0f} sn bütçesinde tamamlanamadı: {exc}"
         ) from exc
