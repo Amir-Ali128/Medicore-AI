@@ -12,6 +12,8 @@ from pypdf import PdfReader
 from app.api.dependencies import SessionDep
 from app.api.routes.auth import get_current_active_user
 from app.domain.enums import UserRole
+from app.domain.canonical_lab_model import SOURCE_FILE_UPLOAD
+from app.domain.fast_pdf_lab_parser import try_fast_pdf_lab_case
 from app.domain.openai_lab_extraction_service import (
     OpenAILabExtractionError,
     extract_lab_document_with_openai,
@@ -67,19 +69,37 @@ async def upload_lab_pdf(file: UploadFile = File(...)) -> list[LabResultInput]:
     if len(content) > _MAX_PDF_BYTES:
         raise HTTPException(status_code=413, detail="PDF dosyası 15 MB sınırını aşıyor.")
 
-    try:
-        extracted = await extract_lab_document_with_openai(
-            content=content,
-            media_type="application/pdf",
-            file_name=file.filename or "lab.pdf",
-        )
-    except (OpenAILabExtractionError, ValueError) as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    extracted: dict | None = try_fast_pdf_lab_case(
+        content=content,
+        media_type="application/pdf",
+        file_name=file.filename or "lab.pdf",
+        source_type=SOURCE_FILE_UPLOAD,
+    )
+
+    extraction_source = "local_pdf_parser"
+
+    if extracted is None:
+        extraction_source = "openai_fallback"
+        try:
+            extracted = await extract_lab_document_with_openai(
+                content=content,
+                media_type="application/pdf",
+                file_name=file.filename or "lab.pdf",
+            )
+        except (OpenAILabExtractionError, ValueError) as exc:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "PDF yerel olarak güvenilir biçimde ayrıştırılamadı ve AI fallback "
+                    f"kullanılamadı: {exc}"
+                ),
+            ) from exc
 
     rows: list[LabResultInput] = []
     for row in extracted.get("labs") or []:
         if not isinstance(row, dict):
             continue
+
         test_name = str(
             row.get("canonical_name")
             or row.get("raw_parameter_name")
@@ -107,6 +127,7 @@ async def upload_lab_pdf(file: UploadFile = File(...)) -> list[LabResultInput]:
                     "source_page": row.get("source_page"),
                     "extraction_confidence": row.get("confidence"),
                     "needs_review": row.get("needs_review"),
+                    "extraction_source": extraction_source,
                 },
             )
         )
