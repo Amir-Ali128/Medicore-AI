@@ -11,17 +11,21 @@ export default function AppLayout() {
   const isAdmin = getAuthenticatedRole() === 'admin';
 
   return (
-    <div className="min-h-screen bg-[#f6f7f9] text-slate-950">
-      {isAdmin ? <AdminSidebar /> : <Sidebar />}
+    <div className="relative min-h-screen bg-[#f6f7f9] text-slate-950">
+      <div className="pointer-events-auto">
+        {isAdmin ? <AdminSidebar /> : <Sidebar />}
+      </div>
 
-      <div className="min-h-screen lg:pl-64">
+      <div className="relative z-0 min-h-screen pointer-events-auto lg:pl-64">
         <Topbar />
-        <main className="px-4 py-5 pb-28 sm:px-6 lg:px-8 lg:py-8 lg:pb-8">
+        <main className="relative z-0 px-4 py-5 pb-28 pointer-events-auto sm:px-6 lg:px-8 lg:py-8 lg:pb-8">
           <Outlet />
         </main>
       </div>
 
-      {isAdmin ? <AdminMobileNavigation /> : <MobileNavigation />}
+      <div className="pointer-events-auto">
+        {isAdmin ? <AdminMobileNavigation /> : <MobileNavigation />}
+      </div>
     </div>
   );
 }
