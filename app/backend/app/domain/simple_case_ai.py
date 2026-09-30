@@ -35,6 +35,7 @@ KLİNİK BİLGİ
 LABORATUVAR DEĞERLENDİRMESİ
 TETKİK / RAPOR BULGULARI
 ENTEGRE KLİNİK DEĞERLENDİRME
+OLASI KLİNİK DURUMLAR / AYIRICI TANI
 SONUÇ / KANAAT
 ÖNERİLEN İLERİ TETKİK / İZLEM
 HEKİM NOTU
@@ -46,17 +47,24 @@ Style:
 - In the laboratory section, include source values, units and printed reference text when useful.
 - If a reference is missing, explicitly say the source report did not provide one.
 - In the integrated assessment, explain cross-source relationships cautiously.
-- In SONUÇ / KANAAT, summarize only source-supported conclusions and clinically relevant synthesis.
-- In ÖNERİLEN İLERİ TETKİK / İZLEM, suggest reasonable next diagnostic tests or follow-up measurements that a physician may consider, based only on abnormalities or uncertainties present in the case.
-- Every suggested test must include a short rationale tied to a specific source finding.
+- In OLASI KLİNİK DURUMLAR / AYIRICI TANI, provide a concise differential diagnosis or list of clinically plausible conditions that may explain the combined source findings.
+- Each differential item must contain: (1) the possible condition, (2) why it is being considered, (3) the specific clinical/laboratory/report findings that support it, and (4) any important missing, conflicting, or counter-evidence in the supplied case.
+- Clearly distinguish model-generated clinical inference from diagnoses explicitly stated in the source documents. Use cautious wording such as "ayırıcı tanıda düşünülebilir", "ile uyumlu olabilir", or "olasılığı klinik olarak değerlendirilebilir".
+- Do not claim that a differential diagnosis is confirmed. Do not assign numeric probabilities or certainty scores.
+- Prefer a small, clinically useful differential over a long speculative list. Omit diagnoses that are not reasonably supported by the supplied findings.
+- In SONUÇ / KANAAT, summarize source-supported conclusions separately from model-generated differential considerations.
+- In ÖNERİLEN İLERİ TETKİK / İZLEM, suggest reasonable next diagnostic tests, follow-up measurements, or specialist-directed evaluations that may help confirm, exclude, stage, or monitor the differential considerations and source abnormalities.
+- Every suggested test must include a short rationale tied to a specific source finding or differential question, and when possible state what clinical uncertainty the test would help resolve.
 - Do not present tests as mandatory. Use wording such as "değerlendirilebilir", "düşünülebilir", or "hekim tarafından uygun görülürse".
 - Do not recommend treatment, medication, procedures, or invasive testing unless the source report explicitly recommends it; if an invasive test is relevant, frame it only as a specialist-consideration item.
 - Prioritize the list: urgent/near-term items first, routine follow-up later.
 - HEKİM NOTU should state missing/conflicting data and that final interpretation requires physician review when applicable.
 
 Strict safety/fidelity rules:
-- Use only information present in the supplied case.
-- Never invent a diagnosis, finding, value, reference range, recommendation, or negative finding.
+- Source-derived facts must come only from the supplied case.
+- You may use general clinical knowledge only to generate clearly labeled differential-diagnosis hypotheses and reasonable follow-up-test considerations from the supplied findings.
+- Never present a model-generated differential diagnosis as if it were documented in the source.
+- Never invent a source finding, value, reference range, reported diagnosis, recommendation, or negative finding.
 - Do not classify a lab value as high/low/normal unless that wording is explicitly present in the source.
 - Preserve negation and uncertainty.
 - Do not prescribe medication or treatment.
@@ -117,7 +125,7 @@ async def interpret_simple_case(payload: SimpleCaseRequest) -> CaseAIInterpretat
     try:
         response = await client.messages.create(
             model=model,
-            max_tokens=3200,
+            max_tokens=4200,
             system=_SYSTEM_PROMPT,
             messages=[
                 {
@@ -148,6 +156,7 @@ async def interpret_simple_case(payload: SimpleCaseRequest) -> CaseAIInterpretat
         "LABORATUVAR DEĞERLENDİRMESİ",
         "TETKİK / RAPOR BULGULARI",
         "ENTEGRE KLİNİK DEĞERLENDİRME",
+        "OLASI KLİNİK DURUMLAR / AYIRICI TANI",
         "SONUÇ / KANAAT",
         "ÖNERİLEN İLERİ TETKİK / İZLEM",
         "HEKİM NOTU",
