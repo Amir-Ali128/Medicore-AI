@@ -24,9 +24,11 @@ from app.domain.scanned_medical_report_pdf_ai import (
     extract_scanned_medical_report_pdf,
 )
 from app.domain.simple_case import normalize_simple_case
+from app.domain.simple_case_ai import interpret_simple_case
 from app.infrastructure.database.models.patient import Patient
 from app.infrastructure.database.models.user import User
 from app.schemas.simple_case import (
+    CaseAIInterpretationResponse,
     LabResultInput,
     MedicalReportInput,
     SimpleCaseRequest,
@@ -79,6 +81,32 @@ async def normalize_case(payload: SimpleCaseRequest) -> SimpleCaseResponse:
     """Normalize clinical + lab + report data without diagnostic classification."""
 
     return normalize_simple_case(payload)
+
+
+@router.post("/ai-interpretation", response_model=CaseAIInterpretationResponse)
+async def ai_interpret_case(payload: SimpleCaseRequest) -> CaseAIInterpretationResponse:
+    """Synthesize clinical + lab + reports for clinician review."""
+
+    try:
+        result = await interpret_simple_case(payload)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"AI klinik yorum tamamlanamadı: {exc}",
+        ) from exc
+
+    return CaseAIInterpretationResponse(
+        clinical_summary=result.clinical_summary,
+        integrated_findings=list(result.integrated_findings),
+        correlations=list(result.correlations),
+        attention_points=list(result.attention_points),
+        missing_or_conflicting_data=list(result.missing_or_conflicting_data),
+        clinician_conclusion=result.clinician_conclusion,
+        limitations=list(result.limitations),
+        model=result.model,
+    )
 
 
 @router.post("/labs/pdf", response_model=list[LabResultInput])
