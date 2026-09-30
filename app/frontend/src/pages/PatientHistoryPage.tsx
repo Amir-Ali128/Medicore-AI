@@ -210,36 +210,30 @@ function RecordCard({
         </div>
 
         <div className="flex shrink-0 flex-wrap gap-2">
-          <Link
-            to="/case"
-            state={{ patientId: record.id, step: 'patient' }}
-            onClick={() => activatePatientRecord(record)}
+          <a
+            href={`#/case?patient=${encodeURIComponent(record.id)}&step=patient`}
             className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
           >
             Vakayı Aç
-          </Link>
-          <Link
-            to="/case"
-            state={{ patientId: record.id, step: 'summary' }}
-            onClick={() => activatePatientRecord(record)}
+          </a>
+          <a
+            href={`#/case?patient=${encodeURIComponent(record.id)}&step=summary`}
             className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-800 hover:bg-blue-100"
           >
             Özeti Aç
-          </Link>
-          <button
-            type="button"
-            onClick={() => onAddLab(record)}
+          </a>
+          <a
+            href={`#/case?patient=${encodeURIComponent(record.id)}&step=labs`}
             className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-100"
           >
             + Lab ekle
-          </button>
-          <button
-            type="button"
-            onClick={() => onAddRadiology(record)}
+          </a>
+          <a
+            href={`#/case?patient=${encodeURIComponent(record.id)}&step=reports`}
             className="rounded-lg border border-violet-200 bg-violet-50 px-4 py-2 text-sm font-semibold text-violet-800 hover:bg-violet-100"
           >
             + Tetkik ekle
-          </button>
+          </a>
           <button
             type="button"
             onClick={() => onDelete(record)}
