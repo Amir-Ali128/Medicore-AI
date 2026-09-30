@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 
 import type { LabReportSummary } from '../services/labAnalysisClient';
 import {
@@ -210,20 +210,22 @@ function RecordCard({
         </div>
 
         <div className="flex shrink-0 flex-wrap gap-2">
-          <a
-            href="#/case"
-            onClick={() => onOpen(record)}
+          <Link
+            to="/case"
+            state={{ patientId: record.id, step: 'patient' }}
+            onClick={() => activatePatientRecord(record)}
             className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
           >
             Vakayı Aç
-          </a>
-          <a
-            href="#/case"
-            onClick={() => onOpenSummary(record)}
+          </Link>
+          <Link
+            to="/case"
+            state={{ patientId: record.id, step: 'summary' }}
+            onClick={() => activatePatientRecord(record)}
             className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-800 hover:bg-blue-100"
           >
             Özeti Aç
-          </a>
+          </Link>
           <button
             type="button"
             onClick={() => onAddLab(record)}
@@ -510,16 +512,7 @@ export default function PatientHistoryPage() {
 
   function openCase(record: PatientRecord, step: 'patient' | 'labs' | 'reports' | 'summary' = 'patient') {
     activatePatientRecord(record);
-    sessionStorage.setItem('medicore:case-patient-id', record.id);
-    sessionStorage.setItem('medicore:case-open-step', step);
-
-    // This app uses createHashRouter. Changing the hash directly avoids stale
-    // router-state issues and guarantees the case workspace mounts.
-    if (window.location.hash === '#/case') {
-      window.dispatchEvent(new HashChangeEvent('hashchange'));
-      return;
-    }
-    window.location.hash = '#/case';
+    navigate('/case', { state: { patientId: record.id, step } });
   }
 
   async function handleDelete(record: PatientRecord) {
