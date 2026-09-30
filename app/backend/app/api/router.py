@@ -29,6 +29,7 @@ from app.api.routes import (
     radiology_image_review,
     radiology_reports,
     scanned_medical_report_pdf,
+    simple_case,
 )
 from app.domain.native_lab_direct_ai import synthesize_lab_clinical_assessment_native
 from app.domain.radiology_report_safety import analyze_radiology_report_safely
@@ -101,3 +102,4 @@ api_router.include_router(patient_timeline.router)
 api_router.include_router(radiology_reports.router)
 api_router.include_router(scanned_medical_report_pdf.router)
 api_router.include_router(radiology_image_review.router)
+api_router.include_router(simple_case.router)
