@@ -127,6 +127,7 @@ function RecordCard({
   deleting,
   deletingAttachmentKey,
   onOpen,
+  onOpenSummary,
   onAddLab,
   onAddRadiology,
   onDelete,
@@ -139,6 +140,7 @@ function RecordCard({
   deleting: boolean;
   deletingAttachmentKey: string | null;
   onOpen: (record: PatientRecord) => void;
+  onOpenSummary: (record: PatientRecord) => void;
   onAddLab: (record: PatientRecord) => void;
   onAddRadiology: (record: PatientRecord) => void;
   onDelete: (record: PatientRecord) => void;
@@ -213,7 +215,14 @@ function RecordCard({
             onClick={() => onOpen(record)}
             className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
           >
-            Kaydı aç / Düzenle
+            Vakayı Aç
+          </button>
+          <button
+            type="button"
+            onClick={() => onOpenSummary(record)}
+            className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-800 hover:bg-blue-100"
+          >
+            Özeti Aç
           </button>
           <button
             type="button"
@@ -499,9 +508,9 @@ export default function PatientHistoryPage() {
     navigate('/patients/demo?new=1');
   }
 
-  function openRecord(record: PatientRecord, target: '/patients/demo' | '/analysis/mock' | '/radiology') {
+  function openCase(record: PatientRecord, step: 'patient' | 'labs' | 'reports' | 'summary' = 'patient') {
     activatePatientRecord(record);
-    navigate(target);
+    navigate(`/case?patient=${record.id}&step=${step}`);
   }
 
   async function handleDelete(record: PatientRecord) {
@@ -705,9 +714,10 @@ export default function PatientHistoryPage() {
             active={getActivePatientId() === record.id}
             deleting={deletingId === record.id}
             deletingAttachmentKey={deletingAttachmentKey}
-            onOpen={(item) => openRecord(item, '/patients/demo')}
-            onAddLab={(item) => openRecord(item, '/analysis/mock')}
-            onAddRadiology={(item) => openRecord(item, '/radiology')}
+            onOpen={(item) => openCase(item, 'patient')}
+            onOpenSummary={(item) => openCase(item, 'summary')}
+            onAddLab={(item) => openCase(item, 'labs')}
+            onAddRadiology={(item) => openCase(item, 'reports')}
             onDelete={(item) => void handleDelete(item)}
             onDeleteLab={(item, report) => void handleDeleteLab(item, report)}
             onDeleteRadiology={(item, report) => void handleDeleteRadiology(item, report)}
