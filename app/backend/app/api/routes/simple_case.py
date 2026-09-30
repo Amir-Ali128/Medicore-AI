@@ -4,15 +4,17 @@ from __future__ import annotations
 
 import io
 import uuid
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pypdf import PdfReader
+from sqlalchemy import delete
 
 from app.api.dependencies import SessionDep
 from app.api.routes.auth import get_current_active_user
-from app.domain.enums import UserRole
+from app.domain.enums import ResultStatus, TrendStatus, UserRole
 from app.domain.canonical_lab_model import SOURCE_FILE_UPLOAD
 from app.domain.fast_pdf_lab_parser import try_fast_pdf_lab_case
 from app.domain.openai_lab_extraction_service import (
@@ -25,7 +27,10 @@ from app.domain.scanned_medical_report_pdf_ai import (
 )
 from app.domain.simple_case import normalize_simple_case
 from app.domain.simple_case_ai import interpret_simple_case
+from app.infrastructure.database.models.lab_report import LabReport
+from app.infrastructure.database.models.lab_result import LabResult
 from app.infrastructure.database.models.patient import Patient
+from app.infrastructure.database.models.radiology_report import RadiologyReport
 from app.infrastructure.database.models.user import User
 from app.schemas.simple_case import (
     CaseAIInterpretationResponse,
@@ -74,6 +79,181 @@ def _extract_pdf_text(content: bytes) -> str:
             detail="PDF dosyasından kullanılabilir metin çıkarılamadı.",
         )
     return text
+
+
+def _decimal_or_none(value):
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return Decimal(str(value).replace(",", ".").strip())
+    except (InvalidOperation, ValueError, AttributeError):
+        return None
+
+
+def _date_or_none(value):
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    return None
+
+
+def _report_modality(report_type: str) -> str:
+    folded = report_type.upper().replace("İ", "I")
+    aliases = (
+        ("ULTRASON", "ULTRASOUND"),
+        ("USG", "ULTRASOUND"),
+        ("BT", "CT"),
+        ("CT", "CT"),
+        ("MR", "MRI"),
+        ("MRI", "MRI"),
+        ("RONTGEN", "XRAY"),
+        ("XRAY", "XRAY"),
+        ("EKG", "ECG"),
+        ("ECG", "ECG"),
+        ("EKO", "ECHO"),
+        ("ECHO", "ECHO"),
+    )
+    for token, modality in aliases:
+        if token in folded:
+            return modality
+    return "OTHER"
+
+
+async def _persist_simple_case_sources(
+    *,
+    patient_id: uuid.UUID,
+    normalized: SimpleCaseResponse,
+    session: SessionDep,
+    current_user: User,
+) -> None:
+    """Replace persisted simplified lab/report records for one patient."""
+
+    await session.execute(
+        delete(LabReport).where(
+            LabReport.patient_id == patient_id,
+            LabReport.source_type == "simple_case_pdf",
+        )
+    )
+    await session.execute(
+        delete(RadiologyReport).where(
+            RadiologyReport.patient_id == patient_id,
+            RadiologyReport.source_type == "simple_case_report",
+        )
+    )
+    await session.flush()
+
+    if normalized.labs:
+        source_files = [
+            str(item.source_metadata.get("source_file_name"))
+            for item in normalized.labs
+            if item.source_metadata.get("source_file_name")
+        ]
+        lab_report = LabReport(
+            patient_id=patient_id,
+            uploaded_by_user_id=current_user.id,
+            source_type="simple_case_pdf",
+            file_name=source_files[0] if source_files else "laboratuvar.pdf",
+            report_date=_date_or_none(normalized.labs[0].measured_at),
+            raw_payload={
+                "contract_version": normalized.contract_version,
+                "labs": [item.model_dump(mode="json") for item in normalized.labs],
+            },
+            status="saved",
+            metadata_json={
+                "simple_case": True,
+                "source_files": list(dict.fromkeys(source_files)),
+                "classification_disabled": True,
+            },
+        )
+        session.add(lab_report)
+        await session.flush()
+
+        lab_rows: list[LabResult] = []
+        for item in normalized.labs:
+            lab_rows.append(
+                LabResult(
+                    patient_id=patient_id,
+                    lab_report_id=lab_report.id,
+                    analysis_run_id=None,
+                    parameter_id=None,
+                    raw_parameter_name=item.test_name,
+                    parameter_code=None,
+                    canonical_name=item.test_name,
+                    raw_value=None if item.value is None else str(item.value),
+                    normalized_value=_decimal_or_none(item.value),
+                    unit=item.unit,
+                    reference_min=None,
+                    reference_max=None,
+                    reference_source=item.reference_source,
+                    result_status=ResultStatus.UNKNOWN,
+                    trend_status=TrendStatus.NO_PREVIOUS_RESULT,
+                    previous_value=None,
+                    absolute_difference=None,
+                    percentage_difference=None,
+                    time_difference_days=None,
+                    alias_confidence=0.0,
+                    reference_confidence=1.0 if item.reference_text else 0.0,
+                    classification_confidence=0.0,
+                    trend_confidence=0.0,
+                    needs_review=True,
+                    reason=None,
+                    rule_applied=None,
+                    measured_at=_date_or_none(item.measured_at),
+                    metadata_json={
+                        **dict(item.source_metadata or {}),
+                        "simple_case": True,
+                        "reference_text": item.reference_text,
+                        "reference_details": (
+                            item.reference_details.model_dump(mode="json")
+                            if item.reference_details is not None
+                            else None
+                        ),
+                        "classification_disabled": True,
+                    },
+                )
+            )
+        session.add_all(lab_rows)
+
+    for report in normalized.reports:
+        source_text = (report.raw_text or report.findings or report.impression or "").strip()
+        if not source_text:
+            continue
+        metadata = dict(report.metadata or {})
+        file_name = metadata.get("source_file_name")
+        session.add(
+            RadiologyReport(
+                patient_id=patient_id,
+                uploaded_by_user_id=current_user.id,
+                source_type="simple_case_report",
+                file_name=str(file_name) if file_name else None,
+                report_date=_date_or_none(report.report_date),
+                modality=_report_modality(report.report_type),
+                body_part=(report.body_region or "OTHER").strip().upper().replace(" ", "_"),
+                original_text=source_text,
+                findings_json=(
+                    [{"text": report.findings, "classification": "source_finding"}]
+                    if report.findings
+                    else []
+                ),
+                measurements_json=[],
+                dexa_metrics_json=[],
+                critical_findings_json=[],
+                impression=report.impression,
+                summary=(report.impression or report.findings or source_text)[:4000],
+                status="saved",
+                metadata_json={
+                    **metadata,
+                    "simple_case": True,
+                    "report_type": report.report_type,
+                    "physician_review_required": True,
+                },
+            )
+        )
+
+    await session.flush()
 
 
 @router.post("/normalize", response_model=SimpleCaseResponse)
@@ -281,6 +461,12 @@ async def save_case_for_patient(
             raise HTTPException(status_code=404, detail="Hasta kaydı bulunamadı.")
 
     normalized = normalize_simple_case(payload)
+    await _persist_simple_case_sources(
+        patient_id=patient_id,
+        normalized=normalized,
+        session=session,
+        current_user=current_user,
+    )
     metadata = dict(patient.metadata_json or {})
     metadata["clinical_context"] = normalized.clinical.model_dump(mode="json")
     metadata["simple_case"] = normalized.model_dump(mode="json")
