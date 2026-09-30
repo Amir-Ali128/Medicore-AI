@@ -1,89 +1,72 @@
-import { useState } from 'react';
-import { useLocation } from 'react-router-dom';
-
-const LEGAL_ACK_KEY = 'medicore:legalWarningsAcknowledged:v1';
-
-type HomeLocationState = {
-  acknowledgementRequired?: boolean;
-};
-
-function readAcknowledged() {
-  try {
-    return localStorage.getItem(LEGAL_ACK_KEY) === 'true';
-  } catch {
-    return false;
-  }
-}
+import { Link } from 'react-router-dom';
 
 export default function HomePage() {
-  const location = useLocation();
-  const state = location.state as HomeLocationState | null;
-  const [acknowledged, setAcknowledged] = useState(readAcknowledged);
-
-  function acknowledgeWarnings() {
-    try {
-      localStorage.setItem(LEGAL_ACK_KEY, 'true');
-    } catch {
-      // The acknowledgement still updates for this page if storage is unavailable.
-    }
-    setAcknowledged(true);
-  }
-
   return (
-    <div className="space-y-6">
-      <header>
-        <p className="text-sm font-semibold uppercase tracking-wide text-cyan-700">
-          MediCore AI
-        </p>
-        <p className="mt-4 max-w-3xl text-lg font-medium leading-8 text-slate-800">
-          Burada şikayetleriniz, muayene bulgularınız, öz ve aile geçmişiniz, kullandığınız ilaçlar ile laboratuvar, radyolojik ve diğer tetkiklerinizin eş zamanlı değerlendirilmesi amaçlanmıştır.
-        </p>
-        <p className="mt-4 max-w-3xl text-base leading-7 text-slate-600 lg:hidden">
-          İşleme başlamak için aşağıdaki ilgili bölüme tıklayın.
-        </p>
-        <p className="mt-4 hidden max-w-3xl text-base leading-7 text-slate-600 lg:block">
-          İşleme başlamak için soldaki ilgili bölüme tıklayın.
-        </p>
-      </header>
+    <div className="mx-auto max-w-7xl space-y-6">
+      <section className="overflow-hidden rounded-[32px] bg-slate-950 p-6 text-white shadow-sm sm:p-9 lg:p-12">
+        <div className="grid gap-10 lg:grid-cols-[1.25fr_0.75fr] lg:items-end">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-blue-300">
+              MediCore AI
+            </p>
+            <h1 className="mt-4 max-w-3xl text-4xl font-semibold tracking-[-0.04em] sm:text-5xl lg:text-6xl">
+              Bir vaka. Üç veri kaynağı. Tek çalışma alanı.
+            </h1>
+            <p className="mt-5 max-w-2xl text-base leading-7 text-slate-300">
+              Klinik bilgiler, laboratuvar sonuçları ve EKG/EKO/USG/BT/MR/röntgen gibi tetkik raporlarını tek yerde birleştir.
+            </p>
+            <div className="mt-7 flex flex-wrap gap-3">
+              <Link
+                to="/case"
+                className="rounded-2xl bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-slate-100"
+              >
+                Yeni vaka oluştur
+              </Link>
+              <Link
+                to="/history"
+                className="rounded-2xl border border-white/15 px-5 py-3 text-sm font-semibold text-white transition hover:bg-white/10"
+              >
+                Geçmişi aç
+              </Link>
+            </div>
+          </div>
 
-      {state?.acknowledgementRequired && !acknowledged ? (
-        <div className="rounded-xl border border-amber-300 bg-amber-100 px-5 py-4 text-sm font-semibold text-amber-950">
-          Klinik bölümlerde işlem yapabilmek için önce aşağıdaki önemli uyarıları okuyup “Okudum ve anladım” düğmesine basmanız gerekir.
+          <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
+            {[
+              ['01', 'Klinik', 'Şikayet, öykü, ilaçlar'],
+              ['02', 'Lab', 'Sonuç + rapordaki referans'],
+              ['03', 'Rapor', 'Tüm tetkikler tek formatta'],
+            ].map(([number, title, text]) => (
+              <div key={number} className="rounded-3xl border border-white/10 bg-white/5 p-4 backdrop-blur">
+                <div className="flex items-center gap-3">
+                  <span className="text-xs font-bold text-blue-300">{number}</span>
+                  <p className="font-semibold">{title}</p>
+                </div>
+                <p className="mt-2 text-sm text-slate-400">{text}</p>
+              </div>
+            ))}
+          </div>
         </div>
-      ) : null}
+      </section>
 
-      <section className="rounded-xl border border-amber-200 bg-amber-50 p-5">
-        <h2 className="text-base font-semibold text-amber-950">Önemli Uyarılar</h2>
-        <ul className="mt-3 list-disc space-y-2 pl-5 text-sm leading-7 text-amber-900">
-          <li>
-            MediCore AI bir değerlendirme ve Klinik Karar Destek Sistemidir (KKDS); kesin tanı veya tedavi kararı vermez.
-          </li>
-          <li>
-            Sistem çıktıları hatalı veya eksik olabilir ve hekim değerlendirmesinin yerine geçmez.
-          </li>
-          <li>
-            Röntgen ve ultrason görüntülerinde sunulan AI (DL/ML) ön değerlendirmesi deneyseldir; resmi radyoloji raporu veya hekim/radyolog değerlendirmesinin yerine geçmez.
-          </li>
-          <li>
-            Verileri yüklerken isim, soyisim, T.C. kimlik numarası ve benzeri doğrudan kişisel tanımlayıcıları içermeyecek şekilde yükleyiniz.
-          </li>
-          <li>Doktorunuza danışmadan ilaç başlamayın, bırakmayın veya doz değiştirmeyin.</li>
-          <li>Yalnızca sistem çıktısına dayanarak tetkik veya tıbbi işlem kararı almayın.</li>
-          <li>Acil veya ciddi bir sağlık sorunu şüphesinde doğrudan uygun sağlık kuruluşuna başvurun.</li>
-        </ul>
+      <section className="grid gap-4 md:grid-cols-3">
+        {[
+          ['Kaynak sadakati', 'Lab referansları rapordan alınır; sistem eksik referans uydurmaz.'],
+          ['Sınıflandırma yok', 'Normal / abnormal / high / low gibi otomatik sınıflandırma katmanı yok.'],
+          ['Tek rapor modeli', 'EKG’den tomografiye kadar tüm yazılı tetkik raporları aynı vaka içinde tutulur.'],
+        ].map(([title, text]) => (
+          <div key={title} className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="mb-4 h-2 w-10 rounded-full bg-blue-600" />
+            <h2 className="text-lg font-semibold tracking-tight text-slate-950">{title}</h2>
+            <p className="mt-2 text-sm leading-6 text-slate-500">{text}</p>
+          </div>
+        ))}
+      </section>
 
-        <button
-          type="button"
-          onClick={acknowledgeWarnings}
-          disabled={acknowledged}
-          className={`mt-5 rounded-lg px-5 py-2.5 text-sm font-semibold transition ${
-            acknowledged
-              ? 'cursor-default bg-emerald-100 text-emerald-800'
-              : 'bg-amber-900 text-white hover:bg-amber-950'
-          }`}
-        >
-          {acknowledged ? '✓ Okudum ve anladım' : 'Okudum ve anladım'}
-        </button>
+      <section className="rounded-[28px] border border-amber-200 bg-amber-50 px-5 py-4">
+        <p className="text-sm leading-6 text-amber-900">
+          MediCore klinik karar desteği sağlar; kesin tanı veya tedavi kararı vermez ve hekim değerlendirmesinin yerine geçmez.
+        </p>
       </section>
     </div>
   );
