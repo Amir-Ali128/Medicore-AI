@@ -42,3 +42,26 @@ select {
   scrollbar-width: thin;
   scrollbar-color: #cbd5e1 transparent;
 }
+
+
+#root {
+  position: relative;
+  min-height: 100vh;
+  isolation: isolate;
+}
+
+a,
+button,
+input,
+textarea,
+select,
+label {
+  pointer-events: auto;
+}
+
+main,
+aside,
+nav,
+header {
+  pointer-events: auto;
+}
