@@ -1,4 +1,4 @@
-"""Clinician-facing AI synthesis for the simplified MediCore case flow."""
+"""Clinician-facing AI report generation for the simplified MediCore case flow."""
 
 from __future__ import annotations
 
@@ -15,74 +15,53 @@ from app.schemas.simple_case import SimpleCaseRequest
 
 @dataclass(frozen=True)
 class CaseAIInterpretation:
-    clinical_summary: str
-    integrated_findings: tuple[str, ...]
-    correlations: tuple[str, ...]
-    attention_points: tuple[str, ...]
-    missing_or_conflicting_data: tuple[str, ...]
-    clinician_conclusion: str
-    limitations: tuple[str, ...]
+    report_text: str
     model: str
 
 
 _SYSTEM_PROMPT = """
-You are MediCore's clinician-facing case synthesis layer.
+You are MediCore's clinician-facing medical report writer.
 
 You receive one structured case containing:
 - clinical context,
-- laboratory results with source-provided reference text,
-- medical report text/findings.
+- laboratory results with the reference text printed in the source report,
+- one or more medical report texts/findings.
 
-Your job is to synthesize the sources together for physician review.
+Write a professional Turkish clinical assessment report for physician review.
 
-Strict rules:
+Use this exact section order and headings:
+
+KLİNİK BİLGİ
+LABORATUVAR DEĞERLENDİRMESİ
+TETKİK / RAPOR BULGULARI
+ENTEGRE KLİNİK DEĞERLENDİRME
+SONUÇ / KANAAT
+HEKİM NOTU
+
+Style:
+- Write like a concise physician-to-physician report, not like a chatbot.
+- Use complete clinical sentences and short paragraphs.
+- Integrate the clinical context, laboratory data and report findings together.
+- In the laboratory section, include source values, units and printed reference text when useful.
+- If a reference is missing, explicitly say the source report did not provide one.
+- In the integrated assessment, explain cross-source relationships cautiously.
+- In SONUÇ / KANAAT, summarize only source-supported conclusions and clinically relevant synthesis.
+- HEKİM NOTU should state missing/conflicting data and that final interpretation requires physician review when applicable.
+
+Strict safety/fidelity rules:
 - Use only information present in the supplied case.
 - Never invent a diagnosis, finding, value, reference range, recommendation, or negative finding.
-- Do not classify lab values as high/low/normal unless the source report itself explicitly says so.
-- Preserve uncertainty and negation.
-- Do not prescribe treatment or medication changes.
-- Do not claim to replace physician judgment.
-- If data are missing or conflicting, say so.
-- Clinical relationships may be described cautiously: "birlikte değerlendirildiğinde", "uyumlu olabilir",
-  "ilişkili olabilir", "klinik korelasyon gerekir".
-- Keep output concise, clinically useful, and in Turkish.
-- Return JSON only.
-
-Required JSON:
-{
-  "clinical_summary": "2-5 sentence integrated case summary",
-  "integrated_findings": ["source-grounded important findings"],
-  "correlations": ["cross-source relationships between clinical/lab/report data"],
-  "attention_points": ["items that merit physician attention"],
-  "missing_or_conflicting_data": ["missing, ambiguous, or conflicting source data"],
-  "clinician_conclusion": "short final physician-facing synthesis",
-  "limitations": ["limitations of the synthesis"]
-}
+- Do not classify a lab value as high/low/normal unless that wording is explicitly present in the source.
+- Preserve negation and uncertainty.
+- Do not prescribe medication or treatment.
+- Do not provide invented probabilities.
+- Avoid conversational phrases such as "istersen", "size yardımcı olabilirim", or "doktorunuza danışın".
+- Do not add markdown fences or JSON. Return only the finished Turkish medical report.
 """.strip()
-
-
-def _clean(value: object, limit: int) -> str:
-    return " ".join(str(value or "").split()).strip()[:limit]
-
-
-def _list(value: object, *, limit: int = 12, item_limit: int = 900) -> tuple[str, ...]:
-    if not isinstance(value, list):
-        return ()
-    out: list[str] = []
-    for item in value:
-        if not isinstance(item, str):
-            continue
-        cleaned = _clean(item, item_limit)
-        if cleaned and cleaned not in out:
-            out.append(cleaned)
-        if len(out) >= limit:
-            break
-    return tuple(out)
 
 
 def _build_case_payload(payload: SimpleCaseRequest) -> dict[str, Any]:
     normalized = normalize_simple_case(payload)
-
     return {
         "clinical": normalized.clinical.model_dump(mode="json"),
         "labs": [
@@ -123,31 +102,31 @@ async def interpret_simple_case(payload: SimpleCaseRequest) -> CaseAIInterpretat
         or settings.claude_vision_model
     )
     if not settings.anthropic_api_key or not model:
-        raise RuntimeError("Anthropic klinik yorum modeli yapılandırılmamış.")
+        raise RuntimeError("Anthropic klinik rapor modeli yapılandırılmamış.")
 
     case_payload = _build_case_payload(payload)
+    prompt = json.dumps(case_payload, ensure_ascii=False, separators=(",", ":"))
     client = AsyncAnthropic(api_key=settings.anthropic_api_key)
 
-    response = await client.messages.create(
-        model=model,
-        max_tokens=2200,
-        system=_SYSTEM_PROMPT,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": json.dumps(
-                            case_payload,
-                            ensure_ascii=False,
-                            separators=(",", ":"),
-                        )[:180_000],
-                    }
-                ],
-            }
-        ],
-    )
+    try:
+        response = await client.messages.create(
+            model=model,
+            max_tokens=3200,
+            system=_SYSTEM_PROMPT,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": prompt[:160_000],
+                        }
+                    ],
+                }
+            ],
+        )
+    except Exception as exc:
+        raise RuntimeError(f"AI klinik rapor üretimi başarısız: {exc}") from exc
 
     text = "".join(
         block.text
@@ -156,44 +135,20 @@ async def interpret_simple_case(payload: SimpleCaseRequest) -> CaseAIInterpretat
     ).strip()
 
     if not text:
-        raise RuntimeError("AI klinik yorum modeli boş yanıt döndürdü.")
+        raise RuntimeError("AI klinik rapor modeli boş yanıt döndürdü.")
 
-    if text.startswith("```"):
-        first_newline = text.find("\n")
-        if first_newline >= 0:
-            text = text[first_newline + 1 :]
-        if text.endswith("```"):
-            text = text[:-3]
-        text = text.strip()
-
-    start = text.find("{")
-    end = text.rfind("}")
-    if start >= 0 and end > start:
-        text = text[start : end + 1]
-
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError("AI klinik yorum çıktısı geçerli JSON değil.") from exc
-
-    if not isinstance(data, dict):
-        raise RuntimeError("AI klinik yorum çıktısı beklenen formatta değil.")
-
-    summary = _clean(data.get("clinical_summary"), 5000)
-    conclusion = _clean(data.get("clinician_conclusion"), 3500)
-    if not summary and not conclusion:
-        raise RuntimeError("AI klinik yorumunda kullanılabilir özet bulunamadı.")
+    required_headings = (
+        "KLİNİK BİLGİ",
+        "LABORATUVAR DEĞERLENDİRMESİ",
+        "TETKİK / RAPOR BULGULARI",
+        "ENTEGRE KLİNİK DEĞERLENDİRME",
+        "SONUÇ / KANAAT",
+        "HEKİM NOTU",
+    )
+    if not any(heading in text.upper() for heading in required_headings):
+        text = "KLİNİK DEĞERLENDİRME RAPORU\n\n" + text
 
     return CaseAIInterpretation(
-        clinical_summary=summary,
-        integrated_findings=_list(data.get("integrated_findings"), limit=16),
-        correlations=_list(data.get("correlations"), limit=16),
-        attention_points=_list(data.get("attention_points"), limit=16),
-        missing_or_conflicting_data=_list(
-            data.get("missing_or_conflicting_data"),
-            limit=12,
-        ),
-        clinician_conclusion=conclusion,
-        limitations=_list(data.get("limitations"), limit=10),
+        report_text=text[:24_000],
         model=model,
     )
