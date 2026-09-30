@@ -66,8 +66,9 @@ export default function SimpleCaseWorkspacePage() {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    const patientIdToLoad = getActivePatientId();
-    if (!patientIdToLoad) return;
+    const activePatientId = getActivePatientId();
+    if (!activePatientId) return;
+    const patientIdToLoad: string = activePatientId;
 
     let cancelled = false;
 
