@@ -45,6 +45,64 @@ router = APIRouter(prefix="/simple-case", tags=["simple-case"])
 
 _MAX_PDF_BYTES = 15 * 1024 * 1024
 
+_IGNORED_LAB_NAME_MARKERS = (
+    "çalışılan hücre/doku",
+    "calisilan hucre/doku",
+    "çalışılan hücre",
+    "calisilan hucre",
+    "çalışılan doku",
+    "calisilan doku",
+    "ön sonuç",
+    "on sonuc",
+)
+
+
+def _is_usable_lab_row(row: dict) -> bool:
+    name = str(
+        row.get("canonical_name")
+        or row.get("raw_parameter_name")
+        or ""
+    ).strip()
+    if not name:
+        return False
+
+    folded = (
+        name.casefold()
+        .replace("ı", "i")
+        .replace("ş", "s")
+        .replace("ğ", "g")
+        .replace("ü", "u")
+        .replace("ö", "o")
+        .replace("ç", "c")
+    )
+    if any(marker in folded for marker in _IGNORED_LAB_NAME_MARKERS):
+        return False
+
+    value = row.get("raw_value")
+    if value in (None, ""):
+        value = row.get("normalized_value")
+    return value not in (None, "")
+
+
+def _dedupe_lab_rows(rows: list[dict]) -> list[dict]:
+    output: list[dict] = []
+    seen: set[tuple[str, str, str, str]] = set()
+    for row in rows:
+        if not _is_usable_lab_row(row):
+            continue
+        name = str(row.get("canonical_name") or row.get("raw_parameter_name") or "").strip()
+        value = row.get("raw_value")
+        if value in (None, ""):
+            value = row.get("normalized_value")
+        unit = str(row.get("unit") or "").strip()
+        reference = str(row.get("reference_text") or "").strip()
+        key = (name.casefold(), str(value).strip(), unit.casefold(), reference.casefold())
+        if key in seen:
+            continue
+        seen.add(key)
+        output.append(row)
+    return output
+
 
 def _parse_measured_at(value):
     if value in (None, ""):
@@ -323,7 +381,7 @@ async def upload_lab_pdf(file: UploadFile = File(...)) -> list[LabResultInput]:
             ) from exc
 
     rows: list[LabResultInput] = []
-    for row in extracted.get("labs") or []:
+    for row in _dedupe_lab_rows(list(extracted.get("labs") or [])):
         if not isinstance(row, dict):
             continue
 
