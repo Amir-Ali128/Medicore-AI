@@ -548,51 +548,25 @@ export default function SimpleCaseWorkspacePage() {
               </div>
 
               {aiInterpretation ? (
-                <div className="space-y-4">
-                  <div className="rounded-3xl border border-blue-200 bg-blue-50/60 p-5">
+                <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+                  <div className="flex flex-col gap-2 border-b border-slate-100 pb-4">
                     <p className="text-xs font-semibold uppercase tracking-[0.16em] text-blue-600">
-                      Klinik özet
+                      MediCore Klinik Değerlendirme Raporu
                     </p>
-                    <p className="mt-3 whitespace-pre-line text-sm leading-7 text-slate-800">
-                      {aiInterpretation.clinical_summary}
+                    <h3 className="text-xl font-semibold tracking-tight text-slate-950">
+                      AI destekli hekim raporu
+                    </h3>
+                    <p className="text-xs text-slate-400">
+                      Kaynak: klinik bilgi + laboratuvar + tetkik raporları
                     </p>
                   </div>
 
-                  <div className="grid gap-4 lg:grid-cols-2">
-                    {[
-                      ['Önemli Bulgular', aiInterpretation.integrated_findings],
-                      ['Bulgular Arası İlişkiler', aiInterpretation.correlations],
-                      ['Dikkat Noktaları', aiInterpretation.attention_points],
-                      ['Eksik / Çelişkili Veri', aiInterpretation.missing_or_conflicting_data],
-                    ].map(([title, items]) => (
-                      <div key={title as string} className="rounded-3xl border border-slate-200 bg-white p-5">
-                        <h4 className="font-semibold text-slate-950">{title}</h4>
-                        {(items as string[]).length ? (
-                          <ul className="mt-3 space-y-2 text-sm leading-6 text-slate-600">
-                            {(items as string[]).map((item) => <li key={item}>• {item}</li>)}
-                          </ul>
-                        ) : (
-                          <p className="mt-3 text-sm text-slate-400">Belirtilmedi.</p>
-                        )}
-                      </div>
-                    ))}
+                  <div className="mt-5 whitespace-pre-wrap font-serif text-[15px] leading-8 text-slate-800">
+                    {aiInterpretation.report_text}
                   </div>
 
-                  <div className="rounded-3xl bg-slate-950 p-5 text-white">
-                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-blue-300">
-                      Hekim için sonuç
-                    </p>
-                    <p className="mt-3 text-sm leading-7 text-slate-100">
-                      {aiInterpretation.clinician_conclusion}
-                    </p>
-                    {aiInterpretation.limitations.length ? (
-                      <div className="mt-4 border-t border-white/10 pt-4">
-                        <p className="text-xs font-semibold text-slate-300">Sınırlılıklar</p>
-                        <ul className="mt-2 space-y-1 text-xs leading-5 text-slate-400">
-                          {aiInterpretation.limitations.map((item) => <li key={item}>• {item}</li>)}
-                        </ul>
-                      </div>
-                    ) : null}
+                  <div className="mt-6 border-t border-slate-100 pt-4 text-xs leading-5 text-slate-400">
+                    Bu çıktı klinik karar desteği amacıyla oluşturulmuştur ve hekim değerlendirmesi ile doğrulanmalıdır.
                   </div>
                 </div>
               ) : null}
