@@ -210,20 +210,20 @@ function RecordCard({
         </div>
 
         <div className="flex shrink-0 flex-wrap gap-2">
-          <button
-            type="button"
+          <a
+            href="#/case"
             onClick={() => onOpen(record)}
             className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
           >
             Vakayı Aç
-          </button>
-          <button
-            type="button"
+          </a>
+          <a
+            href="#/case"
             onClick={() => onOpenSummary(record)}
             className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-800 hover:bg-blue-100"
           >
             Özeti Aç
-          </button>
+          </a>
           <button
             type="button"
             onClick={() => onAddLab(record)}
@@ -510,6 +510,7 @@ export default function PatientHistoryPage() {
 
   function openCase(record: PatientRecord, step: 'patient' | 'labs' | 'reports' | 'summary' = 'patient') {
     activatePatientRecord(record);
+    sessionStorage.setItem('medicore:case-patient-id', record.id);
     sessionStorage.setItem('medicore:case-open-step', step);
 
     // This app uses createHashRouter. Changing the hash directly avoids stale
