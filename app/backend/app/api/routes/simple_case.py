@@ -224,6 +224,20 @@ async def _persist_simple_case_sources(
                 "simple_case": True,
                 "source_files": list(dict.fromkeys(source_files)),
                 "classification_disabled": True,
+                "simple_case_results": [
+                    {
+                        "test_name": item.test_name,
+                        "value": item.value,
+                        "unit": item.unit,
+                        "reference_text": item.reference_text,
+                        "measured_at": (
+                            item.measured_at.isoformat()
+                            if hasattr(item.measured_at, "isoformat")
+                            else item.measured_at
+                        ),
+                    }
+                    for item in normalized.labs
+                ],
             },
         )
         session.add(lab_report)
