@@ -15,6 +15,7 @@ from typing import Any
 from openai import AsyncOpenAI
 
 from app.core.config import get_settings
+from app.domain.report_document_image_ai import review_radiology_media
 
 
 @dataclass(frozen=True)
@@ -75,6 +76,78 @@ class ScannedMedicalReportExtractionError(RuntimeError):
     pass
 
 
+async def _extract_with_anthropic_pages(
+    *,
+    content: bytes,
+    file_name: str,
+) -> ScannedMedicalReportExtraction | None:
+    """Render image-only PDF pages and read them with the existing document vision layer."""
+    settings = get_settings()
+    if not settings.anthropic_api_key:
+        return None
+
+    try:
+        import fitz
+    except Exception:
+        return None
+
+    page_texts: list[str] = []
+    document_types: list[str] = []
+    warnings: list[str] = []
+
+    try:
+        with fitz.open(stream=content, filetype="pdf") as document:
+            for page_index, page in enumerate(document, start=1):
+                pix = page.get_pixmap(matrix=fitz.Matrix(1.7, 1.7), alpha=False)
+                png = pix.tobytes("png")
+                review = await review_radiology_media(
+                    content=png,
+                    media_type="image/png",
+                    modality="AUTO",
+                    body_part=None,
+                )
+                if review is None:
+                    warnings.append(f"Sayfa {page_index} görüntü okuyucusu kullanılamadı.")
+                    continue
+
+                visible = (review.visible_text or "").strip()
+                if visible:
+                    page_texts.append(f"[Sayfa {page_index}]\n{visible}")
+                elif review.result_text or review.key_findings:
+                    derived = "\n".join(
+                        part
+                        for part in [
+                            review.result_text,
+                            *review.key_findings,
+                            *review.recommendations,
+                        ]
+                        if part
+                    ).strip()
+                    if derived:
+                        page_texts.append(f"[Sayfa {page_index}]\n{derived}")
+
+                if review.report_type and review.report_type != "UNKNOWN":
+                    document_types.append(review.report_type)
+                warnings.extend(review.limitations)
+
+    except Exception as exc:
+        raise ScannedMedicalReportExtractionError(
+            f"Taranmış PDF sayfa görüntü çıkarımı başarısız: {exc}"
+        ) from exc
+
+    text = "\n\n".join(page_texts).strip()
+    if len(text) < 10:
+        return None
+
+    return ScannedMedicalReportExtraction(
+        deidentified_text=text[:250_000],
+        document_type=(document_types[0] if document_types else "Tıbbi rapor"),
+        warnings=tuple(dict.fromkeys(warnings))[:20],
+        confidence=0.9,
+        model=settings.claude_vision_model or "anthropic-vision",
+    )
+
+
 async def extract_scanned_medical_report_pdf(
     *,
     content: bytes,
@@ -127,6 +200,12 @@ async def extract_scanned_medical_report_pdf(
             ],
         )
     except Exception as exc:
+        fallback = await _extract_with_anthropic_pages(
+            content=content,
+            file_name=file_name,
+        )
+        if fallback is not None:
+            return fallback
         raise ScannedMedicalReportExtractionError(
             f"Taranmış PDF tıbbi metin çıkarımı başarısız: {exc}"
         ) from exc
