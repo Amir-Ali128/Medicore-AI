@@ -98,13 +98,7 @@ async def ai_interpret_case(payload: SimpleCaseRequest) -> CaseAIInterpretationR
         ) from exc
 
     return CaseAIInterpretationResponse(
-        clinical_summary=result.clinical_summary,
-        integrated_findings=list(result.integrated_findings),
-        correlations=list(result.correlations),
-        attention_points=list(result.attention_points),
-        missing_or_conflicting_data=list(result.missing_or_conflicting_data),
-        clinician_conclusion=result.clinician_conclusion,
-        limitations=list(result.limitations),
+        report_text=result.report_text,
         model=result.model,
     )
 
