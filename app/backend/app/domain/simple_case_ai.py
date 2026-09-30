@@ -6,6 +6,10 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+# Import the runtime shim before creating Anthropic clients. This normalizes
+# Claude 5 requests (notably thinking/sampling compatibility) and emits sanitized
+# provider diagnostics without logging prompts or secrets.
+import app.domain.claude_sonnet5_compat_runtime  # noqa: F401
 from anthropic import AsyncAnthropic
 
 from app.core.config import get_settings
