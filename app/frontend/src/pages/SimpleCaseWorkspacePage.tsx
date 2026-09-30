@@ -39,6 +39,81 @@ function fileNameFromMetadata(metadata?: Record<string, unknown>) {
   return typeof value === 'string' ? value : null;
 }
 
+const REPORT_HEADINGS = [
+  'KLİNİK ÖZET',
+  'ÖNE ÇIKAN LABORATUVAR BULGULARI',
+  'TETKİK / RAPOR BULGULARI',
+  'ENTEGRE KLİNİK DEĞERLENDİRME',
+  'OLASI KLİNİK DURUMLAR / AYIRICI TANI',
+  'ÖNERİLEN İLERİ TETKİK / İZLEM',
+  'SONUÇ / KANAAT',
+  'HEKİM NOTU',
+  // Older saved reports remain readable.
+  'KLİNİK BİLGİ',
+  'LABORATUVAR DEĞERLENDİRMESİ',
+] as const;
+
+function parseClinicalReport(text: string) {
+  const normalized = text.replace(/\r\n/g, '\n').trim();
+  const upper = normalized.toLocaleUpperCase('tr-TR');
+  const matches = REPORT_HEADINGS
+    .map((heading) => ({ heading, index: upper.indexOf(heading) }))
+    .filter((item) => item.index >= 0)
+    .sort((a, b) => a.index - b.index);
+
+  if (matches.length === 0) {
+    return [{ heading: 'KLİNİK DEĞERLENDİRME', body: normalized }];
+  }
+
+  return matches.map((item, index) => {
+    const start = item.index + item.heading.length;
+    const end = matches[index + 1]?.index ?? normalized.length;
+    return {
+      heading: item.heading,
+      body: normalized.slice(start, end).replace(/^\s*[:\-]?\s*/, '').trim(),
+    };
+  }).filter((section) => section.body);
+}
+
+function ReportSection({ heading, body }: { heading: string; body: string }) {
+  const emphasis =
+    heading.includes('AYIRICI TANI') || heading.includes('İLERİ TETKİK')
+      ? 'border-blue-200 bg-blue-50/40'
+      : heading.includes('SONUÇ')
+        ? 'border-slate-300 bg-slate-50'
+        : 'border-slate-200 bg-white';
+
+  const lines = body
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const listLike = lines.length > 1 && lines.some((line) => /^[-•*]|^\d+[.)]/.test(line));
+
+  return (
+    <section className={`rounded-3xl border p-5 sm:p-6 ${emphasis}`}>
+      <h4 className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
+        {heading}
+      </h4>
+      {listLike ? (
+        <div className="mt-4 space-y-3">
+          {lines.map((line, index) => (
+            <div
+              key={`${heading}-${index}`}
+              className="rounded-2xl border border-slate-200/80 bg-white px-4 py-3 text-sm leading-6 text-slate-800"
+            >
+              {line.replace(/^[-•*]\s*/, '')}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="mt-4 whitespace-pre-line text-sm leading-7 text-slate-700">
+          {body}
+        </div>
+      )}
+    </section>
+  );
+}
+
 export default function SimpleCaseWorkspacePage() {
   const [searchParams] = useSearchParams();
   const [step, setStep] = useState<Step>('patient');
@@ -647,8 +722,14 @@ export default function SimpleCaseWorkspacePage() {
                     </p>
                   </div>
 
-                  <div className="mt-5 whitespace-pre-wrap font-serif text-[15px] leading-8 text-slate-800">
-                    {aiInterpretation.report_text}
+                  <div className="mt-5 grid gap-4">
+                    {parseClinicalReport(aiInterpretation.report_text).map((section) => (
+                      <ReportSection
+                        key={section.heading}
+                        heading={section.heading}
+                        body={section.body}
+                      />
+                    ))}
                   </div>
 
                   <div className="mt-6 border-t border-slate-100 pt-4 text-xs leading-5 text-slate-400">
