@@ -109,20 +109,10 @@ export function createPatient(payload: {
 }
 
 export function saveSimpleCase(patientId: string, payload: SimpleCaseRequest) {
-  return apiClient.put
-    ? apiClient.put<SimpleCaseResponse>(`/simple-case/patients/${patientId}/save`, payload)
-    : fetch(`${API_BASE_URL}/simple-case/patients/${patientId}/save`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(getAccessToken() ? { Authorization: `Bearer ${getAccessToken()}` } : {}),
-        },
-        body: JSON.stringify(payload),
-      }).then(async (response) => {
-        const data = await response.json();
-        if (!response.ok) throw new Error(data?.detail || 'Vaka kaydedilemedi.');
-        return data as SimpleCaseResponse;
-      });
+  return apiClient.put<SimpleCaseResponse>(
+    `/simple-case/patients/${patientId}/save`,
+    payload,
+  );
 }
 
 export function uploadLabPdf(file: File) {
