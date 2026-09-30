@@ -70,13 +70,14 @@ export default function SimpleCaseWorkspacePage() {
   useEffect(() => {
     const requestedPatientId = searchParams.get('patient');
     if (!requestedPatientId) return;
+    const patientIdToLoad = requestedPatientId;
 
     let cancelled = false;
 
     async function hydrateSavedCase() {
       setError('');
       try {
-        const patient = await getPatientRecord(requestedPatientId);
+        const patient = await getPatientRecord(patientIdToLoad);
         if (cancelled) return;
 
         setPatientId(patient.id);
