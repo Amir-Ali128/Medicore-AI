@@ -511,7 +511,14 @@ export default function PatientHistoryPage() {
   function openCase(record: PatientRecord, step: 'patient' | 'labs' | 'reports' | 'summary' = 'patient') {
     activatePatientRecord(record);
     sessionStorage.setItem('medicore:case-open-step', step);
-    navigate('/case');
+
+    // This app uses createHashRouter. Changing the hash directly avoids stale
+    // router-state issues and guarantees the case workspace mounts.
+    if (window.location.hash === '#/case') {
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+      return;
+    }
+    window.location.hash = '#/case';
   }
 
   async function handleDelete(record: PatientRecord) {
