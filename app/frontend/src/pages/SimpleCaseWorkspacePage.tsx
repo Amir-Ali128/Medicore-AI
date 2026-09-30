@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 
 import {
   createPatient,
@@ -39,6 +40,7 @@ function fileNameFromMetadata(metadata?: Record<string, unknown>) {
 }
 
 export default function SimpleCaseWorkspacePage() {
+  const location = useLocation();
   const [step, setStep] = useState<Step>('patient');
 
   const [protocolNo, setProtocolNo] = useState('');
@@ -67,8 +69,8 @@ export default function SimpleCaseWorkspacePage() {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    const sessionPatientId = sessionStorage.getItem('medicore:case-patient-id');
-    const activePatientId = sessionPatientId || getActivePatientId();
+    const routeState = location.state as { patientId?: string; step?: Step } | null;
+    const activePatientId = routeState?.patientId || getActivePatientId();
     if (!activePatientId) return;
     const patientIdToLoad: string = activePatientId;
 
@@ -133,9 +135,7 @@ export default function SimpleCaseWorkspacePage() {
 
         setAiInterpretation(saved.ai_report);
 
-        const requestedStep = sessionStorage.getItem('medicore:case-open-step');
-        sessionStorage.removeItem('medicore:case-open-step');
-        sessionStorage.removeItem('medicore:case-patient-id');
+        const requestedStep = routeState?.step ?? null;
         const validStep = steps.some((item) => item.key === requestedStep)
           ? (requestedStep as Step)
           : null;
@@ -151,7 +151,7 @@ export default function SimpleCaseWorkspacePage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [location.key]);
 
   const payload = useMemo<SimpleCaseRequest>(
     () => ({
