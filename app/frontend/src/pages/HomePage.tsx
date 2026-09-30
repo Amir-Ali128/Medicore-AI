@@ -1,8 +1,53 @@
-import { Link } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+
+const LEGAL_ACK_KEY = 'medicore:legalWarningsAcknowledged:v1';
+
+type GateState = {
+  acknowledgementRequired?: boolean;
+  from?: {
+    pathname?: string;
+    search?: string;
+  };
+} | null;
 
 export default function HomePage() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const gateState = location.state as GateState;
+  const needsAcknowledgement = gateState?.acknowledgementRequired === true;
+
+  function acknowledgeAndContinue() {
+    localStorage.setItem(LEGAL_ACK_KEY, 'true');
+
+    const pathname = gateState?.from?.pathname || '/case';
+    const search = gateState?.from?.search || '';
+    navigate(`${pathname}${search}`, { replace: true });
+  }
+
   return (
     <div className="mx-auto max-w-7xl space-y-6">
+      {needsAcknowledgement ? (
+        <section className="rounded-[28px] border border-amber-300 bg-amber-50 p-6 shadow-sm sm:p-8">
+          <p className="text-xs font-bold uppercase tracking-[0.18em] text-amber-700">
+            Klinik kullanım uyarısı
+          </p>
+          <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
+            MediCore klinik karar desteği sağlar.
+          </h2>
+          <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-700">
+            Sistem kesin tanı veya tedavi kararı vermez ve hekim değerlendirmesinin yerine geçmez.
+            Kaynak veriler, AI çıktıları ve önerilen ileri değerlendirmeler hekim tarafından doğrulanmalıdır.
+          </p>
+          <button
+            type="button"
+            onClick={acknowledgeAndContinue}
+            className="mt-5 rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800"
+          >
+            Anladım, devam et
+          </button>
+        </section>
+      ) : null}
+
       <section className="overflow-hidden rounded-[32px] bg-slate-950 p-6 text-white shadow-sm sm:p-9 lg:p-12">
         <div className="grid gap-10 lg:grid-cols-[1.25fr_0.75fr] lg:items-end">
           <div>
