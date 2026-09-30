@@ -20,7 +20,7 @@ export default function Sidebar() {
   const items = user?.role === 'admin' ? adminItems : clinicalItems;
 
   return (
-    <aside className="fixed inset-y-0 left-0 z-40 hidden w-64 pointer-events-auto border-r border-slate-200/80 bg-white lg:flex lg:flex-col">
+    <aside className="sticky top-0 flex h-screen w-64 flex-col border-r border-slate-200/80 bg-white">
       <div className="px-6 py-7">
         <a href="#/" className="flex items-center gap-3">
           <div className="grid h-10 w-10 place-items-center rounded-2xl bg-slate-950 text-sm font-bold text-white">
@@ -33,7 +33,7 @@ export default function Sidebar() {
         </a>
       </div>
 
-      <nav className="relative z-50 px-3 pointer-events-auto">
+      <nav className="px-3">
         <p className="px-3 pb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
           {user?.role === 'admin' ? 'Yönetim' : 'Çalışma Alanı'}
         </p>
