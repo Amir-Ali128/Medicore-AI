@@ -39,7 +39,7 @@ function fileNameFromMetadata(metadata?: Record<string, unknown>) {
   return typeof value === 'string' ? value : null;
 }
 
-const REPORT_HEADINGS = [
+const CURRENT_REPORT_HEADINGS = [
   'KLİNİK ÖZET',
   'ÖNE ÇIKAN LABORATUVAR BULGULARI',
   'TETKİK / RAPOR BULGULARI',
@@ -48,10 +48,20 @@ const REPORT_HEADINGS = [
   'ÖNERİLEN İLERİ TETKİK / İZLEM',
   'SONUÇ / KANAAT',
   'HEKİM NOTU',
-  // Older saved reports remain readable.
+] as const;
+
+const REPORT_HEADINGS = [
+  ...CURRENT_REPORT_HEADINGS,
+  // Older saved reports remain readable, but are marked as legacy in the UI.
   'KLİNİK BİLGİ',
   'LABORATUVAR DEĞERLENDİRMESİ',
 ] as const;
+
+function isCurrentClinicalReport(text: string | null | undefined) {
+  if (!text?.trim()) return false;
+  const upper = text.toLocaleUpperCase('tr-TR');
+  return CURRENT_REPORT_HEADINGS.every((heading) => upper.includes(heading));
+}
 
 function parseClinicalReport(text: string) {
   const normalized = text.replace(/\r\n/g, '\n').trim();
@@ -138,6 +148,7 @@ export default function SimpleCaseWorkspacePage() {
 
   const [result, setResult] = useState<SimpleCaseResponse | null>(null);
   const [aiInterpretation, setAiInterpretation] = useState<CaseAIInterpretation | null>(null);
+  const [aiReportWarning, setAiReportWarning] = useState('');
   const [aiBusy, setAiBusy] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -153,6 +164,7 @@ export default function SimpleCaseWorkspacePage() {
 
     async function hydrateSavedCase() {
       setError('');
+      setAiReportWarning('');
       try {
         const saved = await getSavedSimpleCase(patientIdToLoad);
         if (cancelled) return;
@@ -209,6 +221,11 @@ export default function SimpleCaseWorkspacePage() {
         }
 
         setAiInterpretation(saved.ai_report);
+        if (saved.ai_report && !isCurrentClinicalReport(saved.ai_report.report_text)) {
+          setAiReportWarning(
+            'Bu kayıt eski rapor formatında. Güncel klinik rapor için “Yeniden yorumla” düğmesini kullan.',
+          );
+        }
 
         const requestedStep = searchParams.get('step') as Step | null;
         const validStep = steps.some((item) => item.key === requestedStep)
@@ -309,12 +326,23 @@ export default function SimpleCaseWorkspacePage() {
   async function runAIInterpretation() {
     setAiBusy(true);
     setError('');
+    setAiReportWarning('');
+    const previousInterpretation = aiInterpretation;
     try {
       const interpretation = await interpretSimpleCase(payload, patientId);
+      if (!isCurrentClinicalReport(interpretation.report_text)) {
+        throw new Error('AI klinik raporu güncel bölüm sözleşmesini tamamlamadı.');
+      }
       setAiInterpretation(interpretation);
       setStep('summary');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'AI klinik yorum tamamlanamadı.');
+      const message = err instanceof Error ? err.message : 'AI klinik yorum tamamlanamadı.';
+      if (previousInterpretation) {
+        setAiReportWarning(
+          `Yeni AI raporu üretilemedi. Aşağıdaki rapor önceki kayıt; güncel çıktı değildir. ${message}`,
+        );
+      }
+      setError(message);
     } finally {
       setAiBusy(false);
     }
@@ -707,6 +735,12 @@ export default function SimpleCaseWorkspacePage() {
                   </button>
                 </div>
               </div>
+
+              {aiReportWarning ? (
+                <div className="rounded-3xl border border-amber-300 bg-amber-50 px-5 py-4 text-sm leading-6 text-amber-950">
+                  <strong>AI rapor durumu:</strong> {aiReportWarning}
+                </div>
+              ) : null}
 
               {aiInterpretation ? (
                 <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
