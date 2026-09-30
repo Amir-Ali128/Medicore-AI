@@ -385,7 +385,6 @@ Yalnızca JSON döndür:
     message = await client.messages.create(
         model=model,
         max_tokens=2800,
-        temperature=0,
         system=(
             "You extract medical report documents conservatively and review medical images as a cautious "
             "radiology-assist component. For medical images, be clinically descriptive rather than merely "
