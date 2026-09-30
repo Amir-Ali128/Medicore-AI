@@ -2,9 +2,11 @@ import { useMemo, useState } from 'react';
 
 import {
   createPatient,
+  interpretSimpleCase,
   saveSimpleCase,
   uploadLabPdf,
   uploadReportPdf,
+  type CaseAIInterpretation,
   type LabInput,
   type MedicalReportInput,
   type SexValue,
@@ -56,6 +58,8 @@ export default function SimpleCaseWorkspacePage() {
   const [reportBusy, setReportBusy] = useState(false);
 
   const [result, setResult] = useState<SimpleCaseResponse | null>(null);
+  const [aiInterpretation, setAiInterpretation] = useState<CaseAIInterpretation | null>(null);
+  const [aiBusy, setAiBusy] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
@@ -100,6 +104,7 @@ export default function SimpleCaseWorkspacePage() {
       });
       setPatientId(patient.id);
       setSaved(false);
+      setAiInterpretation(null);
       setStep('clinical');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Hasta kaydedilemedi.');
@@ -116,6 +121,7 @@ export default function SimpleCaseWorkspacePage() {
       const rows = await uploadLabPdf(file);
       setLabs((current) => [...current, ...rows]);
       setSaved(false);
+      setAiInterpretation(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Kan PDF’i işlenemedi.');
     } finally {
@@ -131,10 +137,25 @@ export default function SimpleCaseWorkspacePage() {
       const report = await uploadReportPdf(file, reportType, bodyRegion);
       setReports((current) => [...current, report]);
       setSaved(false);
+      setAiInterpretation(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Rapor PDF’i işlenemedi.');
     } finally {
       setReportBusy(false);
+    }
+  }
+
+  async function runAIInterpretation() {
+    setAiBusy(true);
+    setError('');
+    try {
+      const interpretation = await interpretSimpleCase(payload);
+      setAiInterpretation(interpretation);
+      setStep('summary');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'AI klinik yorum tamamlanamadı.');
+    } finally {
+      setAiBusy(false);
     }
   }
 
@@ -506,6 +527,75 @@ export default function SimpleCaseWorkspacePage() {
                   </div>
                 ))}
               </div>
+
+              <div className="rounded-3xl border border-slate-200 p-5">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <h3 className="font-semibold text-slate-950">AI Klinik Yorum</h3>
+                    <p className="mt-1 text-sm leading-6 text-slate-500">
+                      Klinik bilgi, laboratuvar sonuçları ve tüm tetkik raporları birlikte değerlendirilir.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={runAIInterpretation}
+                    disabled={aiBusy || (!completed.clinical && labs.length === 0 && reports.length === 0)}
+                    className="rounded-2xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {aiBusy ? 'AI değerlendiriyor…' : aiInterpretation ? 'Yeniden yorumla' : 'AI Klinik Yorum'}
+                  </button>
+                </div>
+              </div>
+
+              {aiInterpretation ? (
+                <div className="space-y-4">
+                  <div className="rounded-3xl border border-blue-200 bg-blue-50/60 p-5">
+                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-blue-600">
+                      Klinik özet
+                    </p>
+                    <p className="mt-3 whitespace-pre-line text-sm leading-7 text-slate-800">
+                      {aiInterpretation.clinical_summary}
+                    </p>
+                  </div>
+
+                  <div className="grid gap-4 lg:grid-cols-2">
+                    {[
+                      ['Önemli Bulgular', aiInterpretation.integrated_findings],
+                      ['Bulgular Arası İlişkiler', aiInterpretation.correlations],
+                      ['Dikkat Noktaları', aiInterpretation.attention_points],
+                      ['Eksik / Çelişkili Veri', aiInterpretation.missing_or_conflicting_data],
+                    ].map(([title, items]) => (
+                      <div key={title as string} className="rounded-3xl border border-slate-200 bg-white p-5">
+                        <h4 className="font-semibold text-slate-950">{title}</h4>
+                        {(items as string[]).length ? (
+                          <ul className="mt-3 space-y-2 text-sm leading-6 text-slate-600">
+                            {(items as string[]).map((item) => <li key={item}>• {item}</li>)}
+                          </ul>
+                        ) : (
+                          <p className="mt-3 text-sm text-slate-400">Belirtilmedi.</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="rounded-3xl bg-slate-950 p-5 text-white">
+                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-blue-300">
+                      Hekim için sonuç
+                    </p>
+                    <p className="mt-3 text-sm leading-7 text-slate-100">
+                      {aiInterpretation.clinician_conclusion}
+                    </p>
+                    {aiInterpretation.limitations.length ? (
+                      <div className="mt-4 border-t border-white/10 pt-4">
+                        <p className="text-xs font-semibold text-slate-300">Sınırlılıklar</p>
+                        <ul className="mt-2 space-y-1 text-xs leading-5 text-slate-400">
+                          {aiInterpretation.limitations.map((item) => <li key={item}>• {item}</li>)}
+                        </ul>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
 
               <div className="rounded-3xl border border-slate-200 p-5">
                 <h3 className="font-semibold text-slate-950">Vaka durumu</h3>

@@ -60,6 +60,17 @@ export type SimpleCaseResponse = {
   warnings: string[];
 };
 
+export type CaseAIInterpretation = {
+  clinical_summary: string;
+  integrated_findings: string[];
+  correlations: string[];
+  attention_points: string[];
+  missing_or_conflicting_data: string[];
+  clinician_conclusion: string;
+  limitations: string[];
+  model: string;
+};
+
 export type PatientRecord = {
   id: string;
   protocol_no: string;
@@ -131,4 +142,12 @@ export function uploadReportPdf(
   body.append('report_type', reportType || 'Tıbbi Rapor');
   if (bodyRegion.trim()) body.append('body_region', bodyRegion.trim());
   return uploadRequest<MedicalReportInput>('/simple-case/reports/pdf', { body });
+}
+
+
+export function interpretSimpleCase(payload: SimpleCaseRequest) {
+  return apiClient.post<CaseAIInterpretation>(
+    '/simple-case/ai-interpretation',
+    payload,
+  );
 }
