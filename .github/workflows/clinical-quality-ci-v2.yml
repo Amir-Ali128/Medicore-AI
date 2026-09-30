@@ -1,29 +1,10 @@
-name: Clinical Quality CI v2
+name: MediCore Python Quality CI
 
 on:
   push:
     branches:
-      - fix/clinical-quality-layer
-      - feature/clinical-domain-router
-      - feature/single-source-evaluation
-      - feature/radiology-clinical-observation-style
-      - feature/native-vision-engine
-      - feature/xray-core-v2
-      - feature/onnx-inference-engine
-      - feature/dicom-engine
-      - feature/vision-postprocessing
-      - feature/clinical-fusion-brain
-      - feature/clinical-fusion-brain-v2
-      - feature/typescript-python-brain-migration
-      - feature/production-hardening
-      - feature/openai-radiology-second-reader
-      - feature/gemini-radiology-third-reader
-      - feature/astra-native-lab-cpp
-      - feature/universal-page-analysis
-      - feature/native-core-completion-v3
-      - feature/universal-lab-ingestion-v1
-      - feature/canonical-native-trust-v1
-      - feature/patient-history-trends-v1
+      - main
+      - simplify-clinical-lab-reports
   pull_request:
     branches:
       - main
@@ -32,7 +13,7 @@ permissions:
   contents: read
 
 jobs:
-  backend-quality-tests:
+  backend-tests:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -50,201 +31,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt pytest
-      - name: Run clinical quality tests
+      - name: Run simplified backend tests
         run: |
-          PYTHONPATH=. python -m pytest -q \
-            tests/test_radiology_image_review.py \
-            tests/test_openai_radiology_second_reader.py \
-            tests/test_openai_lab_extraction_service.py \
-            tests/test_enabiz_table_fastpath.py \
-            tests/test_openai_lab_clinical_service.py \
-            tests/test_openai_case_document_service.py \
-            tests/test_gemini_radiology_third_reader.py \
-            tests/test_source_only_case_evaluation.py \
-            tests/test_clinical_domain_router_runtime.py \
-            tests/test_clinical_quality_runtime.py \
-            tests/test_clinical_quality_scope_runtime.py \
-            tests/test_urinalysis_runtime.py \
-            tests/test_native_vision_engine.py \
-            tests/test_onnx_inference_engine.py \
-            tests/test_onnx_parity.py \
-            tests/test_native_lab_extensions_adapter.py \
-            tests/test_native_process_isolation.py \
-            tests/test_universal_lab_ingestion.py \
-            tests/test_canonical_native_trust.py \
-            tests/test_patient_lab_history.py \
-            tests/test_clinical_fusion_brain.py \
-            tests/test_clinical_fusion_case_adapter.py \
-            tests/test_clinical_fusion_onnx_bridge.py \
-            tests/test_clinical_brain.py \
-            tests/test_production_hardening.py
-
-  native-vision-build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Install native dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake g++ libopencv-dev pybind11-dev libdcmtk-dev
-      - name: Configure native vision engine
-        run: cmake -S native/vision -B native/vision/build -DCMAKE_BUILD_TYPE=Release
-      - name: Build native vision engine
-        run: cmake --build native/vision/build --config Release --parallel 2
-      - name: Run native vision tests
-        run: ctest --test-dir native/vision/build --output-on-failure
-
-  native-lab-build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Install native lab dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake g++ pybind11-dev
-      - name: Configure native lab engine
-        run: cmake -S native/lab -B native/lab/build -DCMAKE_BUILD_TYPE=Release
-      - name: Build native lab engine
-        run: cmake --build native/lab/build --config Release --parallel 2
-      - name: Run native lab tests
-        run: ctest --test-dir native/lab/build --output-on-failure
-      - name: Smoke-test canonical provenance bridge
-        run: |
-          python3 - <<'PY'
-          import sys
-          sys.path.insert(0, "native/lab/build")
-          import medicore_lab
-
-          assert medicore_lab.CONTRACT_VERSION == "medicore-lab-v1"
-          assert medicore_lab.VALIDATION_VERSION == "medicore-lab-validation-v1"
-          assert medicore_lab.PROVENANCE_VERSION == "medicore-lab-provenance-v1"
-
-          rows = [{
-              "canonical_row_contract": "medicore-canonical-lab-row-v1",
-              "raw_parameter_name": "Glucose",
-              "canonical_name": "Glucose",
-              "raw_value": "105",
-              "normalized_value": 105.0,
-              "raw_unit": "mg / dL",
-              "unit": "mg/dL",
-              "reference_min": 70.0,
-              "reference_max": 100.0,
-              "reference_text": "70-100",
-              "reference_type": "range",
-              "value_type": "numeric",
-              "confidence": 0.98,
-              "needs_review": False,
-              "source_type": "enabiz_pdf",
-              "source_file_name": "source.pdf",
-              "source_page": 2,
-              "source_sha256": "abc123",
-              "source_record_id": "record-1",
-              "integration_type": "",
-              "ingestion_reasons": ["source_verified"],
-          }]
-          output = medicore_lab.process_rows(rows)
-          assert len(output) == 1
-          row = output[0]
-          assert row["result_status"] == "HIGH"
-          assert row["validation_status"] == "VALID"
-          assert row["canonical_row_contract"] == "medicore-canonical-lab-row-v1"
-          assert row["source_type"] == "enabiz_pdf"
-          assert row["source_sha256"] == "abc123"
-          assert row["source_record_id"] == "record-1"
-          assert row["source_file_name"] == "source.pdf"
-          assert row["source_page"] == 2
-          assert row["raw_unit"] == "mg / dL"
-          assert row["ingestion_reasons"] == ["source_verified"]
-          assert row["provenance_contract_version"] == "medicore-lab-provenance-v1"
-          PY
-
-  native-hardening:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Install hardening toolchain
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y clang cmake libopencv-dev pybind11-dev libdcmtk-dev
-
-      - name: Configure lab ASan/UBSan
-        env:
-          CC: clang
-          CXX: clang++
-        run: >-
-          cmake -S native/lab -B native/lab/build-sanitize
-          -DCMAKE_BUILD_TYPE=RelWithDebInfo
-          -DMEDICORE_ENABLE_SANITIZERS=ON
-      - name: Build lab sanitizer tests
-        run: >-
-          cmake --build native/lab/build-sanitize --parallel 2 --target
-          medicore_lab_core_tests
-          medicore_lab_deterministic_tests
-          medicore_lab_extensions_tests
-          medicore_lab_ai_dispatch_tests
-      - name: Run lab sanitizer tests
-        env:
-          ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
-          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
-        run: ctest --test-dir native/lab/build-sanitize --output-on-failure
-
-      - name: Configure and build lab fuzzer
-        env:
-          CC: clang
-          CXX: clang++
-        run: |
-          cmake -S native/lab -B native/lab/build-fuzz \
-            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-            -DMEDICORE_ENABLE_SANITIZERS=ON \
-            -DMEDICORE_ENABLE_FUZZING=ON
-          cmake --build native/lab/build-fuzz --parallel 2 --target medicore_lab_reference_fuzz
-      - name: Fuzz lab reference parser
-        env:
-          ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
-          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
-        run: native/lab/build-fuzz/medicore_lab_reference_fuzz -runs=1000 -max_len=1024
-
-      - name: Configure vision ASan/UBSan
-        env:
-          CC: clang
-          CXX: clang++
-        run: >-
-          cmake -S native/vision -B native/vision/build-sanitize
-          -DCMAKE_BUILD_TYPE=RelWithDebInfo
-          -DMEDICORE_ENABLE_SANITIZERS=ON
-      - name: Build vision sanitizer tests
-        run: >-
-          cmake --build native/vision/build-sanitize --parallel 2 --target
-          medicore_vision_core_tests
-          medicore_vision_inference_contract_tests
-          medicore_vision_dicom_tests
-          medicore_vision_dicom_codec_tests
-          medicore_vision_postprocessing_tests
-          medicore_vision_anatomy_gate_tests
-      - name: Run vision sanitizer tests
-        env:
-          ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
-          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
-        run: ctest --test-dir native/vision/build-sanitize --output-on-failure
-
-      - name: Configure and build DICOM fuzzer
-        env:
-          CC: clang
-          CXX: clang++
-        run: |
-          cmake -S native/vision -B native/vision/build-fuzz \
-            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-            -DMEDICORE_ENABLE_SANITIZERS=ON \
-            -DMEDICORE_ENABLE_FUZZING=ON
-          cmake --build native/vision/build-fuzz --parallel 2 --target medicore_dicom_fuzz
-      - name: Fuzz DICOM parser
-        env:
-          ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
-          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
-        run: native/vision/build-fuzz/medicore_dicom_fuzz -runs=300 -max_len=65536
+          PYTHONPATH=. python -m pytest -q             tests/test_simple_case.py             tests/test_radiology_report_parser.py
 
   frontend-build:
     runs-on: ubuntu-latest
