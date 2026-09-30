@@ -1,0 +1,59 @@
+import { apiClient } from './apiClient';
+
+export type SexValue = 'female' | 'male' | 'other' | 'unknown';
+
+export type ClinicalContext = {
+  age: number | null;
+  sex: SexValue;
+  complaints: string[];
+  history: string[];
+  medications: string[];
+  notes?: string | null;
+};
+
+export type LabReferenceRange = {
+  text: string;
+  minimum?: number | null;
+  maximum?: number | null;
+  unit?: string | null;
+  age_min?: number | null;
+  age_max?: number | null;
+  sex?: SexValue | null;
+};
+
+export type LabResultInput = {
+  test_name: string;
+  value: string | number | null;
+  unit?: string | null;
+  source_reference?: string | null;
+  source_references?: LabReferenceRange[];
+};
+
+export type MedicalReportInput = {
+  report_type: string;
+  body_region?: string | null;
+  findings?: string | null;
+  impression?: string | null;
+  raw_text?: string | null;
+};
+
+export type SimpleCaseRequest = {
+  clinical: ClinicalContext;
+  labs: LabResultInput[];
+  reports: MedicalReportInput[];
+};
+
+export type SimpleCaseResponse = {
+  contract_version: 'medicore-simple-case-v1';
+  clinical: ClinicalContext;
+  labs: Array<LabResultInput & {
+    reference_text: string | null;
+    reference_source: 'report' | 'report_age_sex_match' | 'missing';
+  }>;
+  reports: MedicalReportInput[];
+  warnings: string[];
+};
+
+export function normalizeSimpleCase(payload: SimpleCaseRequest) {
+  return apiClient.post<SimpleCaseResponse>('/simple-case/normalize', payload);
+}
