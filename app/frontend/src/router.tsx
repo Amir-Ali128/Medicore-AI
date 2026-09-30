@@ -1,4 +1,4 @@
-import { createHashRouter } from 'react-router-dom';
+import { Navigate, createHashRouter } from 'react-router-dom';
 
 import ProtectedRoute from './components/ProtectedRoute';
 import AppLayout from './layout/AppLayout';
@@ -6,38 +6,16 @@ import AdminAiCostsPage from './pages/AdminAiCostsPage';
 import AdminAnalyticsPage from './pages/AdminAnalyticsPage';
 import AdminFeedbackPage from './pages/AdminFeedbackPage';
 import AdminLoginPage from './pages/AdminLoginPage';
-import AnalysisResultsPage from './pages/AnalysisResultsPage';
-import CaseEvaluationPage from './pages/CaseEvaluationPage';
-import ClinicalHypothesesPage from './pages/ClinicalHypothesesPage';
-import ClinicalSpecialtyPreviewPage from './pages/ClinicalSpecialtyPreviewPage';
-import CombinedCaseWorkspacePage from './pages/CombinedCaseWorkspacePage';
-import DoctorReviewPage from './pages/DoctorReviewPage';
-import DoctorWorklistPage from './pages/DoctorWorklistPage';
-import ExtractionReviewPage from './pages/ExtractionReviewPage';
 import HomePage from './pages/HomePage';
 import LoginPage from './pages/LoginPage';
-import MockAnalysisPage from './pages/MockAnalysisPage';
-import ModulePreviewPage from './pages/ModulePreviewPage';
 import PatientHistoryPage from './pages/PatientHistoryPage';
-import PatientRecordPage from './pages/PatientRecordPage';
-import RadiologyEvaluationPage from './pages/RadiologyEvaluationPage';
-import SendPage from './pages/SendPage';
-import UniversalLabIngestionPage from './pages/UniversalLabIngestionPage';
+import SimpleCaseWorkspacePage from './pages/SimpleCaseWorkspacePage';
 import UserFeedbackPage from './pages/UserFeedbackPage';
 
 export const router = createHashRouter([
-  {
-    path: '/login',
-    element: <LoginPage />,
-  },
-  {
-    path: '/admin',
-    element: <AdminLoginPage />,
-  },
-  {
-    path: '/admin/login',
-    element: <AdminLoginPage />,
-  },
+  { path: '/login', element: <LoginPage /> },
+  { path: '/admin', element: <AdminLoginPage /> },
+  { path: '/admin/login', element: <AdminLoginPage /> },
   {
     element: <ProtectedRoute />,
     children: [
@@ -45,45 +23,28 @@ export const router = createHashRouter([
         element: <AppLayout />,
         children: [
           { path: '/', element: <HomePage /> },
+          { path: '/case', element: <SimpleCaseWorkspacePage /> },
+          { path: '/history', element: <PatientHistoryPage /> },
+          { path: '/feedback', element: <UserFeedbackPage /> },
+
           { path: '/admin/analytics', element: <AdminAnalyticsPage /> },
           { path: '/admin/ai-costs', element: <AdminAiCostsPage /> },
           { path: '/admin/feedback', element: <AdminFeedbackPage /> },
-          { path: '/feedback', element: <UserFeedbackPage /> },
-          { path: '/patients/demo', element: <PatientRecordPage /> },
-          { path: '/patient-detail', element: <PatientRecordPage /> },
-          { path: '/lab-ingestion', element: <UniversalLabIngestionPage /> },
-          { path: '/analysis/mock', element: <MockAnalysisPage /> },
-          { path: '/case-import', element: <CombinedCaseWorkspacePage /> },
-          { path: '/radiology', element: <RadiologyEvaluationPage /> },
-          { path: '/send', element: <SendPage /> },
-          { path: '/combined-evaluation', element: <CaseEvaluationPage /> },
-          { path: '/case-evaluation', element: <CaseEvaluationPage /> },
-          { path: '/roadmap/radiology', element: <ModulePreviewPage module="radiology" /> },
-          { path: '/roadmap/imaging', element: <ModulePreviewPage module="imaging" /> },
-          { path: '/roadmap/pathology', element: <ModulePreviewPage module="pathology" /> },
-          { path: '/roadmap/cardiology', element: <ModulePreviewPage module="cardiology" /> },
-          { path: '/roadmap/microbiology', element: <ModulePreviewPage module="microbiology" /> },
 
-          { path: '/clinics/internal-medicine', element: <ClinicalSpecialtyPreviewPage specialty="internal-medicine" /> },
-          { path: '/clinics/pulmonology', element: <ClinicalSpecialtyPreviewPage specialty="pulmonology" /> },
-          { path: '/clinics/neurology', element: <ClinicalSpecialtyPreviewPage specialty="neurology" /> },
-          { path: '/clinics/hematology', element: <ClinicalSpecialtyPreviewPage specialty="hematology" /> },
-          { path: '/clinics/infectious-diseases', element: <ClinicalSpecialtyPreviewPage specialty="infectious-diseases" /> },
-          { path: '/clinics/nephrology', element: <ClinicalSpecialtyPreviewPage specialty="nephrology" /> },
-          { path: '/clinics/gastroenterology', element: <ClinicalSpecialtyPreviewPage specialty="gastroenterology" /> },
-          { path: '/clinics/endocrinology', element: <ClinicalSpecialtyPreviewPage specialty="endocrinology" /> },
-          { path: '/clinics/oncology', element: <ClinicalSpecialtyPreviewPage specialty="oncology" /> },
-          { path: '/clinics/rheumatology', element: <ClinicalSpecialtyPreviewPage specialty="rheumatology" /> },
-          { path: '/clinics/pediatrics', element: <ClinicalSpecialtyPreviewPage specialty="pediatrics" /> },
-          { path: '/clinics/obstetrics-gynecology', element: <ClinicalSpecialtyPreviewPage specialty="obstetrics-gynecology" /> },
-          { path: '/clinics/emergency-medicine', element: <ClinicalSpecialtyPreviewPage specialty="emergency-medicine" /> },
-
-          { path: '/extraction-review', element: <ExtractionReviewPage /> },
-          { path: '/analysis/results', element: <AnalysisResultsPage /> },
-          { path: '/clinical-hypotheses', element: <ClinicalHypothesesPage /> },
-          { path: '/doctor-review', element: <DoctorReviewPage /> },
-          { path: '/doctor-worklist', element: <DoctorWorklistPage /> },
-          { path: '/patient-history', element: <PatientHistoryPage /> },
+          { path: '/patients/demo', element: <Navigate to="/case" replace /> },
+          { path: '/patient-detail', element: <Navigate to="/case" replace /> },
+          { path: '/lab-ingestion', element: <Navigate to="/case" replace /> },
+          { path: '/case-import', element: <Navigate to="/case" replace /> },
+          { path: '/radiology', element: <Navigate to="/case" replace /> },
+          { path: '/combined-evaluation', element: <Navigate to="/case" replace /> },
+          { path: '/case-evaluation', element: <Navigate to="/case" replace /> },
+          { path: '/analysis/results', element: <Navigate to="/case" replace /> },
+          { path: '/clinical-hypotheses', element: <Navigate to="/case" replace /> },
+          { path: '/doctor-review', element: <Navigate to="/case" replace /> },
+          { path: '/doctor-worklist', element: <Navigate to="/case" replace /> },
+          { path: '/patient-history', element: <Navigate to="/history" replace /> },
+          { path: '/send', element: <Navigate to="/case" replace /> },
+          { path: '*', element: <Navigate to="/" replace /> },
         ],
       },
     ],
