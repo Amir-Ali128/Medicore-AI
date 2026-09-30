@@ -36,6 +36,7 @@ LABORATUVAR DEĞERLENDİRMESİ
 TETKİK / RAPOR BULGULARI
 ENTEGRE KLİNİK DEĞERLENDİRME
 SONUÇ / KANAAT
+ÖNERİLEN İLERİ TETKİK / İZLEM
 HEKİM NOTU
 
 Style:
@@ -46,6 +47,11 @@ Style:
 - If a reference is missing, explicitly say the source report did not provide one.
 - In the integrated assessment, explain cross-source relationships cautiously.
 - In SONUÇ / KANAAT, summarize only source-supported conclusions and clinically relevant synthesis.
+- In ÖNERİLEN İLERİ TETKİK / İZLEM, suggest reasonable next diagnostic tests or follow-up measurements that a physician may consider, based only on abnormalities or uncertainties present in the case.
+- Every suggested test must include a short rationale tied to a specific source finding.
+- Do not present tests as mandatory. Use wording such as "değerlendirilebilir", "düşünülebilir", or "hekim tarafından uygun görülürse".
+- Do not recommend treatment, medication, procedures, or invasive testing unless the source report explicitly recommends it; if an invasive test is relevant, frame it only as a specialist-consideration item.
+- Prioritize the list: urgent/near-term items first, routine follow-up later.
 - HEKİM NOTU should state missing/conflicting data and that final interpretation requires physician review when applicable.
 
 Strict safety/fidelity rules:
@@ -143,6 +149,7 @@ async def interpret_simple_case(payload: SimpleCaseRequest) -> CaseAIInterpretat
         "TETKİK / RAPOR BULGULARI",
         "ENTEGRE KLİNİK DEĞERLENDİRME",
         "SONUÇ / KANAAT",
+        "ÖNERİLEN İLERİ TETKİK / İZLEM",
         "HEKİM NOTU",
     )
     if not any(heading in text.upper() for heading in required_headings):
