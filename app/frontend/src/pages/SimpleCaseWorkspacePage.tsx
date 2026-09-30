@@ -66,7 +66,8 @@ export default function SimpleCaseWorkspacePage() {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    const activePatientId = getActivePatientId();
+    const sessionPatientId = sessionStorage.getItem('medicore:case-patient-id');
+    const activePatientId = sessionPatientId || getActivePatientId();
     if (!activePatientId) return;
     const patientIdToLoad: string = activePatientId;
 
@@ -182,6 +183,7 @@ export default function SimpleCaseWorkspacePage() {
 
         const requestedStep = sessionStorage.getItem('medicore:case-open-step');
         sessionStorage.removeItem('medicore:case-open-step');
+        sessionStorage.removeItem('medicore:case-patient-id');
         const validStep = steps.some((item) => item.key === requestedStep)
           ? (requestedStep as Step)
           : null;
