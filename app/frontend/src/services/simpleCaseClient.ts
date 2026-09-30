@@ -139,9 +139,12 @@ export function uploadReportPdf(
 }
 
 
-export function interpretSimpleCase(payload: SimpleCaseRequest) {
-  return apiClient.post<CaseAIInterpretation>(
-    '/simple-case/ai-interpretation',
-    payload,
-  );
+export function interpretSimpleCase(
+  payload: SimpleCaseRequest,
+  patientId?: string | null,
+) {
+  const path = patientId
+    ? `/simple-case/patients/${patientId}/ai-interpretation`
+    : '/simple-case/ai-interpretation';
+  return apiClient.post<CaseAIInterpretation>(path, payload);
 }
