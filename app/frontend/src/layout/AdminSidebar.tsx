@@ -16,7 +16,7 @@ const linkClassName = ({ isActive }: { isActive: boolean }) =>
 
 export default function AdminSidebar() {
   return (
-    <aside className="fixed inset-y-0 left-0 z-30 hidden w-72 flex-col border-r border-slate-200 bg-white px-5 py-6 lg:flex">
+    <aside className="sticky top-0 flex h-screen w-64 flex-col border-r border-slate-200 bg-white px-5 py-6">
       <div className="mb-6">
         <Link
           to="/admin/analytics"
