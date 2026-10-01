@@ -78,11 +78,28 @@ function referenceNumber(value: unknown) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function metadataReferenceBounds(lab: LabInput) {
+function structuredReferenceBounds(lab: LabInput) {
+  const refs = lab.source_references ?? [];
+  const usable = refs.find(
+    (item) =>
+      item.minimum !== null &&
+        item.minimum !== undefined ||
+      item.maximum !== null &&
+        item.maximum !== undefined,
+  );
+
+  if (usable) {
+    return {
+      minimum: referenceNumber(usable.minimum),
+      maximum: referenceNumber(usable.maximum),
+    };
+  }
+
   const metadata = lab.source_metadata ?? {};
-  const minimum = referenceNumber(metadata.reference_min);
-  const maximum = referenceNumber(metadata.reference_max);
-  return { minimum, maximum };
+  return {
+    minimum: referenceNumber(metadata.reference_min),
+    maximum: referenceNumber(metadata.reference_max),
+  };
 }
 
 function textReferenceBounds(reference: string | null | undefined) {
@@ -116,10 +133,10 @@ function classifyLabForDisplay(lab: LabInput): LabDisplayClassification {
     return { status: 'unclassified', direction: null };
   }
 
-  const metadataBounds = metadataReferenceBounds(lab);
+  const structuredBounds = structuredReferenceBounds(lab);
   const textBounds = textReferenceBounds(lab.source_reference);
-  const minimum = metadataBounds.minimum ?? textBounds.minimum;
-  const maximum = metadataBounds.maximum ?? textBounds.maximum;
+  const minimum = structuredBounds.minimum ?? textBounds.minimum;
+  const maximum = structuredBounds.maximum ?? textBounds.maximum;
 
   if (minimum === null && maximum === null) {
     return { status: 'unclassified', direction: null };
