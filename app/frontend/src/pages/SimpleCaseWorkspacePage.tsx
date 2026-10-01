@@ -45,68 +45,120 @@ type LabDisplayClassification = {
   direction: 'low' | 'high' | null;
 };
 
-function numericLabValue(value: LabInput['value']) {
-  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+type ParsedObservedValue = {
+  value: number;
+  comparator: '<' | '<=' | '>' | '>=' | null;
+};
+
+function parseObservedValue(value: LabInput['value']): ParsedObservedValue | null {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? { value, comparator: null } : null;
+  }
   if (typeof value !== 'string') return null;
 
-  const text = value.trim().replace(',', '.');
-  if (!/^-?\d+(?:\.\d+)?$/.test(text)) return null;
+  const match = value
+    .trim()
+    .replace(',', '.')
+    .match(/^\s*([<>]=?)?\s*(-?\d+(?:\.\d+)?)\s*$/);
+  if (!match) return null;
 
-  const parsed = Number(text);
+  const parsed = Number(match[2]);
+  if (!Number.isFinite(parsed)) return null;
+
+  return {
+    value: parsed,
+    comparator: (match[1] as ParsedObservedValue['comparator']) ?? null,
+  };
+}
+
+function referenceNumber(value: unknown) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value !== 'string') return null;
+  const parsed = Number(value.replace(',', '.').trim());
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function referenceNumber(value: string) {
-  const parsed = Number(value.replace(',', '.'));
-  return Number.isFinite(parsed) ? parsed : null;
+function metadataReferenceBounds(lab: LabInput) {
+  const metadata = lab.source_metadata ?? {};
+  const minimum = referenceNumber(metadata.reference_min);
+  const maximum = referenceNumber(metadata.reference_max);
+  return { minimum, maximum };
 }
 
-function classifyLabForDisplay(lab: LabInput): LabDisplayClassification {
-  const value = numericLabValue(lab.value);
-  const reference = lab.source_reference?.trim();
+function textReferenceBounds(reference: string | null | undefined) {
+  const text = reference?.trim();
+  if (!text) return { minimum: null, maximum: null };
 
-  if (value === null || !reference) {
-    return { status: 'unclassified', direction: null };
-  }
-
-  // Presentation-only classification from the exact numeric reference printed
-  // in the source PDF. These labels are never added to the clinical AI payload.
-  const range = reference.match(
+  const range = text.match(
     /^\s*(-?\d+(?:[.,]\d+)?)\s*[-–—]\s*(-?\d+(?:[.,]\d+)?)(?:\s|$)/,
   );
   if (range) {
-    const minimum = referenceNumber(range[1]);
-    const maximum = referenceNumber(range[2]);
-    if (minimum === null || maximum === null || minimum > maximum) {
-      return { status: 'unclassified', direction: null };
-    }
-    if (value < minimum) return { status: 'abnormal', direction: 'low' };
-    if (value > maximum) return { status: 'abnormal', direction: 'high' };
-    return { status: 'normal', direction: null };
-  }
-
-  const oneSided = reference.match(/^\s*([<>]=?)\s*(-?\d+(?:[.,]\d+)?)(?:\s|$)/);
-  if (oneSided) {
-    const limit = referenceNumber(oneSided[2]);
-    if (limit === null) return { status: 'unclassified', direction: null };
-
-    const operator = oneSided[1];
-    const withinReference =
-      operator === '<'
-        ? value < limit
-        : operator === '<='
-          ? value <= limit
-          : operator === '>'
-            ? value > limit
-            : value >= limit;
-
-    if (withinReference) return { status: 'normal', direction: null };
     return {
-      status: 'abnormal',
-      direction: operator.startsWith('<') ? 'high' : 'low',
+      minimum: referenceNumber(range[1]),
+      maximum: referenceNumber(range[2]),
     };
   }
 
+  const oneSided = text.match(/^\s*([<>]=?)\s*(-?\d+(?:[.,]\d+)?)(?:\s|$)/);
+  if (!oneSided) return { minimum: null, maximum: null };
+
+  const limit = referenceNumber(oneSided[2]);
+  if (limit === null) return { minimum: null, maximum: null };
+
+  return oneSided[1].startsWith('<')
+    ? { minimum: null, maximum: limit }
+    : { minimum: limit, maximum: null };
+}
+
+function classifyLabForDisplay(lab: LabInput): LabDisplayClassification {
+  const observed = parseObservedValue(lab.value);
+  if (!observed) {
+    return { status: 'unclassified', direction: null };
+  }
+
+  const metadataBounds = metadataReferenceBounds(lab);
+  const textBounds = textReferenceBounds(lab.source_reference);
+  const minimum = metadataBounds.minimum ?? textBounds.minimum;
+  const maximum = metadataBounds.maximum ?? textBounds.maximum;
+
+  if (minimum === null && maximum === null) {
+    return { status: 'unclassified', direction: null };
+  }
+  if (minimum !== null && maximum !== null && minimum > maximum) {
+    return { status: 'unclassified', direction: null };
+  }
+
+  const { value, comparator } = observed;
+
+  // Exact numeric observations are straightforward.
+  if (comparator === null) {
+    if (minimum !== null && value < minimum) {
+      return { status: 'abnormal', direction: 'low' };
+    }
+    if (maximum !== null && value > maximum) {
+      return { status: 'abnormal', direction: 'high' };
+    }
+    return { status: 'normal', direction: null };
+  }
+
+  // Censored values such as "<2" or ">90" are classified only when the
+  // inequality proves the relation to the printed source interval.
+  if (comparator.startsWith('<')) {
+    if (minimum !== null && value <= minimum) {
+      return { status: 'abnormal', direction: 'low' };
+    }
+    if (minimum === null && maximum !== null && value <= maximum) {
+      return { status: 'normal', direction: null };
+    }
+    return { status: 'unclassified', direction: null };
+  }
+
+  if (maximum !== null && value >= maximum) {
+    return { status: 'abnormal', direction: 'high' };
+  }
+  if (maximum === null && minimum !== null && value >= minimum) {
+    return { status: 'normal', direction: null };
+  }
   return { status: 'unclassified', direction: null };
 }
 
