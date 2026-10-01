@@ -121,8 +121,33 @@ def _parse_numeric_observation(value):
     return number, (match.group(1) or None)
 
 
+def _source_flag_classification(value) -> tuple[str, str | None] | None:
+    if value in (None, ""):
+        return None
+    folded = (
+        str(value).strip().casefold()
+        .replace("ı", "i")
+        .replace("ş", "s")
+        .replace("ğ", "g")
+        .replace("ü", "u")
+        .replace("ö", "o")
+        .replace("ç", "c")
+    )
+    if folded in {"yuksek", "high", "h", "↑", "artmis", "artmis"}:
+        return "abnormal", "high"
+    if folded in {"dusuk", "low", "l", "↓", "azalmis"}:
+        return "abnormal", "low"
+    if folded in {"normal", "n", "referans ici", "referans icinde"}:
+        return "normal", None
+    return None
+
+
 def _classify_lab_for_display(row: dict) -> tuple[str, str | None]:
-    """Deterministic presentation classification from source-reported bounds only."""
+    """Deterministic presentation classification from source flag or source bounds."""
+
+    source_flag = _source_flag_classification(row.get("source_flag"))
+    if source_flag is not None:
+        return source_flag
 
     observed = _parse_numeric_observation(
         row.get("raw_value")
@@ -596,6 +621,7 @@ async def _extract_lab_document_with_claude(
                             "source_page": None,
                             "needs_review": item.needs_review,
                             "confidence": result.extraction_confidence,
+                            "source_flag": item.source_flag,
                         }
                     )
 
@@ -753,6 +779,7 @@ def _lab_inputs_from_extracted(
                     "reference_max": row.get("reference_max"),
                     "display_status": display_status,
                     "display_direction": display_direction,
+                    "source_flag": row.get("source_flag"),
                 },
             )
         )
@@ -852,6 +879,49 @@ async def upload_lab_image(
         media_type=media_type,
     )
     extraction_source = "claude_image_vision"
+
+    if extracted is None:
+        # Secondary Anthropic path: transcribe the photographed table, then
+        # feed the visible text into the existing deterministic lab parser.
+        try:
+            review = await review_radiology_media(
+                content=content,
+                media_type=media_type,
+                modality="AUTO",
+                body_part=None,
+            )
+        except Exception:
+            review = None
+
+        if review is not None and review.visible_text.strip():
+            try:
+                from app.api.routes.lab_analysis import _parse_lab_values_from_text
+                parsed_rows = _parse_lab_values_from_text(review.visible_text)
+            except Exception:
+                parsed_rows = []
+
+            if parsed_rows:
+                extracted = {
+                    "labs": [
+                        {
+                            **row,
+                            "reference_min": row.get(
+                                "reference_min",
+                                row.get("extracted_reference_min"),
+                            ),
+                            "reference_max": row.get(
+                                "reference_max",
+                                row.get("extracted_reference_max"),
+                            ),
+                            "source_file_name": file.filename or "lab-image.jpg",
+                            "needs_review": True,
+                            "confidence": 0.8,
+                        }
+                        for row in parsed_rows
+                        if isinstance(row, dict)
+                    ]
+                }
+                extraction_source = "claude_image_text_fallback"
 
     if extracted is None:
         extraction_source = "openai_image_fallback"
