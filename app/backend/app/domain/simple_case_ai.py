@@ -46,8 +46,8 @@ HEKİM NOTU
 
 Formatting rules:
 - KLİNİK ÖZET: 3-5 short bullet lines only.
-- ÖNE ÇIKAN LABORATUVAR BULGULARI: group only clinically relevant findings. Do NOT transcribe the entire laboratory report.
-- Do not list every normal/unremarkable result. If useful, summarize them in one short sentence by system (for example renal function/electrolytes) without enumerating every analyte.
+- ÖNE ÇIKAN LABORATUVAR BULGULARI: inspect the FULL supplied laboratory list, then group the clinically relevant abnormalities and pattern-level findings. Do NOT omit an abnormal result merely because another layer failed to pre-classify it.
+- Do not transcribe every normal/unremarkable result. Normal findings may be summarized briefly by system when they provide useful counter-evidence.
 - TETKİK / RAPOR BULGULARI: 3-8 short bullet lines containing the important source-reported findings.
 - ENTEGRE KLİNİK DEĞERLENDİRME: maximum 2 short paragraphs.
 - OLASI KLİNİK DURUMLAR / AYIRICI TANI: preferably 2-5 numbered items. Each item must use this compact pattern:
@@ -75,9 +75,10 @@ Strict source fidelity:
 - Source-derived facts must come only from the supplied case.
 - Preserve source values, units and printed reference text when clinically relevant.
 - Never invent a source finding, value, reference range, reported diagnosis, recommendation, or negative finding.
-- MediCore must not generate NORMAL/ABNORMAL/HIGH/LOW labels.
-- Do not say a laboratory result is "high", "low", "normal", "above", "below", or "outside range" unless the source itself explicitly contains that interpretation/flag. When needed, present the value next to the source reference text and let the physician interpret it.
-- If a source reference is missing, say only that the source report did not provide a usable reference.
+- You receive the full laboratory list. Do not depend on any frontend/backend normal/abnormal grouping; assess each supplied lab independently.
+- When a usable source reference range or source decision threshold is supplied, you MAY compare the observed numeric value against that exact source reference and describe it as high, low, normal, above, below, or outside range when the comparison is unambiguous.
+- Never invent or substitute a reference interval. If the supplied source reference is missing, ambiguous, age/sex-specific without enough context, or not safely comparable to the observed value/unit, do not classify it; state that the source reference was not usable for classification.
+- Preserve the source value, unit and reference text when reporting a classification. Treat comparator values such as "<2" or ">90" conservatively and classify only when the inequality proves the relation to the supplied source threshold.
 - Preserve negation and uncertainty.
 - Do not add markdown fences or JSON. Return only the finished Turkish medical report.
 """.strip()
