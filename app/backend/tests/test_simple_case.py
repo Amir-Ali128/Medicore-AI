@@ -516,3 +516,103 @@ def test_extraction_deadline_does_not_return_a_seemingly_complete_subset(monkeyp
         return {'labs':[raw_row().data]}
     with pytest.raises(ValueError, match='tamamlanmamış sonuçlar kaydedilmedi'):
         asyncio.run(ingest_lab_document(content=b'image', media_type='image/png', file_name='lab.png', extract_page=slow))
+
+
+@pytest.mark.parametrize('result', [None, {'labs': [], 'visible_row_count': 0}])
+def test_empty_document_is_rejected_before_canonical_conversion(monkeypatch, result):
+    import app.domain.lab_document_ingestion as ingestion
+    from app.domain.lab_document_errors import LabDocumentReadError
+    monkeypatch.setattr(ingestion, 'normalize_document', lambda *args, **kwargs: [DocumentPage(1, b'image')])
+    async def extract(page): return result
+    with pytest.raises(LabDocumentReadError, match='Belgeden laboratuvar sonucu okunamadı') as caught:
+        asyncio.run(ingest_lab_document(content=b'image', media_type='image/png', file_name='lab.png', extract_page=extract))
+    assert caught.value.page_reports[0]['extracted_rows'] == 0
+    assert 'Canonical' not in str(caught.value)
+
+
+@pytest.mark.parametrize(('status', 'code'), [(401, 'access_denied'), (403, 'access_denied'),
+                                          (404, 'model_unavailable'), (429, 'rate_or_quota_limit')])
+def test_reader_diagnostics_unwrap_provider_errors_without_exposing_data(status, code):
+    from app.domain.lab_document_errors import reader_failure
+    provider = RuntimeError('sensitive-provider-body sk-secret patient-name')
+    provider.status_code = status
+    wrapper = RuntimeError('dependency call failed')
+    wrapper.__cause__ = provider
+    failure = reader_failure('Claude', wrapper)
+    assert failure['code'] == code
+    assert failure['status'] == status
+    assert 'sk-secret' not in str(failure)
+    assert 'patient-name' not in str(failure)
+
+
+@pytest.mark.parametrize(('media_type', 'filename', 'endpoint'), [
+    ('image/jpeg', 'lab.jpg', 'image'), ('application/pdf', 'lab.pdf', 'pdf'),
+])
+def test_upload_explains_reader_failures_instead_of_empty_canonical_error(context, monkeypatch, caplog, media_type, filename, endpoint):
+    import app.domain.lab_document_ingestion as ingestion
+    c = context; authenticate(c)
+    monkeypatch.setattr(ingestion, 'normalize_document', lambda *args, **kwargs: [DocumentPage(1, b'normalized')])
+    monkeypatch.setattr(simple_case, 'get_settings', lambda: SimpleNamespace(
+        anthropic_api_key='mock-only', claude_extraction_model='existing-model', claude_vision_model='existing-model',
+    ))
+    provider = RuntimeError('sensitive-body sk-secret')
+    provider.status_code = 401
+    service = SimpleNamespace(extract_from_bytes=AsyncMock(side_effect=provider))
+    monkeypatch.setattr(simple_case, 'ClaudeLabExtractionService', lambda **kwargs: service)
+    monkeypatch.setattr(simple_case, 'extract_lab_document_with_openai', AsyncMock(side_effect=
+        simple_case.OpenAILabExtractionError('OPENAI_API_KEY yapılandırılmamış.')))
+    response = c.client.post(f'/simple-case/labs/{endpoint}', files={'file': (filename, b'document', media_type)})
+    assert response.status_code == 422
+    detail = response.json()['detail']
+    assert 'Claude: belge okuma erişimi reddedildi' in detail
+    assert 'OpenAI: belge okuma yapılandırması eksik' in detail
+    assert 'Canonical' not in detail
+    assert 'sk-secret' not in detail + caplog.text
+    assert 'code=access_denied' in caplog.text
+    assert 'code=not_configured' in caplog.text
+
+
+def test_successful_fallback_still_imports_all_rows_after_claude_failure(context, monkeypatch):
+    import app.domain.lab_document_ingestion as ingestion
+    c = context; authenticate(c)
+    monkeypatch.setattr(ingestion, 'normalize_document', lambda *args, **kwargs: [DocumentPage(1, b'normalized')])
+    monkeypatch.setattr(simple_case, '_extract_lab_document_with_claude', AsyncMock(return_value={
+        'labs': [], 'extraction_errors': [{'reader': 'Claude', 'code': 'request_failed', 'message': 'failed'}],
+    }))
+    reader = AsyncMock(return_value={'labs': [raw_row('2.1').data, raw_row('0', raw_parameter_name='CRP').data]})
+    monkeypatch.setattr(simple_case, 'extract_lab_document_with_openai', reader)
+    response = c.client.post('/simple-case/labs/image', files={'file': ('lab.jpg', b'document', 'image/jpeg')})
+    assert response.status_code == 200
+    assert [row['value'] for row in response.json()] == ['2.1', '0']
+    reader.assert_awaited_once()
+
+
+def test_claude_invalid_optional_cell_does_not_discard_other_rows_or_source_strings():
+    import json
+    from app.domain.claude_lab_extraction_service import ClaudeLabExtractionService
+    service = object.__new__(ClaudeLabExtractionService)
+    result = service._parse_result(json.dumps({'values': [
+        {'raw_parameter_name': 'TSH', 'raw_value': '2,1', 'normalized_value': 'not-a-number',
+         'measured_at': 'unreadable', 'reference_text': '0,27 - 4,20'},
+        {'raw_parameter_name': 'CRP', 'raw_value': '0', 'normalized_value': 0},
+    ], 'visible_row_count': 2}), 'lab.jpg')
+    assert len(result.values) == 2
+    assert result.values[0].raw_value == '2,1'
+    assert result.values[0].reference_text == '0,27 - 4,20'
+    assert result.values[0].normalized_value is None
+    assert result.values[0].measured_at is None
+    assert result.values[0].needs_review
+    assert result.values[1].normalized_value == 0
+    assert result.overall_needs_review
+    assert 'extraction_invalid_cells_review' in result.warnings
+
+
+def test_claude_invalid_metadata_keeps_readable_rows_and_requires_review():
+    import json
+    from app.domain.claude_lab_extraction_service import ClaudeLabExtractionService
+    service = object.__new__(ClaudeLabExtractionService)
+    result = service._parse_result(json.dumps({'values': [{'raw_parameter_name': 'TSH', 'raw_value': '2.1'}],
+                                              'visible_row_count': 'unknown', 'warnings': {}}), 'lab.jpg')
+    assert len(result.values) == 1
+    assert result.visible_row_count is None
+    assert result.overall_needs_review

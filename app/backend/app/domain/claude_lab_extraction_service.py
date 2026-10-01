@@ -21,7 +21,7 @@ from app.infrastructure.runtime_resilience import (
     AsyncDependencyGuard,
     get_anthropic_guard,
 )
-from app.schemas.extraction import LabExtractionResult
+from app.schemas.extraction import ExtractedLabValue, LabExtractionResult
 
 SUPPORTED_CONTENT_TYPES: frozenset[str] = frozenset(
     {"image/png", "image/jpeg", "image/webp", "application/pdf"}
@@ -230,9 +230,39 @@ class ClaudeLabExtractionService:
         try:
             result = LabExtractionResult.model_validate(payload)
         except ValidationError:
-            return self._parse_failure(
-                file_name, "Extraction output did not match the expected schema."
-            )
+            # A malformed optional date/number must not discard the entire table.
+            # Keep source strings, remove only invalid cells, and require review.
+            if not isinstance(payload, dict) or not isinstance(payload.get('values'), list):
+                return self._parse_failure(file_name, 'Extraction output did not match the expected schema.')
+            values = []
+            repaired = False
+            for row in payload['values']:
+                if not isinstance(row, dict):
+                    repaired = True
+                    continue
+                try:
+                    values.append(ExtractedLabValue.model_validate(row))
+                except ValidationError as exc:
+                    safe = dict(row)
+                    for error in exc.errors(include_input=False):
+                        safe.pop(error['loc'][0], None)
+                    safe.update(needs_review=True, extraction_note='Invalid extracted cells removed; verify against source.')
+                    values.append(ExtractedLabValue.model_validate(safe))
+                    repaired = True
+            # Validate metadata separately; discard malformed metadata, not rows.
+            metadata = {**payload, 'values': values}
+            try:
+                result = LabExtractionResult.model_validate(metadata)
+            except ValidationError as exc:
+                for error in exc.errors(include_input=False):
+                    metadata.pop(error['loc'][0], None)
+                result = LabExtractionResult.model_validate(metadata)
+                repaired = True
+            if repaired:
+                result = result.model_copy(update={
+                    'overall_needs_review': True,
+                    'warnings': [*result.warnings, 'extraction_invalid_cells_review'],
+                })
 
         if result.source_file_name is None and file_name is not None:
             result = result.model_copy(update={"source_file_name": file_name})
