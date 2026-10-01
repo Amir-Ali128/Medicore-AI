@@ -35,6 +35,15 @@ _SYSTEM_PROMPT = (
     "meaning, and must not recommend treatment. Return only valid JSON."
 )
 
+_IMAGE_AUDIT_PROMPT = (
+    "\nIMAGE COMPLETENESS AUDIT:\n"
+    "- This may be a photographed teaching/synthetic case sheet rather than a conventional laboratory report.\n"
+    "- Re-scan the entire visible table row by row from the first parameter to the last parameter.\n"
+    "- Return ALL visible parameter rows even when reference_min/reference_max and measured_at are absent.\n"
+    "- If a column explicitly says Yüksek, Düşük or Normal, copy it to source_flag.\n"
+    "- Do not stop after the first few rows. Do not summarize the table.\n"
+)
+
 _USER_PROMPT = (
     "Extract the laboratory test values from this document.\n"
     "Rules:\n"
@@ -42,6 +51,10 @@ _USER_PROMPT = (
     "- Do not diagnose. Do not interpret. Do not recommend treatment.\n"
     "- Extract only what is visibly present in the document.\n"
     "- Do not invent missing values.\n"
+    "- IMPORTANT: scan the laboratory table from top to bottom and extract EVERY visible parameter row, not only abnormal rows and not only rows with a reference range.\n"
+    "- Rows that have only Parametre + Değer, or Parametre + Değer + explicit status (for example Beklenen durum: Yüksek/Düşük/Normal), are valid laboratory rows and MUST be returned.\n"
+    "- Preserve derived rows exactly when printed, including ratios and calculated values such as BUN/Kreatinin, Anyon Açığı, Kalsiyum/Fosfor Oranı and GFR.\n"
+    "- Headings, explanatory paragraphs, hypotheses and recommendations are NOT lab rows.\n"
     "- Preserve original raw strings where possible in raw_value.\n"
     "- Set normalized_value only when the value is clearly numeric.\n"
     "- Use ISO format YYYY-MM-DD for measured_at.\n"
@@ -101,22 +114,66 @@ class ClaudeLabExtractionService:
         encoded = base64.standard_b64encode(file_bytes).decode("ascii")
         file_block = self._build_file_block(content_type, encoded)
 
-        response = await self._guard.call(
-            lambda: self._client.messages.create(
-                model=self._model,
-                max_tokens=_MAX_TOKENS,
-                system=_SYSTEM_PROMPT,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [file_block, {"type": "text", "text": _USER_PROMPT}],
-                    }
-                ],
+        async def run(prompt: str) -> LabExtractionResult:
+            response = await self._guard.call(
+                lambda: self._client.messages.create(
+                    model=self._model,
+                    max_tokens=_MAX_TOKENS,
+                    system=_SYSTEM_PROMPT,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [file_block, {"type": "text", "text": prompt}],
+                        }
+                    ],
+                )
             )
+            text = self._collect_text(response)
+            return self._parse_result(text, file_name)
+
+        first = await run(
+            _USER_PROMPT + (_IMAGE_AUDIT_PROMPT if content_type and content_type.startswith("image/") else "")
         )
 
-        text = self._collect_text(response)
-        return self._parse_result(text, file_name)
+        # Photographed tables are the most common place for models to stop early.
+        # If only a small subset was returned, run one explicit completeness audit
+        # and merge unique rows rather than silently accepting a truncated table.
+        if content_type and content_type.startswith("image/") and len(first.values) <= 8:
+            second = await run(_USER_PROMPT + _IMAGE_AUDIT_PROMPT + (
+                "\nThe previous extraction may have been incomplete. Perform a fresh full-table pass. "
+                "Return every visible row exactly once."
+            ))
+
+            merged = []
+            seen = set()
+            for item in [*first.values, *second.values]:
+                key = (
+                    (item.raw_parameter_name or "").strip().casefold(),
+                    (item.raw_value or "").strip().casefold(),
+                    (item.unit or item.extracted_unit or "").strip().casefold(),
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged.append(item)
+
+            first = first.model_copy(
+                update={
+                    "values": merged,
+                    "overall_needs_review": first.overall_needs_review or second.overall_needs_review,
+                    "extraction_confidence": max(
+                        first.extraction_confidence or 0.0,
+                        second.extraction_confidence or 0.0,
+                    ),
+                    "warnings": list(dict.fromkeys([
+                        *first.warnings,
+                        *second.warnings,
+                        "image_full_table_audit_retry",
+                    ])),
+                }
+            )
+
+        return first
 
     # -- helpers ---------------------------------------------------------
     @staticmethod
