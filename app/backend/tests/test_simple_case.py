@@ -616,3 +616,124 @@ def test_claude_invalid_metadata_keeps_readable_rows_and_requires_review():
     assert len(result.values) == 1
     assert result.visible_row_count is None
     assert result.overall_needs_review
+
+
+def test_lab_reading_uses_its_own_budget_when_generic_ai_timeout_is_short(monkeypatch):
+    import json
+    import anthropic
+    import app.domain.claude_lab_extraction_service as reader
+    import app.infrastructure.runtime_resilience as resilience
+    settings = SimpleNamespace(ai_call_timeout_seconds=0.01, lab_document_read_timeout_seconds=0.2,
+                               ai_queue_timeout_seconds=0.01, ai_max_concurrency=1,
+                               ai_circuit_breaker_failures=3, ai_circuit_breaker_recovery_seconds=30)
+    monkeypatch.setattr(reader, 'get_settings', lambda: settings)
+    monkeypatch.setattr(resilience, 'get_settings', lambda: settings)
+    captured = {}
+    async def slow_response(**kwargs):
+        captured['model'] = kwargs['model']
+        await asyncio.sleep(0.03)
+        return SimpleNamespace(content=[SimpleNamespace(type='text', text=json.dumps({
+            'values': [{'raw_parameter_name': 'TSH', 'raw_value': '2.1'}], 'visible_row_count': 1,
+        }))])
+    create = AsyncMock(side_effect=slow_response)
+    def client(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(messages=SimpleNamespace(create=create))
+    monkeypatch.setattr(anthropic, 'AsyncAnthropic', client)
+    resilience.reset_dependency_guards_for_tests()
+    try:
+        service = reader.ClaudeLabExtractionService(api_key='mock-only', model='existing-model')
+        async def scenario():
+            result = await service.extract_from_bytes(b'image', 'lab.png', 'image/png')
+            other = resilience.get_anthropic_guard('other-purpose')
+            with pytest.raises(resilience.DependencyTimeoutError):
+                await other.call(lambda: asyncio.sleep(0.03))
+            return result
+        result = asyncio.run(scenario())
+        assert len(result.values) == 1
+        assert captured['timeout'] == 0.2
+        assert captured['max_retries'] == 0
+        assert captured['model'] == 'existing-model'
+        assert create.await_count == 1
+    finally:
+        resilience.reset_dependency_guards_for_tests()
+
+
+def test_known_small_table_count_skips_unnecessary_second_provider_call():
+    import json
+    from app.domain.claude_lab_extraction_service import ClaudeLabExtractionService
+    service = object.__new__(ClaudeLabExtractionService)
+    service._model = 'existing-model'
+    response = SimpleNamespace(content=[SimpleNamespace(type='text', text=json.dumps({
+        'values': [{'raw_parameter_name': 'TSH', 'raw_value': '2.1'}], 'visible_row_count': 1,
+    }))])
+    create = AsyncMock(return_value=response)
+    service._client = SimpleNamespace(messages=SimpleNamespace(create=create))
+    class Guard:
+        async def call(self, operation): return await operation()
+    service._guard = Guard()
+    result = asyncio.run(service.extract_from_bytes(b'image', 'lab.png', 'image/png'))
+    assert len(result.values) == 1
+    create.assert_awaited_once()
+    assert 'image_full_table_audit_retry' not in result.warnings
+
+
+def test_missing_row_count_still_triggers_completeness_audit():
+    import json
+    from app.domain.claude_lab_extraction_service import ClaudeLabExtractionService
+    service = object.__new__(ClaudeLabExtractionService)
+    service._model = 'existing-model'
+    def response(rows, count):
+        return SimpleNamespace(content=[SimpleNamespace(type='text', text=json.dumps({
+            'values': rows, 'visible_row_count': count,
+        }))])
+    first = [{'raw_parameter_name': 'TSH', 'raw_value': '2.1'}]
+    second = [*first, {'raw_parameter_name': 'CRP', 'raw_value': '0'}]
+    create = AsyncMock(side_effect=[response(first, 2), response(second, 2)])
+    service._client = SimpleNamespace(messages=SimpleNamespace(create=create))
+    class Guard:
+        async def call(self, operation): return await operation()
+    service._guard = Guard()
+    result = asyncio.run(service.extract_from_bytes(b'image', 'lab.png', 'image/png'))
+    assert [row.raw_parameter_name for row in result.values] == ['TSH', 'CRP']
+    assert create.await_count == 2
+    assert 'image_full_table_audit_retry' in result.warnings
+
+
+def test_slow_audit_is_cancelled_without_discarding_first_rows(monkeypatch):
+    import json
+    import app.domain.claude_lab_extraction_service as reader
+    from app.infrastructure.runtime_resilience import AsyncDependencyGuard
+    monkeypatch.setattr(reader, '_AUDIT_TIMEOUT_SECONDS', 0.01)
+    service = object.__new__(reader.ClaudeLabExtractionService)
+    service._model = 'existing-model'
+    cancelled = []
+    calls = []
+    async def create(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            return SimpleNamespace(content=[SimpleNamespace(type='text', text=json.dumps({
+                'values': [{'raw_parameter_name': 'TSH', 'raw_value': '2.1'}], 'visible_row_count': 2,
+            }))])
+        try:
+            await asyncio.sleep(1)
+        finally:
+            cancelled.append(True)
+    service._client = SimpleNamespace(messages=SimpleNamespace(create=create))
+    service._guard = AsyncDependencyGuard('audit-test', timeout_seconds=0.5, queue_timeout_seconds=0.01,
+                                          max_concurrency=1, failure_threshold=3, recovery_seconds=30)
+    result = asyncio.run(service.extract_from_bytes(b'image', 'lab.png', 'image/png'))
+    assert len(result.values) == 1
+    assert result.values[0].raw_value == '2.1'
+    assert result.overall_needs_review
+    assert 'image_completeness_audit_failed' in result.warnings
+    assert cancelled == [True]
+    assert service._guard.snapshot()['in_flight'] == 0
+
+
+@pytest.mark.parametrize('timeout', [0, 29, 81, 180])
+def test_document_read_budget_rejects_values_outside_document_deadline(timeout):
+    from app.core.config import Settings
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, lab_document_read_timeout_seconds=timeout)

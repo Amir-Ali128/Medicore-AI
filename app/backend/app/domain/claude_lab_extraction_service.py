@@ -12,10 +12,12 @@ the `anthropic` package installed until extraction is actually used.
 from __future__ import annotations
 
 import base64
+import asyncio
 import json
 from typing import Any
 
 from pydantic import ValidationError
+from app.core.config import get_settings
 
 from app.infrastructure.runtime_resilience import (
     AsyncDependencyGuard,
@@ -28,6 +30,7 @@ SUPPORTED_CONTENT_TYPES: frozenset[str] = frozenset(
 )
 
 _MAX_TOKENS = 8192
+_AUDIT_TIMEOUT_SECONDS = 15.0
 
 _SYSTEM_PROMPT = (
     "You extract structured laboratory values from a lab report file. "
@@ -105,9 +108,10 @@ class ClaudeLabExtractionService:
         # Lazy import: only require the anthropic package when the service runs.
         from anthropic import AsyncAnthropic
 
+        timeout = get_settings().lab_document_read_timeout_seconds
         self._model = model
-        self._client = AsyncAnthropic(api_key=api_key)
-        self._guard = guard or get_anthropic_guard("lab-extraction")
+        self._client = AsyncAnthropic(api_key=api_key, timeout=timeout, max_retries=0)
+        self._guard = guard or get_anthropic_guard("lab-extraction", timeout_seconds=timeout)
 
     async def extract_from_bytes(
         self, file_bytes: bytes, file_name: str | None, content_type: str | None
@@ -118,8 +122,8 @@ class ClaudeLabExtractionService:
         encoded = base64.standard_b64encode(file_bytes).decode("ascii")
         file_block = self._build_file_block(content_type, encoded)
 
-        async def run(prompt: str) -> LabExtractionResult:
-            response = await self._guard.call(
+        async def run(prompt: str, *, timeout: float | None = None) -> LabExtractionResult:
+            request = self._guard.call(
                 lambda: self._client.messages.create(
                     model=self._model,
                     max_tokens=_MAX_TOKENS,
@@ -132,6 +136,7 @@ class ClaudeLabExtractionService:
                     ],
                 )
             )
+            response = await request if timeout is None else await asyncio.wait_for(request, timeout=timeout)
             text = self._collect_text(response)
             return self._parse_result(text, file_name)
 
@@ -143,13 +148,15 @@ class ClaudeLabExtractionService:
         # If only a small subset was returned, run one explicit completeness audit
         # and merge unique rows rather than silently accepting a truncated table.
         if content_type and content_type.startswith("image/") and (
-            len(first.values) <= 8 or (first.visible_row_count is not None and first.visible_row_count > len(first.values))
+            not first.values
+            or (first.visible_row_count is None and len(first.values) <= 8)
+            or (first.visible_row_count is not None and first.visible_row_count > len(first.values))
         ):
             try:
                 second = await run(_USER_PROMPT + _IMAGE_AUDIT_PROMPT + (
                 "\nThe previous extraction may have been incomplete. Perform a fresh full-table pass. "
                 "Return every visible row exactly once."
-                ))
+                ), timeout=_AUDIT_TIMEOUT_SECONDS)
             except Exception:
                 return first.model_copy(update={"overall_needs_review": True, "warnings": [*first.warnings, "image_completeness_audit_failed"]})
 
