@@ -28,6 +28,7 @@ class ExtractedLabValue(BaseModel):
     measured_at: date | None = None
     needs_review: bool = False
     extraction_note: str | None = None
+    source_flag: str | None = None
 
 
 class LabExtractionResult(BaseModel):
