@@ -92,6 +92,10 @@ class Settings(BaseSettings):
     # External AI calls are optional dependencies. Bound both the number of
     # concurrent requests and the amount of time any request may occupy a worker.
     ai_call_timeout_seconds: float = Field(default=45.0, ge=1.0, le=180.0)
+    # Table transcription needs its own budget even when generic AI calls are
+    # configured for short responses. Leave room in the 120s document deadline
+    # for a 15s audit and the existing 18s fallback.
+    lab_document_read_timeout_seconds: float = Field(default=75.0, ge=30.0, le=80.0)
     ai_queue_timeout_seconds: float = Field(default=2.0, ge=0.05, le=30.0)
     ai_max_concurrency: int = Field(default=4, ge=1, le=32)
     ai_circuit_breaker_failures: int = Field(default=3, ge=1, le=20)

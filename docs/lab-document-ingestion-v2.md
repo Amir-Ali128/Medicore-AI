@@ -18,6 +18,12 @@ configuration remain in place.
    explicit source flags, and report a visible-row count when readable. At most
    two pages are extracted concurrently. A 120-second extraction budget cancels
    unfinished requests and returns an error instead of a seemingly complete subset.
+   Claude table reading has a dedicated 75-second default instead of the generic
+   AI call timeout (`LAB_DOCUMENT_READ_TIMEOUT_SECONDS`, bounded to 30–80s).
+   A small table whose visible-row count matches its extracted rows skips the
+   extra audit. Missing/unknown counts may trigger a 15-second audit; its failure
+   retains the first reading with a review warning. SDK retries are disabled so
+   they cannot consume the document budget.
 4. **RawLabRow / validation / merge** retains missing or conflicting observations
    for review, checks name/value/unit/status and reference bounds, and merges
    exact repeated rows while retaining every source page/row location. Dates,

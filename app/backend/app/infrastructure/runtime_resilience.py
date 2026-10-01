@@ -338,11 +338,11 @@ def get_dependency_guard(
         return replacement
 
 
-def _provider_guard(provider: str, workload: str) -> AsyncDependencyGuard:
+def _provider_guard(provider: str, workload: str, *, timeout_seconds: float | None = None) -> AsyncDependencyGuard:
     settings = get_settings()
     return get_dependency_guard(
         f"{provider}:{str(workload).strip() or 'default'}",
-        timeout_seconds=settings.ai_call_timeout_seconds,
+        timeout_seconds=settings.ai_call_timeout_seconds if timeout_seconds is None else timeout_seconds,
         queue_timeout_seconds=settings.ai_queue_timeout_seconds,
         max_concurrency=settings.ai_max_concurrency,
         failure_threshold=settings.ai_circuit_breaker_failures,
@@ -350,8 +350,8 @@ def _provider_guard(provider: str, workload: str) -> AsyncDependencyGuard:
     )
 
 
-def get_anthropic_guard(workload: str) -> AsyncDependencyGuard:
-    return _provider_guard("anthropic", workload)
+def get_anthropic_guard(workload: str, *, timeout_seconds: float | None = None) -> AsyncDependencyGuard:
+    return _provider_guard("anthropic", workload, timeout_seconds=timeout_seconds)
 
 
 def get_openai_guard(workload: str) -> AsyncDependencyGuard:
