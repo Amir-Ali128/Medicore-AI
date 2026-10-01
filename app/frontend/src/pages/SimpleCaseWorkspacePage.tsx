@@ -128,6 +128,22 @@ function textReferenceBounds(reference: string | null | undefined) {
 }
 
 function classifyLabForDisplay(lab: LabInput): LabDisplayClassification {
+  const backendStatus = lab.source_metadata?.display_status;
+  const backendDirection = lab.source_metadata?.display_direction;
+  if (
+    backendStatus === 'normal' ||
+    backendStatus === 'abnormal' ||
+    backendStatus === 'unclassified'
+  ) {
+    return {
+      status: backendStatus,
+      direction:
+        backendDirection === 'low' || backendDirection === 'high'
+          ? backendDirection
+          : null,
+    };
+  }
+
   const observed = parseObservedValue(lab.value);
   if (!observed) {
     return { status: 'unclassified', direction: null };
