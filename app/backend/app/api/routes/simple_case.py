@@ -17,6 +17,7 @@ from app.api.routes.auth import get_current_active_user
 from app.domain.enums import ResultStatus, TrendStatus, UserRole
 from app.domain.canonical_lab_model import SOURCE_FILE_UPLOAD
 from app.domain.fast_pdf_lab_parser import try_fast_pdf_lab_case
+from app.domain.local_ocr_lab_parser import try_local_ocr_lab_case
 from app.domain.openai_lab_extraction_service import (
     OpenAILabExtractionError,
     extract_lab_document_with_openai,
@@ -470,6 +471,13 @@ async def upload_lab_pdf(
     extraction_source = "local_pdf_parser"
 
     if extracted is None:
+        extraction_source = "local_ocr"
+        extracted = try_local_ocr_lab_case(
+            content=content,
+            file_name=file.filename or "lab.pdf",
+        )
+
+    if extracted is None:
         extraction_source = "openai_fallback"
         try:
             extracted = await extract_lab_document_with_openai(
@@ -481,8 +489,9 @@ async def upload_lab_pdf(
             raise HTTPException(
                 status_code=422,
                 detail=(
-                    "PDF yerel olarak güvenilir biçimde ayrıştırılamadı ve AI fallback "
-                    f"kullanılamadı: {exc}"
+                    "PDF yerel parser ve yerel OCR ile güvenilir biçimde "
+                    "ayrıştırılamadı; AI fallback de kullanılamadı: "
+                    f"{exc}"
                 ),
             ) from exc
 
