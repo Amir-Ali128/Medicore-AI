@@ -6,7 +6,9 @@ import {
   getSavedSimpleCase,
   interpretSimpleCase,
   saveSimpleCase,
+  uploadLabImage,
   uploadLabPdf,
+  uploadReportImage,
   uploadReportPdf,
   type CaseAIInterpretation,
   type LabInput,
@@ -513,6 +515,21 @@ export default function SimpleCaseWorkspacePage() {
     }
   }
 
+  async function handleLabImage(file: File | null) {
+    if (!file) return;
+    setLabBusy(true);
+    setError('');
+    try {
+      const rows = await uploadLabImage(file);
+      setLabs((current) => [...current, ...rows]);
+      setSaved(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Kan fotoğrafı işlenemedi.');
+    } finally {
+      setLabBusy(false);
+    }
+  }
+
   async function handleReportPdf(file: File | null) {
     if (!file) return;
     setReportBusy(true);
@@ -523,6 +540,21 @@ export default function SimpleCaseWorkspacePage() {
       setSaved(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Rapor PDF’i işlenemedi.');
+    } finally {
+      setReportBusy(false);
+    }
+  }
+
+  async function handleReportImage(file: File | null) {
+    if (!file) return;
+    setReportBusy(true);
+    setError('');
+    try {
+      const report = await uploadReportImage(file, reportType, bodyRegion);
+      setReports((current) => [...current, report]);
+      setSaved(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Rapor fotoğrafı işlenemedi.');
     } finally {
       setReportBusy(false);
     }
@@ -583,10 +615,10 @@ export default function SimpleCaseWorkspacePage() {
                 Yeni vaka
               </p>
               <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">
-                Hastayı kaydet, PDF’leri ekle, vakayı oluştur
+                Hastayı kaydet, PDF veya fotoğraf ekle, vakayı oluştur
               </h1>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
-                Hasta ve klinik bilgileri manuel girilir. Kan sonuçları ve tetkik raporları PDF olarak yüklenir.
+                Hasta ve klinik bilgileri manuel girilir. Kan sonuçları ve tetkik raporları PDF veya fotoğraf olarak yüklenir.
               </p>
             </div>
 
@@ -762,25 +794,44 @@ export default function SimpleCaseWorkspacePage() {
               <div>
                 <h2 className="text-xl font-semibold text-slate-950">Kan sonuçları</h2>
                 <p className="mt-1 text-sm text-slate-500">
-                  Kan sonuçları manuel yazılmaz; laboratuvar PDF’ini yükle.
+                  Kan sonuçları manuel yazılmaz; laboratuvar PDF’ini veya net bir fotoğrafını yükle.
                 </p>
 
-                <label className="mt-5 block cursor-pointer rounded-3xl border-2 border-dashed border-blue-200 bg-blue-50/60 p-7 text-center transition hover:border-blue-300 hover:bg-blue-50">
-                  <input
-                    type="file"
-                    accept="application/pdf,.pdf"
-                    className="hidden"
-                    disabled={labBusy}
-                    onChange={(e) => void handleLabPdf(e.target.files?.[0] ?? null)}
-                  />
-                  <span className="block text-3xl">↑</span>
-                  <span className="mt-3 block font-semibold text-slate-950">
-                    {labBusy ? 'PDF okunuyor…' : 'Kan tahlili PDF yükle'}
-                  </span>
-                  <span className="mt-1 block text-xs text-slate-500">
-                    Sonuç, birim ve raporda yazan referans otomatik çıkarılır.
-                  </span>
-                </label>
+                <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                  <label className="block cursor-pointer rounded-3xl border-2 border-dashed border-blue-200 bg-blue-50/60 p-6 text-center transition hover:border-blue-300 hover:bg-blue-50">
+                    <input
+                      type="file"
+                      accept="application/pdf,.pdf"
+                      className="hidden"
+                      disabled={labBusy}
+                      onChange={(e) => void handleLabPdf(e.target.files?.[0] ?? null)}
+                    />
+                    <span className="block text-3xl">↑</span>
+                    <span className="mt-3 block font-semibold text-slate-950">
+                      {labBusy ? 'Belge okunuyor…' : 'Kan tahlili PDF yükle'}
+                    </span>
+                    <span className="mt-1 block text-xs text-slate-500">
+                      Metin tabanlı veya taranmış PDF desteklenir.
+                    </span>
+                  </label>
+
+                  <label className="block cursor-pointer rounded-3xl border-2 border-dashed border-cyan-200 bg-cyan-50/60 p-6 text-center transition hover:border-cyan-300 hover:bg-cyan-50">
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      className="hidden"
+                      disabled={labBusy}
+                      onChange={(e) => void handleLabImage(e.target.files?.[0] ?? null)}
+                    />
+                    <span className="block text-3xl">▣</span>
+                    <span className="mt-3 block font-semibold text-slate-950">
+                      {labBusy ? 'Belge okunuyor…' : 'Kan tahlili fotoğrafı yükle'}
+                    </span>
+                    <span className="mt-1 block text-xs text-slate-500">
+                      JPG, PNG veya WEBP. Sonuç, birim ve referans çıkarılır.
+                    </span>
+                  </label>
+                </div>
               </div>
 
               <div>
@@ -788,7 +839,7 @@ export default function SimpleCaseWorkspacePage() {
                   <div>
                     <h3 className="font-semibold text-slate-950">Çıkarılan sonuçlar</h3>
                     <p className="mt-1 text-xs leading-5 text-slate-400">
-                      Gruplama yalnızca PDF’de yazan sayısal referansa göre yapılır; AI klinik yorum girdisi değiştirilmez.
+                      Gruplama belgede yazan sayısal referansa göre yapılır; AI klinik yorum tüm çıkarılan laboratuvar verisini alır.
                     </p>
                   </div>
                   <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
@@ -799,7 +850,7 @@ export default function SimpleCaseWorkspacePage() {
                 <div className="max-h-[36rem] space-y-4 overflow-y-auto pr-1">
                   {labs.length === 0 ? (
                     <div className="rounded-3xl border border-dashed border-slate-200 p-8 text-center text-sm text-slate-400">
-                      Henüz kan PDF’i yüklenmedi.
+                      Henüz kan PDF’i veya fotoğrafı yüklenmedi.
                     </div>
                   ) : (
                     <>
@@ -944,7 +995,7 @@ export default function SimpleCaseWorkspacePage() {
               <div>
                 <h2 className="text-xl font-semibold text-slate-950">Tetkik raporları</h2>
                 <p className="mt-1 text-sm text-slate-500">
-                  EKG, EKO, USG, BT, MR, röntgen ve diğer yazılı raporları PDF olarak yükle.
+                  EKG, EKO, USG, BT, MR, röntgen ve diğer raporları PDF veya fotoğraf olarak yükle.
                 </p>
 
                 <div className="mt-5 grid gap-3 sm:grid-cols-2">
@@ -962,25 +1013,41 @@ export default function SimpleCaseWorkspacePage() {
                   />
                 </div>
 
-                <label className="mt-4 block cursor-pointer rounded-3xl border-2 border-dashed border-violet-200 bg-violet-50/60 p-7 text-center transition hover:border-violet-300">
-                  <input
-                    type="file"
-                    accept="application/pdf,.pdf"
-                    className="hidden"
-                    disabled={reportBusy}
-                    onChange={(e) => void handleReportPdf(e.target.files?.[0] ?? null)}
-                  />
-                  <span className="block text-3xl">↑</span>
-                  <span className="mt-3 block font-semibold text-slate-950">
-                    {reportBusy ? 'PDF okunuyor…' : 'Tetkik raporu PDF yükle'}
-                  </span>
-                </label>
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <label className="block cursor-pointer rounded-3xl border-2 border-dashed border-violet-200 bg-violet-50/60 p-6 text-center transition hover:border-violet-300">
+                    <input
+                      type="file"
+                      accept="application/pdf,.pdf"
+                      className="hidden"
+                      disabled={reportBusy}
+                      onChange={(e) => void handleReportPdf(e.target.files?.[0] ?? null)}
+                    />
+                    <span className="block text-3xl">↑</span>
+                    <span className="mt-3 block font-semibold text-slate-950">
+                      {reportBusy ? 'Belge okunuyor…' : 'Tetkik raporu PDF yükle'}
+                    </span>
+                  </label>
+
+                  <label className="block cursor-pointer rounded-3xl border-2 border-dashed border-fuchsia-200 bg-fuchsia-50/60 p-6 text-center transition hover:border-fuchsia-300">
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      className="hidden"
+                      disabled={reportBusy}
+                      onChange={(e) => void handleReportImage(e.target.files?.[0] ?? null)}
+                    />
+                    <span className="block text-3xl">▣</span>
+                    <span className="mt-3 block font-semibold text-slate-950">
+                      {reportBusy ? 'Belge okunuyor…' : 'Tetkik fotoğrafı yükle'}
+                    </span>
+                  </label>
+                </div>
               </div>
 
               <div className="space-y-2">
                 {reports.length === 0 ? (
                   <div className="rounded-3xl border border-dashed border-slate-200 p-8 text-center text-sm text-slate-400">
-                    Henüz rapor PDF’i yüklenmedi.
+                    Henüz rapor PDF’i veya fotoğrafı yüklenmedi.
                   </div>
                 ) : (
                   reports.map((report, index) => (
