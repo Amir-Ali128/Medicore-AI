@@ -19,6 +19,8 @@ import {
 } from '../services/simpleCaseClient';
 import { getActivePatientId } from '../services/patientClient';
 import { simpleCaseInputKey } from '../services/simpleCaseInputKey';
+import { classifyLabForDisplay, type LabDisplayClassification } from '../services/labDisplayClassification';
+import { mergeLabDocuments } from '../services/labDocumentMerge';
 
 type Step = 'patient' | 'clinical' | 'labs' | 'reports' | 'summary';
 
@@ -40,161 +42,6 @@ function splitLines(value: string) {
 function fileNameFromMetadata(metadata?: Record<string, unknown>) {
   const value = metadata?.source_file_name;
   return typeof value === 'string' ? value : null;
-}
-
-type LabDisplayClassification = {
-  status: 'normal' | 'abnormal' | 'unclassified';
-  direction: 'low' | 'high' | null;
-};
-
-type ParsedObservedValue = {
-  value: number;
-  comparator: '<' | '<=' | '>' | '>=' | null;
-};
-
-function parseObservedValue(value: LabInput['value']): ParsedObservedValue | null {
-  if (typeof value === 'number') {
-    return Number.isFinite(value) ? { value, comparator: null } : null;
-  }
-  if (typeof value !== 'string') return null;
-
-  const match = value
-    .trim()
-    .replace(',', '.')
-    .match(/^\s*([<>]=?)?\s*(-?\d+(?:\.\d+)?)\s*$/);
-  if (!match) return null;
-
-  const parsed = Number(match[2]);
-  if (!Number.isFinite(parsed)) return null;
-
-  return {
-    value: parsed,
-    comparator: (match[1] as ParsedObservedValue['comparator']) ?? null,
-  };
-}
-
-function referenceNumber(value: unknown) {
-  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
-  if (typeof value !== 'string') return null;
-  const parsed = Number(value.replace(',', '.').trim());
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function structuredReferenceBounds(lab: LabInput) {
-  const refs = lab.source_references ?? [];
-  const usable = refs.find(
-    (item) =>
-      item.minimum !== null &&
-        item.minimum !== undefined ||
-      item.maximum !== null &&
-        item.maximum !== undefined,
-  );
-
-  if (usable) {
-    return {
-      minimum: referenceNumber(usable.minimum),
-      maximum: referenceNumber(usable.maximum),
-    };
-  }
-
-  const metadata = lab.source_metadata ?? {};
-  return {
-    minimum: referenceNumber(metadata.reference_min),
-    maximum: referenceNumber(metadata.reference_max),
-  };
-}
-
-function textReferenceBounds(reference: string | null | undefined) {
-  const text = reference?.trim();
-  if (!text) return { minimum: null, maximum: null };
-
-  const range = text.match(
-    /^\s*(-?\d+(?:[.,]\d+)?)\s*[-–—]\s*(-?\d+(?:[.,]\d+)?)(?:\s|$)/,
-  );
-  if (range) {
-    return {
-      minimum: referenceNumber(range[1]),
-      maximum: referenceNumber(range[2]),
-    };
-  }
-
-  const oneSided = text.match(/^\s*([<>]=?)\s*(-?\d+(?:[.,]\d+)?)(?:\s|$)/);
-  if (!oneSided) return { minimum: null, maximum: null };
-
-  const limit = referenceNumber(oneSided[2]);
-  if (limit === null) return { minimum: null, maximum: null };
-
-  return oneSided[1].startsWith('<')
-    ? { minimum: null, maximum: limit }
-    : { minimum: limit, maximum: null };
-}
-
-function classifyLabForDisplay(lab: LabInput): LabDisplayClassification {
-  const backendStatus = lab.source_metadata?.display_status;
-  const backendDirection = lab.source_metadata?.display_direction;
-  if (
-    backendStatus === 'normal' ||
-    backendStatus === 'abnormal' ||
-    backendStatus === 'unclassified'
-  ) {
-    return {
-      status: backendStatus,
-      direction:
-        backendDirection === 'low' || backendDirection === 'high'
-          ? backendDirection
-          : null,
-    };
-  }
-
-  const observed = parseObservedValue(lab.value);
-  if (!observed) {
-    return { status: 'unclassified', direction: null };
-  }
-
-  const structuredBounds = structuredReferenceBounds(lab);
-  const textBounds = textReferenceBounds(lab.source_reference);
-  const minimum = structuredBounds.minimum ?? textBounds.minimum;
-  const maximum = structuredBounds.maximum ?? textBounds.maximum;
-
-  if (minimum === null && maximum === null) {
-    return { status: 'unclassified', direction: null };
-  }
-  if (minimum !== null && maximum !== null && minimum > maximum) {
-    return { status: 'unclassified', direction: null };
-  }
-
-  const { value, comparator } = observed;
-
-  // Exact numeric observations are straightforward.
-  if (comparator === null) {
-    if (minimum !== null && value < minimum) {
-      return { status: 'abnormal', direction: 'low' };
-    }
-    if (maximum !== null && value > maximum) {
-      return { status: 'abnormal', direction: 'high' };
-    }
-    return { status: 'normal', direction: null };
-  }
-
-  // Censored values such as "<2" or ">90" are classified only when the
-  // inequality proves the relation to the printed source interval.
-  if (comparator.startsWith('<')) {
-    if (minimum !== null && value <= minimum) {
-      return { status: 'abnormal', direction: 'low' };
-    }
-    if (minimum === null && maximum !== null && value <= maximum) {
-      return { status: 'normal', direction: null };
-    }
-    return { status: 'unclassified', direction: null };
-  }
-
-  if (maximum !== null && value >= maximum) {
-    return { status: 'abnormal', direction: 'high' };
-  }
-  if (maximum === null && minimum !== null && value >= minimum) {
-    return { status: 'normal', direction: null };
-  }
-  return { status: 'unclassified', direction: null };
 }
 
 const CURRENT_REPORT_HEADINGS = [
@@ -298,6 +145,7 @@ export default function SimpleCaseWorkspacePage() {
 
   const [labs, setLabs] = useState<LabInput[]>([]);
   const [labBusy, setLabBusy] = useState(false);
+  const [labImageRotation, setLabImageRotation] = useState(0);
 
   const [reports, setReports] = useState<MedicalReportInput[]>([]);
   const [reportType, setReportType] = useState('Tıbbi Rapor');
@@ -506,7 +354,7 @@ export default function SimpleCaseWorkspacePage() {
     setError('');
     try {
       const rows = await uploadLabPdf(file);
-      setLabs((current) => [...current, ...rows]);
+      setLabs((current) => mergeLabDocuments(current, rows));
       setSaved(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Kan PDF’i işlenemedi.');
@@ -520,8 +368,8 @@ export default function SimpleCaseWorkspacePage() {
     setLabBusy(true);
     setError('');
     try {
-      const rows = await uploadLabImage(file);
-      setLabs((current) => [...current, ...rows]);
+      const rows = await uploadLabImage(file, labImageRotation);
+      setLabs((current) => mergeLabDocuments(current, rows));
       setSaved(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Kan fotoğrafı işlenemedi.');
@@ -797,6 +645,15 @@ export default function SimpleCaseWorkspacePage() {
                   Kan sonuçları manuel yazılmaz; laboratuvar PDF’ini veya net bir fotoğrafını yükle.
                 </p>
 
+                    <label className="mb-2 block text-xs text-slate-600">
+                      Fotoğraf dönüşü
+                      <select disabled={labBusy} value={labImageRotation} onChange={(event) => setLabImageRotation(Number(event.target.value))} className="ml-2 rounded-lg border border-slate-200 bg-white p-1">
+                        <option value={0}>Otomatik / düz</option>
+                        <option value={90}>90° sağa</option>
+                        <option value={180}>180°</option>
+                        <option value={270}>90° sola</option>
+                      </select>
+                    </label>
                 <div className="mt-5 grid gap-3 sm:grid-cols-2">
                   <label className="block cursor-pointer rounded-3xl border-2 border-dashed border-blue-200 bg-blue-50/60 p-6 text-center transition hover:border-blue-300 hover:bg-blue-50">
                     <input
@@ -847,6 +704,14 @@ export default function SimpleCaseWorkspacePage() {
                   </span>
                 </div>
 
+                {labs.some((lab) => (lab.source_metadata?.document_warnings as string[] | undefined)?.some((warning) => warning.includes('visible_row_count_unverified'))) ? (
+                  <p className="mb-3 rounded-xl bg-slate-50 p-3 text-xs text-slate-600">Kaynak tablonun toplam satır sayısı doğrulanamadı. Eksik sonuç olmadığını belgeyle karşılaştırarak kontrol edin.</p>
+                ) : null}
+                {labs.some((lab) => lab.source_metadata?.needs_review || (lab.source_metadata?.document_warnings as string[] | undefined)?.some((warning) => /mismatch|failed|no_lab_rows|blurred|low_resolution|low_contrast/.test(warning))) ? (
+                  <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900" role="alert">
+                    Bazı satır veya sayfalar doğrulama gerektiriyor. Ad, değer, birim ve kaynak durumunu belgeyle karşılaştırın; eksik veya bulanık sayfayı yeniden yükleyin. Klinik yorum tüm sonuçları ve bu belirsizlikleri alır.
+                  </div>
+                ) : null}
                 <div className="max-h-[36rem] space-y-4 overflow-y-auto pr-1">
                   {labs.length === 0 ? (
                     <div className="rounded-3xl border border-dashed border-slate-200 p-8 text-center text-sm text-slate-400">
@@ -878,7 +743,7 @@ export default function SimpleCaseWorkspacePage() {
                                       </span>
                                     </div>
                                     <p className="mt-1 text-sm text-slate-500">
-                                      {[lab.value, lab.unit].filter(Boolean).join(' ')}
+                                      {[lab.value, lab.unit].filter((value) => value !== null && value !== undefined && value !== '').join(' ')}
                                       {lab.source_reference ? ` · Ref: ${lab.source_reference}` : ' · Referans yok'}
                                     </p>
                                     {fileNameFromMetadata(lab.source_metadata) ? (
@@ -925,7 +790,7 @@ export default function SimpleCaseWorkspacePage() {
                                       </span>
                                     </div>
                                     <p className="mt-1 text-sm text-slate-500">
-                                      {[lab.value, lab.unit].filter(Boolean).join(' ')}
+                                      {[lab.value, lab.unit].filter((value) => value !== null && value !== undefined && value !== '').join(' ')}
                                       {lab.source_reference ? ` · Ref: ${lab.source_reference}` : ' · Referans yok'}
                                     </p>
                                     {fileNameFromMetadata(lab.source_metadata) ? (
@@ -963,7 +828,7 @@ export default function SimpleCaseWorkspacePage() {
                                   <div>
                                     <p className="font-semibold text-slate-950">{lab.test_name}</p>
                                     <p className="mt-1 text-sm text-slate-500">
-                                      {[lab.value, lab.unit].filter(Boolean).join(' ')}
+                                      {[lab.value, lab.unit].filter((value) => value !== null && value !== undefined && value !== '').join(' ')}
                                       {lab.source_reference ? ` · Ref: ${lab.source_reference}` : ' · Referans yok'}
                                     </p>
                                     <p className="mt-1 text-xs text-slate-400">

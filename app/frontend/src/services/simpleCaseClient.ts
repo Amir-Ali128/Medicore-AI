@@ -152,9 +152,10 @@ export function uploadLabPdf(file: File) {
   return uploadRequest<LabInput[]>('/simple-case/labs/pdf', { body });
 }
 
-export function uploadLabImage(file: File) {
+export function uploadLabImage(file: File, rotation = 0) {
   const body = new FormData();
   body.append('file', file);
+  body.append('rotation', String(rotation));
   return uploadRequest<LabInput[]>('/simple-case/labs/image', { body });
 }
 

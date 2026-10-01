@@ -65,7 +65,8 @@ Clinical reasoning rules:
 - Before forming the differential, evaluate every supplied numeric laboratory result against its supplied source reference/decision threshold when that comparison is valid.
 - Treat directionality (high/low/normal) as a clinical reasoning feature, not merely a display label. Use combinations of abnormalities to recognize patterns (for example renal, electrolyte, inflammatory, hepatic, hematologic, endocrine or acid-base patterns) when supported by the supplied data.
 - When multiple abnormalities form a coherent pattern, explicitly connect the pattern to the differential diagnosis and explain which values support it.
-- A backend-provided source_classification may be used as an additional deterministic cue, but always verify it against the supplied value/unit/reference before relying on it.
+- source_flag is copied from the source document only; UI group labels are not supplied. Preserve source flags separately from clinical inference.
+- Rows marked needs_review may contain unresolved transcription or association errors. State that uncertainty; do not treat those rows as established facts.
 - In differential diagnosis, clearly distinguish model-generated clinical inference from diagnoses explicitly stated in source documents.
 - Use cautious wording such as "ayırıcı tanıda düşünülebilir", "ile uyumlu olabilir", or "olasılığı klinik olarak değerlendirilebilir".
 - Do not claim a differential diagnosis is confirmed.
@@ -99,14 +100,9 @@ def _build_case_payload(payload: SimpleCaseRequest) -> dict[str, Any]:
                 "unit": item.unit,
                 "reference_text": item.reference_text,
                 "reference_source": item.reference_source,
-                "source_classification": (
-                    {
-                        "status": item.source_metadata.get("display_status"),
-                        "direction": item.source_metadata.get("display_direction"),
-                    }
-                    if item.source_metadata.get("display_status")
-                    else None
-                ),
+                "source_flag": item.source_metadata.get("source_flag"),
+                "needs_review": item.source_metadata.get("needs_review", False),
+                "ingestion_reasons": item.source_metadata.get("ingestion_reasons", []),
                 "measured_at": item.measured_at.isoformat()
                 if hasattr(item.measured_at, "isoformat")
                 else item.measured_at,
@@ -126,7 +122,7 @@ def _build_case_payload(payload: SimpleCaseRequest) -> dict[str, Any]:
             }
             for report in normalized.reports
         ],
-        "warnings": list(normalized.warnings),
+        "warnings": list(dict.fromkeys([*normalized.warnings, *(str(w) for item in normalized.labs for w in item.source_metadata.get("document_warnings", []))])),
     }
 
 
@@ -142,6 +138,8 @@ async def interpret_simple_case(payload: SimpleCaseRequest) -> CaseAIInterpretat
 
     case_payload = _build_case_payload(payload)
     prompt = json.dumps(case_payload, ensure_ascii=False, separators=(",", ":"))
+    if len(prompt) > 160_000:
+        raise RuntimeError("Vaka tek AI çağrısı sınırını aşıyor; sonuçlar sessizce kırpılmadı.")
     client = AsyncAnthropic(api_key=settings.anthropic_api_key)
 
     required_headings = (
@@ -156,7 +154,7 @@ async def interpret_simple_case(payload: SimpleCaseRequest) -> CaseAIInterpretat
     )
 
     async def generate(extra_instruction: str | None = None) -> str:
-        user_text = prompt[:160_000]
+        user_text = prompt
         if extra_instruction:
             user_text += "\n\n" + extra_instruction
 

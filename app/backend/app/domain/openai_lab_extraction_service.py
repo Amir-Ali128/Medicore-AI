@@ -27,6 +27,7 @@ _LAB_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "required": [
+        "visible_row_count",
         "patient_age",
         "patient_sex",
         "report_date",
@@ -35,6 +36,7 @@ _LAB_SCHEMA: dict[str, Any] = {
         "extraction_confidence",
     ],
     "properties": {
+        "visible_row_count": {"type": ["integer", "null"], "minimum": 0},
         "patient_age": {"type": ["integer", "null"], "minimum": 0, "maximum": 130},
         "patient_sex": {"type": ["string", "null"]},
         "report_date": {"type": ["string", "null"]},
@@ -44,6 +46,7 @@ _LAB_SCHEMA: dict[str, Any] = {
                 "type": "object",
                 "additionalProperties": False,
                 "required": [
+                    "source_flag",
                     "raw_parameter_name",
                     "canonical_name",
                     "raw_value",
@@ -59,6 +62,7 @@ _LAB_SCHEMA: dict[str, Any] = {
                     "source_page",
                 ],
                 "properties": {
+                    "source_flag": {"type": ["string", "null"]},
                     "raw_parameter_name": {"type": "string"},
                     "canonical_name": {"type": ["string", "null"]},
                     "raw_value": {"type": ["string", "null"]},
@@ -93,6 +97,8 @@ Safety and provenance rules:
   address, phone, email or exact date of birth. Coarse age and sex may be returned
   only when explicitly visible and useful for physician review.
 - Never invent a test, value, unit, date or reference range.
+- Count visible laboratory rows separately before transcribing; return visible_row_count or null if unclear.
+- source_flag copies only explicitly printed high/low/normal or qualitative status text; never infer it.
 - Preserve the laboratory's printed reference interval. One-sided limits are
   allowed: use null for the missing side and keep the original rule in
   reference_text.
@@ -259,3 +265,4 @@ async def extract_lab_document_with_openai(
     return await extract_lab_documents_with_openai(
         documents=[(content, media_type, file_name)]
     )
+

@@ -29,6 +29,8 @@ from app.domain.scanned_medical_report_pdf_ai import (
     extract_scanned_medical_report_pdf,
 )
 from app.domain.simple_case import case_fingerprint, normalize_simple_case
+from app.domain.lab_document_ingestion import ingest_lab_document
+from app.domain.lab_document_normalizer import DocumentPage
 from app.domain.simple_case_ai import interpret_simple_case
 from app.infrastructure.database.models.lab_report import LabReport
 from app.infrastructure.database.models.lab_result import LabResult
@@ -105,109 +107,6 @@ def _dedupe_lab_rows(rows: list[dict]) -> list[dict]:
         seen.add(key)
         output.append(row)
     return output
-
-
-def _parse_numeric_observation(value):
-    if value is None or isinstance(value, bool):
-        return None
-    text = str(value).strip().replace(",", ".")
-    match = __import__("re").fullmatch(r"\s*([<>]=?)?\s*(-?\d+(?:\.\d+)?)\s*", text)
-    if match is None:
-        return None
-    try:
-        number = float(match.group(2))
-    except ValueError:
-        return None
-    return number, (match.group(1) or None)
-
-
-def _source_flag_classification(value) -> tuple[str, str | None] | None:
-    if value in (None, ""):
-        return None
-    folded = (
-        str(value).strip().casefold()
-        .replace("ı", "i")
-        .replace("ş", "s")
-        .replace("ğ", "g")
-        .replace("ü", "u")
-        .replace("ö", "o")
-        .replace("ç", "c")
-    )
-    if folded in {"yuksek", "high", "h", "↑", "artmis", "artmis"}:
-        return "abnormal", "high"
-    if folded in {"dusuk", "low", "l", "↓", "azalmis"}:
-        return "abnormal", "low"
-    if folded in {"normal", "n", "referans ici", "referans icinde"}:
-        return "normal", None
-    return None
-
-
-def _classify_lab_for_display(row: dict) -> tuple[str, str | None]:
-    """Deterministic presentation classification from source flag or source bounds."""
-
-    source_flag = _source_flag_classification(row.get("source_flag"))
-    if source_flag is not None:
-        return source_flag
-
-    observed = _parse_numeric_observation(
-        row.get("raw_value")
-        if row.get("raw_value") not in (None, "")
-        else row.get("normalized_value")
-    )
-    if observed is None:
-        return "unclassified", None
-
-    minimum = _decimal_or_none(row.get("reference_min"))
-    maximum = _decimal_or_none(row.get("reference_max"))
-    if minimum is None and maximum is None:
-        reference = str(row.get("reference_text") or "").strip().replace(",", ".")
-        range_match = __import__("re").match(
-            r"^\s*(-?\d+(?:\.\d+)?)\s*[-–—]\s*(-?\d+(?:\.\d+)?)",
-            reference,
-        )
-        if range_match is not None:
-            minimum = _decimal_or_none(range_match.group(1))
-            maximum = _decimal_or_none(range_match.group(2))
-        else:
-            one_sided = __import__("re").match(
-                r"^\s*([<>]=?)\s*(-?\d+(?:\.\d+)?)",
-                reference,
-            )
-            if one_sided is not None:
-                limit = _decimal_or_none(one_sided.group(2))
-                if one_sided.group(1).startswith("<"):
-                    maximum = limit
-                else:
-                    minimum = limit
-
-    if minimum is None and maximum is None:
-        return "unclassified", None
-    if minimum is not None and maximum is not None and minimum > maximum:
-        return "unclassified", None
-
-    value, comparator = observed
-    numeric = Decimal(str(value))
-
-    if comparator is None:
-        if minimum is not None and numeric < minimum:
-            return "abnormal", "low"
-        if maximum is not None and numeric > maximum:
-            return "abnormal", "high"
-        return "normal", None
-
-    # Conservative handling for censored values such as <2 or >90.
-    if comparator.startswith("<"):
-        if minimum is not None and numeric <= minimum:
-            return "abnormal", "low"
-        if minimum is None and maximum is not None and numeric <= maximum:
-            return "normal", None
-        return "unclassified", None
-
-    if maximum is not None and numeric >= maximum:
-        return "abnormal", "high"
-    if maximum is None and minimum is not None and numeric >= minimum:
-        return "normal", None
-    return "unclassified", None
 
 
 def _parse_measured_at(value):
@@ -582,13 +481,13 @@ async def _extract_lab_document_with_claude(
                 rows: list[dict] = []
                 for item in result.values:
                     name = (item.raw_parameter_name or "").strip()
-                    if not name or item.raw_value in (None, ""):
-                        continue
 
                     ref_min = item.extracted_reference_min
                     ref_max = item.extracted_reference_max
-                    reference_text = None
-                    if ref_min is not None and ref_max is not None:
+                    reference_text = item.reference_text
+                    if reference_text:
+                        pass
+                    elif ref_min is not None and ref_max is not None:
                         reference_text = f"{ref_min} - {ref_max}"
                     elif ref_min is not None:
                         reference_text = f">= {ref_min}"
@@ -605,6 +504,7 @@ async def _extract_lab_document_with_claude(
                                 else None
                             ),
                             "unit": item.unit or item.extracted_unit,
+                            "reference_unit": item.extracted_unit,
                             "reference_min": (
                                 float(ref_min) if ref_min is not None else None
                             ),
@@ -619,7 +519,7 @@ async def _extract_lab_document_with_claude(
                             ),
                             "source_file_name": result.source_file_name or file_name,
                             "source_page": None,
-                            "needs_review": item.needs_review,
+                            "needs_review": item.needs_review or result.overall_needs_review,
                             "confidence": result.extraction_confidence,
                             "source_flag": item.source_flag,
                         }
@@ -630,6 +530,7 @@ async def _extract_lab_document_with_claude(
                         "labs": rows,
                         "warnings": [*result.warnings, "claude_lab_document_extraction"],
                         "extraction_confidence": result.extraction_confidence,
+                        "visible_row_count": result.visible_row_count,
                     }
             except Exception:
                 pass
@@ -713,7 +614,7 @@ def _lab_inputs_from_extracted(
     extraction_source: str,
 ) -> list[LabResultInput]:
     rows: list[LabResultInput] = []
-    for row in _dedupe_lab_rows(list(extracted.get("labs") or [])):
+    for row in list(extracted.get("labs") or []):
         if not isinstance(row, dict):
             continue
 
@@ -723,11 +624,10 @@ def _lab_inputs_from_extracted(
             or ""
         ).strip()
         if not test_name:
-            continue
+            test_name = "[Okunamayan parametre]"
 
         raw_value = row.get("raw_value")
         value = raw_value if raw_value not in (None, "") else row.get("normalized_value")
-        display_status, display_direction = _classify_lab_for_display(row)
 
         reference_text = (
             str(row.get("reference_text")).strip()
@@ -760,8 +660,8 @@ def _lab_inputs_from_extracted(
                             "minimum": row.get("reference_min"),
                             "maximum": row.get("reference_max"),
                             "unit": (
-                                str(row.get("unit")).strip()
-                                if row.get("unit")
+                                str(row.get("reference_unit") or row.get("unit")).strip()
+                                if row.get("reference_unit") or row.get("unit")
                                 else None
                             ),
                         }
@@ -777,13 +677,62 @@ def _lab_inputs_from_extracted(
                     "extraction_source": extraction_source,
                     "reference_min": row.get("reference_min"),
                     "reference_max": row.get("reference_max"),
-                    "display_status": display_status,
-                    "display_direction": display_direction,
                     "source_flag": row.get("source_flag"),
+                    "raw_parameter_name": row.get("raw_parameter_name"),
+                    "raw_value": row.get("raw_value"),
+                    "source_sha256": row.get("source_sha256"),
+                    "source_locations": row.get("source_locations", []),
+                    "ingestion_reasons": row.get("ingestion_reasons", []),
+                    "ingestion_contract": extracted.get("ingestion_contract"),
+                    "document_warnings": extracted.get("warnings", []),
+                    "page_reports": extracted.get("page_reports", []),
+                    "raw_row_count": extracted.get("raw_row_count"),
+                    "duplicate_count": extracted.get("duplicate_count"),
                 },
             )
         )
     return rows
+
+
+async def _ingest_lab_upload(file: UploadFile, media_type: str, *, rotation: int = 0) -> list[LabResultInput]:
+    content = await file.read(_MAX_PDF_BYTES + 1)
+    if not content:
+        raise HTTPException(status_code=400, detail="Belge boş.")
+    if len(content) > _MAX_PDF_BYTES:
+        raise HTTPException(status_code=413, detail="Belge 15 MB sınırını aşıyor.")
+    file_name = file.filename or ("lab.pdf" if media_type == "application/pdf" else "lab-image.png")
+
+    async def extract_page(page: DocumentPage) -> dict | None:
+        # A PDF page may have selectable text while the next page is a scan.
+        if page.native_pdf is not None:
+            import asyncio
+            native = await asyncio.to_thread(
+                try_fast_pdf_lab_case, content=page.native_pdf, media_type="application/pdf",
+                file_name=file_name, source_type=SOURCE_FILE_UPLOAD,
+            )
+            if native and native.get("labs"):
+                return native
+        # Reading-only provider: never route laboratory tables through radiology interpretation.
+        result = await _extract_lab_document_with_claude(
+            content=page.image, file_name=file_name, media_type="image/png",
+        )
+        if result and result.get("labs"):
+            return result
+        try:
+            return await extract_lab_document_with_openai(
+                content=page.image, media_type="image/png", file_name=file_name,
+            )
+        except (OpenAILabExtractionError, ValueError):
+            return {"labs": [], "warnings": ["page_extraction_failed"]}
+
+    try:
+        extracted = await ingest_lab_document(
+            content=content, media_type=media_type, file_name=file_name,
+            extract_page=extract_page, rotation=rotation,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _lab_inputs_from_extracted(extracted, source_file_name=file_name, extraction_source="lab_document_ingestion_v2")
 
 
 @router.post("/labs/pdf", response_model=list[LabResultInput])
@@ -791,163 +740,22 @@ async def upload_lab_pdf(
     current_user: Annotated[User, Depends(get_current_active_user)],
     file: UploadFile = File(...),
 ) -> list[LabResultInput]:
-    """Extract laboratory rows from a PDF without classifying their values."""
-
-    if (file.content_type or "").split(";", 1)[0].lower() != "application/pdf":
+    media_type = (file.content_type or "").split(";", 1)[0].lower()
+    if media_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Laboratuvar dosyası PDF olmalıdır.")
-
-    content = await file.read(_MAX_PDF_BYTES + 1)
-    if not content:
-        raise HTTPException(status_code=400, detail="PDF dosyası boş.")
-    if len(content) > _MAX_PDF_BYTES:
-        raise HTTPException(status_code=413, detail="PDF dosyası 15 MB sınırını aşıyor.")
-
-    extracted: dict | None = try_fast_pdf_lab_case(
-        content=content,
-        media_type="application/pdf",
-        file_name=file.filename or "lab.pdf",
-        source_type=SOURCE_FILE_UPLOAD,
-    )
-
-    extraction_source = "local_pdf_parser"
-
-    if extracted is None:
-        extraction_source = "claude_pdf_vision"
-        extracted = await _extract_lab_document_with_claude(
-            content=content,
-            file_name=file.filename or "lab.pdf",
-            media_type="application/pdf",
-        )
-
-    if extracted is None:
-        extraction_source = "openai_fallback"
-        try:
-            extracted = await extract_lab_document_with_openai(
-                content=content,
-                media_type="application/pdf",
-                file_name=file.filename or "lab.pdf",
-            )
-        except (OpenAILabExtractionError, ValueError) as exc:
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    "PDF yerel parser ve Claude belge okuma ile güvenilir biçimde "
-                    "ayrıştırılamadı; OpenAI fallback de kullanılamadı: "
-                    f"{exc}"
-                ),
-            ) from exc
-
-    rows = _lab_inputs_from_extracted(
-        extracted,
-        source_file_name=file.filename,
-        extraction_source=extraction_source,
-    )
-
-    if not rows:
-        raise HTTPException(
-            status_code=400,
-            detail="PDF içinde kullanılabilir laboratuvar sonucu bulunamadı.",
-        )
-
-    return rows
-
+    return await _ingest_lab_upload(file, media_type)
 
 
 @router.post("/labs/image", response_model=list[LabResultInput])
 async def upload_lab_image(
     current_user: Annotated[User, Depends(get_current_active_user)],
     file: UploadFile = File(...),
+    rotation: int = Form(0),
 ) -> list[LabResultInput]:
-    """Extract laboratory rows from a photographed/scanned lab image."""
-
     media_type = (file.content_type or "").split(";", 1)[0].lower()
     if media_type not in {"image/jpeg", "image/png", "image/webp"}:
-        raise HTTPException(
-            status_code=400,
-            detail="Laboratuvar fotoğrafı JPG, PNG veya WEBP olmalıdır.",
-        )
-
-    content = await file.read(_MAX_PDF_BYTES + 1)
-    if not content:
-        raise HTTPException(status_code=400, detail="Fotoğraf dosyası boş.")
-    if len(content) > _MAX_PDF_BYTES:
-        raise HTTPException(status_code=413, detail="Fotoğraf 15 MB sınırını aşıyor.")
-
-    extracted = await _extract_lab_document_with_claude(
-        content=content,
-        file_name=file.filename or "lab-image.jpg",
-        media_type=media_type,
-    )
-    extraction_source = "claude_image_vision"
-
-    if extracted is None:
-        # Secondary Anthropic path: transcribe the photographed table, then
-        # feed the visible text into the existing deterministic lab parser.
-        try:
-            review = await review_radiology_media(
-                content=content,
-                media_type=media_type,
-                modality="AUTO",
-                body_part=None,
-            )
-        except Exception:
-            review = None
-
-        if review is not None and review.visible_text.strip():
-            try:
-                from app.api.routes.lab_analysis import _parse_lab_values_from_text
-                parsed_rows = _parse_lab_values_from_text(review.visible_text)
-            except Exception:
-                parsed_rows = []
-
-            if parsed_rows:
-                extracted = {
-                    "labs": [
-                        {
-                            **row,
-                            "reference_min": row.get(
-                                "reference_min",
-                                row.get("extracted_reference_min"),
-                            ),
-                            "reference_max": row.get(
-                                "reference_max",
-                                row.get("extracted_reference_max"),
-                            ),
-                            "source_file_name": file.filename or "lab-image.jpg",
-                            "needs_review": True,
-                            "confidence": 0.8,
-                        }
-                        for row in parsed_rows
-                        if isinstance(row, dict)
-                    ]
-                }
-                extraction_source = "claude_image_text_fallback"
-
-    if extracted is None:
-        extraction_source = "openai_image_fallback"
-        try:
-            extracted = await extract_lab_document_with_openai(
-                content=content,
-                media_type=media_type,
-                file_name=file.filename or "lab-image.jpg",
-            )
-        except (OpenAILabExtractionError, ValueError) as exc:
-            raise HTTPException(
-                status_code=422,
-                detail=f"Fotoğraftan laboratuvar sonuçları çıkarılamadı: {exc}",
-            ) from exc
-
-    rows = _lab_inputs_from_extracted(
-        extracted,
-        source_file_name=file.filename,
-        extraction_source=extraction_source,
-    )
-    if not rows:
-        raise HTTPException(
-            status_code=422,
-            detail="Fotoğrafta kullanılabilir laboratuvar sonucu bulunamadı.",
-        )
-    return rows
+        raise HTTPException(status_code=400, detail="Laboratuvar fotoğrafı JPG, PNG veya WEBP olmalıdır.")
+    return await _ingest_lab_upload(file, media_type, rotation=rotation)
 
 
 @router.post("/reports/pdf", response_model=MedicalReportInput)
