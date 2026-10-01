@@ -19,7 +19,7 @@ import {
 } from '../services/simpleCaseClient';
 import { getActivePatientId } from '../services/patientClient';
 import { simpleCaseInputKey } from '../services/simpleCaseInputKey';
-import { classifyLabForDisplay } from '../services/labDisplayClassification';
+import { classifyLabForDisplay, type LabDisplayClassification } from '../services/labDisplayClassification';
 import { mergeLabDocuments } from '../services/labDocumentMerge';
 
 type Step = 'patient' | 'clinical' | 'labs' | 'reports' | 'summary';

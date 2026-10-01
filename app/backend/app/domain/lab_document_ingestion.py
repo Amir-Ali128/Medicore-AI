@@ -39,6 +39,19 @@ def validate_merge(rows: list[RawLabRow], source: SourceContext) -> dict[str, An
         if value is None or value == '':
             value = row.get('normalized_value')
         reasons = list(row.get('ingestion_reasons') or [])
+        confidence = row.get('confidence', row.get('extraction_confidence'))
+        try:
+            if isinstance(confidence, bool):
+                raise ValueError()
+            confidence = 0.85 if confidence is None else float(confidence)
+            if not math.isfinite(confidence) or not 0 <= confidence <= 1:
+                raise ValueError()
+        except (ValueError, TypeError):
+            confidence = 0.0
+            reasons.append('invalid_input_confidence')
+        row['confidence'] = confidence
+        if confidence < 0.85:
+            reasons.append('low_input_confidence')
         if not name:
             reasons.append('missing_parameter_name')
         if value is None or value == '':
@@ -76,12 +89,13 @@ def validate_merge(rows: list[RawLabRow], source: SourceContext) -> dict[str, An
                    source_flag=flag or None, ingestion_reasons=list(dict.fromkeys(reasons)),
                    needs_review=bool(reasons) or bool(row.get('needs_review')))
         key = (name.casefold(), _text(value), _text(row.get('unit')).casefold(),
-               _text(row.get('reference_text')), _text(row.get('reference_min')), _text(row.get('reference_max')),
+               _text(row.get('reference_text')), _text(row.get('reference_min')), _text(row.get('reference_max')), _text(row.get('reference_unit')),
                _text(row.get('measured_at')), flag.casefold())
         location = {'page': raw.source_page, 'row': raw.source_row}
         if key in seen:
             seen[key]['source_locations'].append(location)
             seen[key]['needs_review'] |= row['needs_review']
+            seen[key]['confidence'] = min(seen[key]['confidence'], confidence)
             seen[key]['ingestion_reasons'] = list(dict.fromkeys(seen[key]['ingestion_reasons'] + reasons))
             continue
         row['source_locations'] = [location]

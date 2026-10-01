@@ -39,3 +39,13 @@ test('re-upload deduplication preserves different dates, documents and statuses'
   assert.equal(mergeLabDocuments([first], [{ ...first, measured_at: '2026-10-01' }]).length, 2);
   assert.equal(mergeLabDocuments([first], [{ ...first, source_metadata: { source_sha256: 'same', source_flag: 'High' } }]).length, 2);
 });
+test('re-upload keeps review reasons and document warnings from both readings', () => {
+  const first = row(3, '2 - 5', { source_metadata: { source_sha256: 'same' } });
+  const second = row(3, '2 - 5', { source_metadata: { source_sha256: 'same', needs_review: true,
+    ingestion_reasons: ['low_input_confidence'], document_warnings: ['page_2:blurred_image'] } });
+  const merged = mergeLabDocuments([first], [second]);
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].source_metadata.needs_review, true);
+  assert.deepEqual(merged[0].source_metadata.document_warnings, ['page_2:blurred_image']);
+  assert.equal(classifyLabForDisplay(merged[0]).status, 'unclassified');
+});

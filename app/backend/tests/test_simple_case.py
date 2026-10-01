@@ -330,6 +330,15 @@ def test_ingestion_conflicting_values_survive_and_need_review():
     assert all('conflicting_or_repeated_observation' in r['ingestion_reasons'] for r in case['labs'])
 
 
+@pytest.mark.parametrize('confidence', [0.6, float('nan'), 2, True])
+def test_duplicate_keeps_lower_or_invalid_extraction_confidence(confidence):
+    case = validate_merge([raw_row(), raw_row(page=2, confidence=confidence)], SourceContext('photo'))
+    assert len(case['labs']) == 1
+    assert case['labs'][0]['confidence'] <= 0.6
+    assert case['labs'][0]['needs_review']
+    assert 'low_input_confidence' in case['labs'][0]['ingestion_reasons']
+
+
 def test_ingestion_missing_value_and_name_are_preserved_with_review():
     case = validate_merge([raw_row(None), raw_row('0', raw_parameter_name='', unit=None)], SourceContext('photo'))
     assert len(case['labs']) == 2

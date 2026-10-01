@@ -20,6 +20,7 @@ export function mergeLabDocuments(existing: LabInput[], incoming: LabInput[]): L
     }
     const sources = [
       ...(Array.isArray(duplicate.source_metadata?.source_documents) ? duplicate.source_metadata.source_documents : []),
+      ...(Array.isArray(row.source_metadata?.source_documents) ? row.source_metadata.source_documents : []),
       { file: duplicate.source_metadata?.source_file_name, sha: duplicate.source_metadata?.source_sha256 },
       { file: row.source_metadata?.source_file_name, sha },
     ];
@@ -27,6 +28,14 @@ export function mergeLabDocuments(existing: LabInput[], incoming: LabInput[]): L
       ...duplicate.source_metadata,
       source_documents: sources.filter((item, index) => sources.findIndex((other) => JSON.stringify(item) === JSON.stringify(other)) === index),
       needs_review: Boolean(duplicate.source_metadata?.needs_review || row.source_metadata?.needs_review),
+      ingestion_reasons: [...new Set([
+        ...(Array.isArray(duplicate.source_metadata?.ingestion_reasons) ? duplicate.source_metadata.ingestion_reasons : []),
+        ...(Array.isArray(row.source_metadata?.ingestion_reasons) ? row.source_metadata.ingestion_reasons : []),
+      ])],
+      document_warnings: [...new Set([
+        ...(Array.isArray(duplicate.source_metadata?.document_warnings) ? duplicate.source_metadata.document_warnings : []),
+        ...(Array.isArray(row.source_metadata?.document_warnings) ? row.source_metadata.document_warnings : []),
+      ])],
     };
   }
   return output;
