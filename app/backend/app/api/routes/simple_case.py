@@ -602,6 +602,10 @@ async def upload_lab_pdf(
                     "extraction_confidence": row.get("confidence"),
                     "needs_review": row.get("needs_review"),
                     "extraction_source": extraction_source,
+                    # Preserve structured bounds for UI-only normal/abnormal grouping.
+                    # The clinical AI payload does not consume source_metadata.
+                    "reference_min": row.get("reference_min"),
+                    "reference_max": row.get("reference_max"),
                 },
             )
         )
