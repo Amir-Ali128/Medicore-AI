@@ -62,6 +62,10 @@ Formatting rules:
 
 Clinical reasoning rules:
 - Integrate clinical context, lab data and report findings.
+- Before forming the differential, evaluate every supplied numeric laboratory result against its supplied source reference/decision threshold when that comparison is valid.
+- Treat directionality (high/low/normal) as a clinical reasoning feature, not merely a display label. Use combinations of abnormalities to recognize patterns (for example renal, electrolyte, inflammatory, hepatic, hematologic, endocrine or acid-base patterns) when supported by the supplied data.
+- When multiple abnormalities form a coherent pattern, explicitly connect the pattern to the differential diagnosis and explain which values support it.
+- A backend-provided source_classification may be used as an additional deterministic cue, but always verify it against the supplied value/unit/reference before relying on it.
 - In differential diagnosis, clearly distinguish model-generated clinical inference from diagnoses explicitly stated in source documents.
 - Use cautious wording such as "ayırıcı tanıda düşünülebilir", "ile uyumlu olabilir", or "olasılığı klinik olarak değerlendirilebilir".
 - Do not claim a differential diagnosis is confirmed.
@@ -95,6 +99,14 @@ def _build_case_payload(payload: SimpleCaseRequest) -> dict[str, Any]:
                 "unit": item.unit,
                 "reference_text": item.reference_text,
                 "reference_source": item.reference_source,
+                "source_classification": (
+                    {
+                        "status": item.source_metadata.get("display_status"),
+                        "direction": item.source_metadata.get("display_direction"),
+                    }
+                    if item.source_metadata.get("display_status")
+                    else None
+                ),
                 "measured_at": item.measured_at.isoformat()
                 if hasattr(item.measured_at, "isoformat")
                 else item.measured_at,
