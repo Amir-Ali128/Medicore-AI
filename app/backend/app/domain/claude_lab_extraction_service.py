@@ -45,6 +45,7 @@ _USER_PROMPT = (
     "- Preserve original raw strings where possible in raw_value.\n"
     "- Set normalized_value only when the value is clearly numeric.\n"
     "- Use ISO format YYYY-MM-DD for measured_at.\n"
+    "- If the document explicitly labels a row as high/low/normal (for example Yüksek, Düşük, Normal, H, L, N), copy that label exactly into source_flag. Do not infer source_flag when it is not explicitly printed.\n"
     "- If a field is unclear, use null and set needs_review=true for that item.\n"
     "Return JSON in EXACTLY this schema:\n"
     "{\n"
@@ -59,7 +60,8 @@ _USER_PROMPT = (
     '      "extracted_unit": string | null,\n'
     '      "measured_at": string | null,\n'
     '      "needs_review": boolean,\n'
-    '      "extraction_note": string | null\n'
+    '      "extraction_note": string | null,\n'
+    '      "source_flag": string | null\n'
     "    }\n"
     "  ],\n"
     '  "overall_needs_review": boolean,\n'
