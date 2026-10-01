@@ -14,7 +14,9 @@ from sqlalchemy import delete
 
 from app.api.dependencies import SessionDep
 from app.api.routes.auth import get_current_active_user
+from app.core.config import get_settings
 from app.domain.enums import ResultStatus, TrendStatus, UserRole
+from app.domain.claude_lab_extraction_service import ClaudeLabExtractionService
 from app.domain.canonical_lab_model import SOURCE_FILE_UPLOAD
 from app.domain.fast_pdf_lab_parser import try_fast_pdf_lab_case
 from app.domain.openai_lab_extraction_service import (
@@ -449,13 +451,85 @@ async def _extract_lab_document_with_claude(
     content: bytes,
     file_name: str,
 ) -> dict | None:
-    """Read an image-only lab PDF with the proven scanned-PDF vision path.
+    """Extract lab rows from scanned PDFs while preserving source reference bounds."""
 
-    The generic scanned-report extractor already falls back from OpenAI to the
-    configured Anthropic page-vision reader. We then run the existing
-    deterministic lab text parser over the extracted visible text.
-    """
+    settings = get_settings()
 
+    # Preferred scanned-lab path: Claude's extraction-only schema returns
+    # observed value + exact numeric reference bounds without clinical judgement.
+    if settings.anthropic_api_key:
+        model = (
+            settings.claude_extraction_model
+            or settings.claude_vision_model
+            or ""
+        ).strip()
+        if model:
+            try:
+                service = ClaudeLabExtractionService(
+                    api_key=settings.anthropic_api_key,
+                    model=model,
+                )
+                result = await service.extract_from_bytes(
+                    content,
+                    file_name,
+                    "application/pdf",
+                )
+                rows: list[dict] = []
+                for item in result.values:
+                    name = (item.raw_parameter_name or "").strip()
+                    if not name or item.raw_value in (None, ""):
+                        continue
+
+                    ref_min = item.extracted_reference_min
+                    ref_max = item.extracted_reference_max
+                    reference_text = None
+                    if ref_min is not None and ref_max is not None:
+                        reference_text = f"{ref_min} - {ref_max}"
+                    elif ref_min is not None:
+                        reference_text = f">= {ref_min}"
+                    elif ref_max is not None:
+                        reference_text = f"<= {ref_max}"
+
+                    rows.append(
+                        {
+                            "raw_parameter_name": name,
+                            "raw_value": item.raw_value,
+                            "normalized_value": (
+                                float(item.normalized_value)
+                                if item.normalized_value is not None
+                                else None
+                            ),
+                            "unit": item.unit or item.extracted_unit,
+                            "reference_min": (
+                                float(ref_min) if ref_min is not None else None
+                            ),
+                            "reference_max": (
+                                float(ref_max) if ref_max is not None else None
+                            ),
+                            "reference_text": reference_text,
+                            "measured_at": (
+                                item.measured_at.isoformat()
+                                if item.measured_at is not None
+                                else None
+                            ),
+                            "source_file_name": result.source_file_name or file_name,
+                            "source_page": None,
+                            "needs_review": item.needs_review,
+                            "confidence": result.extraction_confidence,
+                        }
+                    )
+
+                if rows:
+                    return {
+                        "labs": rows,
+                        "warnings": [*result.warnings, "claude_lab_document_extraction"],
+                        "extraction_confidence": result.extraction_confidence,
+                    }
+            except Exception:
+                pass
+
+    # Secondary path: reuse the generic scanned-report reader. This is only a
+    # fallback; its text parser may not preserve every reference interval.
     try:
         extraction = await extract_scanned_medical_report_pdf(
             content=content,
@@ -469,12 +543,11 @@ async def _extract_lab_document_with_claude(
 
     try:
         from app.api.routes.lab_analysis import _parse_lab_values_from_text
-
         parsed_rows = _parse_lab_values_from_text(extraction.deidentified_text)
     except Exception:
         return None
 
-    rows: list[dict] = []
+    rows = []
     for row in parsed_rows:
         if not isinstance(row, dict):
             continue
@@ -483,21 +556,25 @@ async def _extract_lab_document_with_claude(
         if not name or raw_value in (None, ""):
             continue
 
+        ref_min = row.get("reference_min", row.get("extracted_reference_min"))
+        ref_max = row.get("reference_max", row.get("extracted_reference_max"))
+        reference_text = None
+        if ref_min is not None and ref_max is not None:
+            reference_text = f"{ref_min} - {ref_max}"
+        elif ref_min is not None:
+            reference_text = f">= {ref_min}"
+        elif ref_max is not None:
+            reference_text = f"<= {ref_max}"
+
         rows.append(
             {
                 "raw_parameter_name": name,
                 "raw_value": raw_value,
                 "normalized_value": row.get("normalized_value"),
                 "unit": row.get("unit") or row.get("extracted_unit"),
-                "reference_min": row.get(
-                    "reference_min",
-                    row.get("extracted_reference_min"),
-                ),
-                "reference_max": row.get(
-                    "reference_max",
-                    row.get("extracted_reference_max"),
-                ),
-                "reference_text": row.get("reference_text"),
+                "reference_min": ref_min,
+                "reference_max": ref_max,
+                "reference_text": reference_text,
                 "measured_at": row.get("measured_at"),
                 "source_file_name": file_name,
                 "source_page": row.get("source_page"),
@@ -595,6 +672,37 @@ async def upload_lab_pdf(
                     str(row.get("reference_text")).strip()
                     if row.get("reference_text")
                     else None
+                ),
+                source_references=(
+                    [
+                        {
+                            "text": (
+                                str(row.get("reference_text")).strip()
+                                if row.get("reference_text")
+                                else (
+                                    f"{row.get('reference_min')} - {row.get('reference_max')}"
+                                    if row.get("reference_min") is not None
+                                    and row.get("reference_max") is not None
+                                    else (
+                                        f">= {row.get('reference_min')}"
+                                        if row.get("reference_min") is not None
+                                        else f"<= {row.get('reference_max')}"
+                                    )
+                                )
+                            ),
+                            "minimum": row.get("reference_min"),
+                            "maximum": row.get("reference_max"),
+                            "unit": (
+                                str(row.get("unit")).strip()
+                                if row.get("unit")
+                                else None
+                            ),
+                        }
+                    ]
+                    if row.get("reference_min") is not None
+                    or row.get("reference_max") is not None
+                    or row.get("reference_text")
+                    else []
                 ),
                 source_metadata={
                     "source_file_name": row.get("source_file_name") or file.filename,
