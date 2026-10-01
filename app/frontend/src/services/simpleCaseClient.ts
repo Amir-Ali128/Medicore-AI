@@ -152,6 +152,12 @@ export function uploadLabPdf(file: File) {
   return uploadRequest<LabInput[]>('/simple-case/labs/pdf', { body });
 }
 
+export function uploadLabImage(file: File) {
+  const body = new FormData();
+  body.append('file', file);
+  return uploadRequest<LabInput[]>('/simple-case/labs/image', { body });
+}
+
 export function uploadReportPdf(
   file: File,
   reportType: string,
@@ -162,6 +168,18 @@ export function uploadReportPdf(
   body.append('report_type', reportType || 'Tıbbi Rapor');
   if (bodyRegion.trim()) body.append('body_region', bodyRegion.trim());
   return uploadRequest<MedicalReportInput>('/simple-case/reports/pdf', { body });
+}
+
+export function uploadReportImage(
+  file: File,
+  reportType: string,
+  bodyRegion: string,
+) {
+  const body = new FormData();
+  body.append('file', file);
+  body.append('report_type', reportType || 'Tıbbi Rapor');
+  if (bodyRegion.trim()) body.append('body_region', bodyRegion.trim());
+  return uploadRequest<MedicalReportInput>('/simple-case/reports/image', { body });
 }
 
 
