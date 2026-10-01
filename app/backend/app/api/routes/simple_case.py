@@ -23,6 +23,7 @@ from app.domain.openai_lab_extraction_service import (
     OpenAILabExtractionError,
     extract_lab_document_with_openai,
 )
+from app.domain.report_document_image_ai import review_radiology_media
 from app.domain.scanned_medical_report_pdf_ai import (
     ScannedMedicalReportExtractionError,
     extract_scanned_medical_report_pdf,
@@ -528,8 +529,9 @@ async def _extract_lab_document_with_claude(
     *,
     content: bytes,
     file_name: str,
+    media_type: str = "application/pdf",
 ) -> dict | None:
-    """Extract lab rows from scanned PDFs while preserving source reference bounds."""
+    """Extract lab rows from PDF or image while preserving source reference bounds."""
 
     settings = get_settings()
 
@@ -550,7 +552,7 @@ async def _extract_lab_document_with_claude(
                 result = await service.extract_from_bytes(
                     content,
                     file_name,
-                    "application/pdf",
+                    media_type,
                 )
                 rows: list[dict] = []
                 for item in result.values:
@@ -606,8 +608,11 @@ async def _extract_lab_document_with_claude(
             except Exception:
                 pass
 
-    # Secondary path: reuse the generic scanned-report reader. This is only a
-    # fallback; its text parser may not preserve every reference interval.
+    # Secondary path is PDF-only: reuse the generic scanned-report reader.
+    # Images already use the dedicated extraction-only vision path above.
+    if media_type != "application/pdf":
+        return None
+
     try:
         extraction = await extract_scanned_medical_report_pdf(
             content=content,
@@ -674,6 +679,86 @@ async def _extract_lab_document_with_claude(
     }
 
 
+
+def _lab_inputs_from_extracted(
+    extracted: dict,
+    *,
+    source_file_name: str | None,
+    extraction_source: str,
+) -> list[LabResultInput]:
+    rows: list[LabResultInput] = []
+    for row in _dedupe_lab_rows(list(extracted.get("labs") or [])):
+        if not isinstance(row, dict):
+            continue
+
+        test_name = str(
+            row.get("canonical_name")
+            or row.get("raw_parameter_name")
+            or ""
+        ).strip()
+        if not test_name:
+            continue
+
+        raw_value = row.get("raw_value")
+        value = raw_value if raw_value not in (None, "") else row.get("normalized_value")
+        display_status, display_direction = _classify_lab_for_display(row)
+
+        reference_text = (
+            str(row.get("reference_text")).strip()
+            if row.get("reference_text")
+            else None
+        )
+
+        if reference_text:
+            reference_payload_text = reference_text
+        elif row.get("reference_min") is not None and row.get("reference_max") is not None:
+            reference_payload_text = f"{row.get('reference_min')} - {row.get('reference_max')}"
+        elif row.get("reference_min") is not None:
+            reference_payload_text = f">= {row.get('reference_min')}"
+        elif row.get("reference_max") is not None:
+            reference_payload_text = f"<= {row.get('reference_max')}"
+        else:
+            reference_payload_text = None
+
+        rows.append(
+            LabResultInput(
+                test_name=test_name,
+                value=value,
+                unit=(str(row.get("unit")).strip() if row.get("unit") else None),
+                measured_at=_parse_measured_at(row.get("measured_at")),
+                source_reference=reference_text or reference_payload_text,
+                source_references=(
+                    [
+                        {
+                            "text": reference_payload_text,
+                            "minimum": row.get("reference_min"),
+                            "maximum": row.get("reference_max"),
+                            "unit": (
+                                str(row.get("unit")).strip()
+                                if row.get("unit")
+                                else None
+                            ),
+                        }
+                    ]
+                    if reference_payload_text
+                    else []
+                ),
+                source_metadata={
+                    "source_file_name": row.get("source_file_name") or source_file_name,
+                    "source_page": row.get("source_page"),
+                    "extraction_confidence": row.get("confidence"),
+                    "needs_review": row.get("needs_review"),
+                    "extraction_source": extraction_source,
+                    "reference_min": row.get("reference_min"),
+                    "reference_max": row.get("reference_max"),
+                    "display_status": display_status,
+                    "display_direction": display_direction,
+                },
+            )
+        )
+    return rows
+
+
 @router.post("/labs/pdf", response_model=list[LabResultInput])
 async def upload_lab_pdf(
     current_user: Annotated[User, Depends(get_current_active_user)],
@@ -704,6 +789,7 @@ async def upload_lab_pdf(
         extracted = await _extract_lab_document_with_claude(
             content=content,
             file_name=file.filename or "lab.pdf",
+            media_type="application/pdf",
         )
 
     if extracted is None:
@@ -724,81 +810,11 @@ async def upload_lab_pdf(
                 ),
             ) from exc
 
-    rows: list[LabResultInput] = []
-    for row in _dedupe_lab_rows(list(extracted.get("labs") or [])):
-        if not isinstance(row, dict):
-            continue
-
-        test_name = str(
-            row.get("canonical_name")
-            or row.get("raw_parameter_name")
-            or ""
-        ).strip()
-        if not test_name:
-            continue
-
-        raw_value = row.get("raw_value")
-        value = raw_value if raw_value not in (None, "") else row.get("normalized_value")
-
-        display_status, display_direction = _classify_lab_for_display(row)
-
-        rows.append(
-            LabResultInput(
-                test_name=test_name,
-                value=value,
-                unit=(str(row.get("unit")).strip() if row.get("unit") else None),
-                measured_at=_parse_measured_at(row.get("measured_at")),
-                source_reference=(
-                    str(row.get("reference_text")).strip()
-                    if row.get("reference_text")
-                    else None
-                ),
-                source_references=(
-                    [
-                        {
-                            "text": (
-                                str(row.get("reference_text")).strip()
-                                if row.get("reference_text")
-                                else (
-                                    f"{row.get('reference_min')} - {row.get('reference_max')}"
-                                    if row.get("reference_min") is not None
-                                    and row.get("reference_max") is not None
-                                    else (
-                                        f">= {row.get('reference_min')}"
-                                        if row.get("reference_min") is not None
-                                        else f"<= {row.get('reference_max')}"
-                                    )
-                                )
-                            ),
-                            "minimum": row.get("reference_min"),
-                            "maximum": row.get("reference_max"),
-                            "unit": (
-                                str(row.get("unit")).strip()
-                                if row.get("unit")
-                                else None
-                            ),
-                        }
-                    ]
-                    if row.get("reference_min") is not None
-                    or row.get("reference_max") is not None
-                    or row.get("reference_text")
-                    else []
-                ),
-                source_metadata={
-                    "source_file_name": row.get("source_file_name") or file.filename,
-                    "source_page": row.get("source_page"),
-                    "extraction_confidence": row.get("confidence"),
-                    "needs_review": row.get("needs_review"),
-                    "extraction_source": extraction_source,
-                    # Preserve structured bounds for UI-only normal/abnormal grouping.
-                    # The clinical AI payload does not consume source_metadata.
-                    "reference_min": row.get("reference_min"),
-                    "reference_max": row.get("reference_max"),
-                    "display_status": display_status,
-                    "display_direction": display_direction,
-                },
-            )
-        )
+    rows = _lab_inputs_from_extracted(
+        extracted,
+        source_file_name=file.filename,
+        extraction_source=extraction_source,
+    )
 
     if not rows:
         raise HTTPException(
@@ -806,6 +822,61 @@ async def upload_lab_pdf(
             detail="PDF içinde kullanılabilir laboratuvar sonucu bulunamadı.",
         )
 
+    return rows
+
+
+
+@router.post("/labs/image", response_model=list[LabResultInput])
+async def upload_lab_image(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    file: UploadFile = File(...),
+) -> list[LabResultInput]:
+    """Extract laboratory rows from a photographed/scanned lab image."""
+
+    media_type = (file.content_type or "").split(";", 1)[0].lower()
+    if media_type not in {"image/jpeg", "image/png", "image/webp"}:
+        raise HTTPException(
+            status_code=400,
+            detail="Laboratuvar fotoğrafı JPG, PNG veya WEBP olmalıdır.",
+        )
+
+    content = await file.read(_MAX_PDF_BYTES + 1)
+    if not content:
+        raise HTTPException(status_code=400, detail="Fotoğraf dosyası boş.")
+    if len(content) > _MAX_PDF_BYTES:
+        raise HTTPException(status_code=413, detail="Fotoğraf 15 MB sınırını aşıyor.")
+
+    extracted = await _extract_lab_document_with_claude(
+        content=content,
+        file_name=file.filename or "lab-image.jpg",
+        media_type=media_type,
+    )
+    extraction_source = "claude_image_vision"
+
+    if extracted is None:
+        extraction_source = "openai_image_fallback"
+        try:
+            extracted = await extract_lab_document_with_openai(
+                content=content,
+                media_type=media_type,
+                file_name=file.filename or "lab-image.jpg",
+            )
+        except (OpenAILabExtractionError, ValueError) as exc:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Fotoğraftan laboratuvar sonuçları çıkarılamadı: {exc}",
+            ) from exc
+
+    rows = _lab_inputs_from_extracted(
+        extracted,
+        source_file_name=file.filename,
+        extraction_source=extraction_source,
+    )
+    if not rows:
+        raise HTTPException(
+            status_code=422,
+            detail="Fotoğrafta kullanılabilir laboratuvar sonucu bulunamadı.",
+        )
     return rows
 
 
@@ -880,6 +951,93 @@ async def upload_report_pdf(
             "extraction_warnings": warnings,
             "extraction_confidence": confidence,
             "extraction_model": model,
+        },
+    )
+
+
+
+@router.post("/reports/image", response_model=MedicalReportInput)
+async def upload_report_image(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    file: UploadFile = File(...),
+    report_type: str = Form("Tıbbi Rapor"),
+    body_region: str | None = Form(None),
+) -> MedicalReportInput:
+    """Extract a photographed written medical report or review a medical image."""
+
+    media_type = (file.content_type or "").split(";", 1)[0].lower()
+    if media_type not in {"image/jpeg", "image/png", "image/webp"}:
+        raise HTTPException(
+            status_code=400,
+            detail="Tetkik fotoğrafı JPG, PNG veya WEBP olmalıdır.",
+        )
+
+    content = await file.read(_MAX_PDF_BYTES + 1)
+    if not content:
+        raise HTTPException(status_code=400, detail="Fotoğraf dosyası boş.")
+    if len(content) > _MAX_PDF_BYTES:
+        raise HTTPException(status_code=413, detail="Fotoğraf 15 MB sınırını aşıyor.")
+
+    try:
+        review = await review_radiology_media(
+            content=content,
+            media_type=media_type,
+            modality="AUTO",
+            body_part=body_region,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Fotoğraf değerlendirilemedi: {exc}",
+        ) from exc
+
+    if review is None:
+        raise HTTPException(
+            status_code=422,
+            detail="Fotoğraf okuma sağlayıcısı yapılandırılmamış veya dosya desteklenmiyor.",
+        )
+
+    requested_type = report_type.strip() or "Tıbbi Rapor"
+    detected_type = (
+        review.report_type
+        if requested_type == "Tıbbi Rapor" and review.report_type != "UNKNOWN"
+        else requested_type
+    )
+
+    if review.document_kind == "REPORT_DOCUMENT":
+        source_text = review.visible_text or review.result_text or review.summary
+        findings = source_text
+        impression = review.result_text or None
+        source_type = "report_photo_vision"
+    else:
+        source_text = "\n".join(
+            [
+                review.summary,
+                *review.observations,
+                *(["Sınırlılıklar: " + "; ".join(review.limitations)] if review.limitations else []),
+            ]
+        ).strip()
+        findings = source_text
+        impression = review.summary
+        source_type = "medical_image_vision"
+
+    return MedicalReportInput(
+        report_type=detected_type or "Tıbbi Rapor",
+        body_region=(
+            body_region.strip()
+            if body_region
+            else (review.detected_body_part if review.detected_body_part != "OTHER" else None)
+        ),
+        findings=findings,
+        impression=impression,
+        raw_text=source_text,
+        metadata={
+            "source_file_name": file.filename,
+            "source_type": source_type,
+            "document_kind": review.document_kind,
+            "detected_modality": review.detected_modality,
+            "extraction_model": review.model,
+            "limitations": review.limitations,
         },
     )
 
