@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import uuid
 from datetime import UTC, date, datetime
@@ -472,7 +473,10 @@ async def upload_lab_pdf(
 
     if extracted is None:
         extraction_source = "local_ocr"
-        extracted = try_local_ocr_lab_case(
+        # OCR is CPU-bound and uses native ONNX/OpenCV code. Keep it off the
+        # asyncio event loop so heartbeat/auth/API requests stay responsive.
+        extracted = await asyncio.to_thread(
+            try_local_ocr_lab_case,
             content=content,
             file_name=file.filename or "lab.pdf",
         )
