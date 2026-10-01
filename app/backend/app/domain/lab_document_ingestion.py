@@ -12,6 +12,7 @@ from typing import Any
 
 from app.domain.canonical_lab_model import SourceContext, build_canonical_case, content_sha256
 from app.domain.lab_document_normalizer import DocumentPage, normalize_document
+from app.domain.lab_document_errors import LabDocumentReadError
 
 CONTRACT = 'medicore-lab-document-ingestion-v2'
 INGESTION_TIMEOUT_SECONDS = 120.0
@@ -157,7 +158,10 @@ async def ingest_lab_document(
         warnings.extend(f'page_{page.number}:{w}' for w in page_warnings)
         page_reports.append({'page':page.number, 'extracted_rows':len(values), 'visible_rows':expected,
                              'row_count_check':'unknown' if expected is None else 'matched' if expected == len(values) else 'mismatch',
-                             'operations':page.operations, 'warnings':page_warnings})
+                             'operations':page.operations, 'warnings':page_warnings,
+                             'extraction_errors':(result or {}).get('extraction_errors', [])})
+    if not raw_rows:
+        raise LabDocumentReadError(page_reports)
     source = SourceContext('file_upload' if media_type == 'application/pdf' else 'photo', file_name=file_name, source_sha256=content_sha256(content))
     case = validate_merge(raw_rows, source)
     review_codes = {'low_resolution', 'blurred_image', 'low_contrast', 'visible_row_count_mismatch', 'no_lab_rows_on_page_review', 'page_extraction_failed', 'image_completeness_audit_failed'}

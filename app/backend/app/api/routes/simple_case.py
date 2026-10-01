@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import logging
 import uuid
 from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
@@ -30,6 +31,7 @@ from app.domain.scanned_medical_report_pdf_ai import (
 )
 from app.domain.simple_case import case_fingerprint, normalize_simple_case
 from app.domain.lab_document_ingestion import ingest_lab_document
+from app.domain.lab_document_errors import reader_failure
 from app.domain.lab_document_normalizer import DocumentPage
 from app.domain.simple_case_ai import interpret_simple_case
 from app.infrastructure.database.models.lab_report import LabReport
@@ -47,6 +49,7 @@ from app.schemas.simple_case import (
 
 
 router = APIRouter(prefix="/simple-case", tags=["simple-case"])
+logger = logging.getLogger(__name__)
 
 _MAX_PDF_BYTES = 15 * 1024 * 1024
 
@@ -450,161 +453,61 @@ async def ai_interpret_patient_case(
 
 
 async def _extract_lab_document_with_claude(
-    *,
-    content: bytes,
-    file_name: str,
-    media_type: str = "application/pdf",
-) -> dict | None:
-    """Extract lab rows from PDF or image while preserving source reference bounds."""
-
+    *, content: bytes, file_name: str, media_type: str = "application/pdf",
+) -> dict:
+    """Read laboratory rows and retain safe failure diagnostics for fallback."""
     settings = get_settings()
-
-    # Preferred scanned-lab path: Claude's extraction-only schema returns
-    # observed value + exact numeric reference bounds without clinical judgement.
-    if settings.anthropic_api_key:
-        model = (
-            settings.claude_extraction_model
-            or settings.claude_vision_model
-            or ""
-        ).strip()
-        if model:
-            try:
-                service = ClaudeLabExtractionService(
-                    api_key=settings.anthropic_api_key,
-                    model=model,
-                )
-                result = await service.extract_from_bytes(
-                    content,
-                    file_name,
-                    media_type,
-                )
-                rows: list[dict] = []
-                for item in result.values:
-                    name = (item.raw_parameter_name or "").strip()
-
-                    ref_min = item.extracted_reference_min
-                    ref_max = item.extracted_reference_max
-                    reference_text = item.reference_text
-                    if reference_text:
-                        pass
-                    elif ref_min is not None and ref_max is not None:
-                        reference_text = f"{ref_min} - {ref_max}"
-                    elif ref_min is not None:
-                        reference_text = f">= {ref_min}"
-                    elif ref_max is not None:
-                        reference_text = f"<= {ref_max}"
-
-                    rows.append(
-                        {
-                            "raw_parameter_name": name,
-                            "raw_value": item.raw_value,
-                            "normalized_value": (
-                                float(item.normalized_value)
-                                if item.normalized_value is not None
-                                else None
-                            ),
-                            "unit": item.unit or item.extracted_unit,
-                            "reference_unit": item.extracted_unit,
-                            "reference_min": (
-                                float(ref_min) if ref_min is not None else None
-                            ),
-                            "reference_max": (
-                                float(ref_max) if ref_max is not None else None
-                            ),
-                            "reference_text": reference_text,
-                            "measured_at": (
-                                item.measured_at.isoformat()
-                                if item.measured_at is not None
-                                else None
-                            ),
-                            "source_file_name": result.source_file_name or file_name,
-                            "source_page": None,
-                            "needs_review": item.needs_review or result.overall_needs_review,
-                            "confidence": result.extraction_confidence,
-                            "source_flag": item.source_flag,
-                        }
-                    )
-
-                if rows:
-                    return {
-                        "labs": rows,
-                        "warnings": [*result.warnings, "claude_lab_document_extraction"],
-                        "extraction_confidence": result.extraction_confidence,
-                        "visible_row_count": result.visible_row_count,
-                    }
-            except Exception:
-                pass
-
-    # Secondary path is PDF-only: reuse the generic scanned-report reader.
-    # Images already use the dedicated extraction-only vision path above.
-    if media_type != "application/pdf":
-        return None
-
+    model = (settings.claude_extraction_model or settings.claude_vision_model or "").strip()
     try:
-        extraction = await extract_scanned_medical_report_pdf(
-            content=content,
-            file_name=file_name,
-        )
-    except ScannedMedicalReportExtractionError:
-        return None
-
-    if extraction is None or not extraction.deidentified_text.strip():
-        return None
-
-    try:
-        from app.api.routes.lab_analysis import _parse_lab_values_from_text
-        parsed_rows = _parse_lab_values_from_text(extraction.deidentified_text)
-    except Exception:
-        return None
+        service = ClaudeLabExtractionService(api_key=settings.anthropic_api_key, model=model)
+        result = await service.extract_from_bytes(content, file_name, media_type)
+    except Exception as exc:
+        failure = reader_failure("Claude", exc)
+        logger.warning("lab_reader_failed reader=Claude code=%s status=%s", failure['code'], failure['status'])
+        return {"labs": [], "warnings": ["claude_extraction_failed"], "extraction_errors": [failure]}
 
     rows = []
-    for row in parsed_rows:
-        if not isinstance(row, dict):
-            continue
-        name = str(row.get("raw_parameter_name") or "").strip()
-        raw_value = row.get("raw_value")
-        if not name or raw_value in (None, ""):
-            continue
-
-        ref_min = row.get("reference_min", row.get("extracted_reference_min"))
-        ref_max = row.get("reference_max", row.get("extracted_reference_max"))
-        reference_text = None
-        if ref_min is not None and ref_max is not None:
-            reference_text = f"{ref_min} - {ref_max}"
-        elif ref_min is not None:
-            reference_text = f">= {ref_min}"
-        elif ref_max is not None:
-            reference_text = f"<= {ref_max}"
-
-        rows.append(
-            {
-                "raw_parameter_name": name,
-                "raw_value": raw_value,
-                "normalized_value": row.get("normalized_value"),
-                "unit": row.get("unit") or row.get("extracted_unit"),
-                "reference_min": ref_min,
-                "reference_max": ref_max,
-                "reference_text": reference_text,
-                "measured_at": row.get("measured_at"),
-                "source_file_name": file_name,
-                "source_page": row.get("source_page"),
-                "needs_review": True,
-                "confidence": extraction.confidence,
-            }
-        )
-
+    for item in result.values:
+        ref_min, ref_max = item.extracted_reference_min, item.extracted_reference_max
+        reference_text = item.reference_text
+        if not reference_text:
+            if ref_min is not None and ref_max is not None:
+                reference_text = f"{ref_min} - {ref_max}"
+            elif ref_min is not None:
+                reference_text = f">= {ref_min}"
+            elif ref_max is not None:
+                reference_text = f"<= {ref_max}"
+        rows.append({
+            "raw_parameter_name": (item.raw_parameter_name or "").strip(),
+            "raw_value": item.raw_value,
+            "normalized_value": float(item.normalized_value) if item.normalized_value is not None else None,
+            "unit": item.unit or item.extracted_unit,
+            "reference_unit": item.extracted_unit,
+            "reference_min": float(ref_min) if ref_min is not None else None,
+            "reference_max": float(ref_max) if ref_max is not None else None,
+            "reference_text": reference_text,
+            "measured_at": item.measured_at.isoformat() if item.measured_at is not None else None,
+            "source_file_name": result.source_file_name or file_name,
+            "source_page": None,
+            "needs_review": item.needs_review or result.overall_needs_review,
+            "confidence": result.extraction_confidence,
+            "source_flag": item.source_flag,
+        })
+    errors = []
     if not rows:
-        return None
-
+        invalid = any('parse' in warning.lower() or 'schema' in warning.lower() for warning in result.warnings)
+        code = "invalid_response" if invalid else "no_rows"
+        failure = {"reader": "Claude", "code": code, "message": (
+            "Claude: belge okuma yanıtı ayrıştırılamadı." if invalid else
+            "Claude: belgede okunabilir laboratuvar satırı bulunamadı."
+        )}
+        errors.append(failure)
+        logger.warning("lab_reader_failed reader=Claude code=%s", code)
     return {
-        "labs": rows,
-        "warnings": [
-            *extraction.warnings,
-            "scanned_pdf_vision_to_deterministic_lab_parser",
-        ],
-        "extraction_confidence": extraction.confidence,
+        "labs": rows, "warnings": [*result.warnings, "claude_lab_document_extraction"],
+        "extraction_confidence": result.extraction_confidence,
+        "visible_row_count": result.visible_row_count, "extraction_errors": errors,
     }
-
 
 
 def _lab_inputs_from_extracted(
@@ -719,11 +622,20 @@ async def _ingest_lab_upload(file: UploadFile, media_type: str, *, rotation: int
         if result and result.get("labs"):
             return result
         try:
-            return await extract_lab_document_with_openai(
+            fallback = await extract_lab_document_with_openai(
                 content=page.image, media_type="image/png", file_name=file_name,
             )
-        except (OpenAILabExtractionError, ValueError):
-            return {"labs": [], "warnings": ["page_extraction_failed"]}
+        except (OpenAILabExtractionError, ValueError) as exc:
+            failure = reader_failure("OpenAI", exc)
+            logger.warning("lab_reader_failed reader=OpenAI code=%s status=%s page=%s", failure['code'], failure['status'], page.number)
+            return {"labs": [], "warnings": ["page_extraction_failed"],
+                    "extraction_errors": [*(result or {}).get('extraction_errors', []), failure]}
+        if not fallback.get('labs'):
+            return {"labs": [], "warnings": ["page_extraction_failed"], "extraction_errors": [
+                *(result or {}).get('extraction_errors', []),
+                {"reader": "OpenAI", "code": "no_rows", "message": "OpenAI: belgede okunabilir laboratuvar satırı bulunamadı."},
+            ]}
+        return fallback
 
     try:
         extracted = await ingest_lab_document(
