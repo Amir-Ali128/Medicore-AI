@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import io
 import uuid
 from datetime import UTC, date, datetime
@@ -15,10 +14,11 @@ from sqlalchemy import delete
 
 from app.api.dependencies import SessionDep
 from app.api.routes.auth import get_current_active_user
+from app.core.config import get_settings
 from app.domain.enums import ResultStatus, TrendStatus, UserRole
+from app.domain.claude_lab_extraction_service import ClaudeLabExtractionService
 from app.domain.canonical_lab_model import SOURCE_FILE_UPLOAD
 from app.domain.fast_pdf_lab_parser import try_fast_pdf_lab_case
-from app.domain.local_ocr_lab_parser import try_local_ocr_lab_case
 from app.domain.openai_lab_extraction_service import (
     OpenAILabExtractionError,
     extract_lab_document_with_openai,
@@ -446,6 +446,82 @@ async def ai_interpret_patient_case(
     )
 
 
+async def _extract_lab_document_with_claude(
+    *,
+    content: bytes,
+    file_name: str,
+) -> dict | None:
+    """Use the existing Claude PDF/vision extractor without clinical interpretation."""
+
+    settings = get_settings()
+    if not settings.anthropic_api_key or not settings.claude_extraction_model:
+        return None
+
+    try:
+        service = ClaudeLabExtractionService(
+            api_key=settings.anthropic_api_key,
+            model=settings.claude_extraction_model,
+        )
+        result = await service.extract_from_bytes(
+            content,
+            file_name,
+            "application/pdf",
+        )
+    except Exception:
+        return None
+
+    rows: list[dict] = []
+    confidence = result.extraction_confidence
+    for item in result.values:
+        name = (item.raw_parameter_name or "").strip()
+        if not name or item.raw_value in (None, ""):
+            continue
+
+        ref_min = item.extracted_reference_min
+        ref_max = item.extracted_reference_max
+        reference_text = None
+        if ref_min is not None and ref_max is not None:
+            reference_text = f"{ref_min} - {ref_max}"
+        elif ref_min is not None:
+            reference_text = f">= {ref_min}"
+        elif ref_max is not None:
+            reference_text = f"<= {ref_max}"
+
+        rows.append(
+            {
+                "raw_parameter_name": name,
+                "raw_value": item.raw_value,
+                "normalized_value": (
+                    float(item.normalized_value)
+                    if item.normalized_value is not None
+                    else None
+                ),
+                "unit": item.unit or item.extracted_unit,
+                "reference_min": float(ref_min) if ref_min is not None else None,
+                "reference_max": float(ref_max) if ref_max is not None else None,
+                "reference_text": reference_text,
+                "measured_at": (
+                    item.measured_at.isoformat()
+                    if item.measured_at is not None
+                    else None
+                ),
+                "source_file_name": result.source_file_name or file_name,
+                "source_page": None,
+                "needs_review": item.needs_review,
+                "confidence": confidence,
+            }
+        )
+
+    if not rows:
+        return None
+
+    return {
+        "labs": rows,
+        "warnings": [*result.warnings, "claude_pdf_vision_fallback"],
+        "extraction_confidence": confidence,
+    }
+
+
 @router.post("/labs/pdf", response_model=list[LabResultInput])
 async def upload_lab_pdf(
     current_user: Annotated[User, Depends(get_current_active_user)],
@@ -472,11 +548,8 @@ async def upload_lab_pdf(
     extraction_source = "local_pdf_parser"
 
     if extracted is None:
-        extraction_source = "local_ocr"
-        # OCR is CPU-bound and uses native ONNX/OpenCV code. Keep it off the
-        # asyncio event loop so heartbeat/auth/API requests stay responsive.
-        extracted = await asyncio.to_thread(
-            try_local_ocr_lab_case,
+        extraction_source = "claude_pdf_vision"
+        extracted = await _extract_lab_document_with_claude(
             content=content,
             file_name=file.filename or "lab.pdf",
         )
@@ -493,8 +566,8 @@ async def upload_lab_pdf(
             raise HTTPException(
                 status_code=422,
                 detail=(
-                    "PDF yerel parser ve yerel OCR ile güvenilir biçimde "
-                    "ayrıştırılamadı; AI fallback de kullanılamadı: "
+                    "PDF yerel parser ve Claude belge okuma ile güvenilir biçimde "
+                    "ayrıştırılamadı; OpenAI fallback de kullanılamadı: "
                     f"{exc}"
                 ),
             ) from exc
