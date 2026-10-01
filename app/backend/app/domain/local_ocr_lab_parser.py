@@ -11,8 +11,15 @@ No patient document is sent to an external AI provider in this stage.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
+import os
 import re
 from typing import Any
+
+# Keep native OCR libraries from spawning large thread pools on small Render instances.
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
 
 import numpy as np
 
@@ -126,32 +133,54 @@ def _orientation_score(tokens: list[OcrToken]) -> float:
     return header_hits * 20 + min(numeric_hits, 20) + confidence * 10
 
 
-def _ocr_best_orientation(image: np.ndarray) -> list[OcrToken]:
+@lru_cache(maxsize=1)
+def _ocr_engine():
     try:
-        from rapidocr_onnxruntime import RapidOCR
+        import cv2
+        cv2.setNumThreads(1)
+    except Exception:
+        pass
+
+    from rapidocr_onnxruntime import RapidOCR
+
+    # Model initialization is expensive; keep a single process-local instance.
+    return RapidOCR()
+
+
+def _ocr_once(image: np.ndarray) -> list[OcrToken]:
+    try:
+        result = _ocr_engine()(image)
     except Exception:
         return []
+    return _tokens_from_result(result)
 
-    engine = RapidOCR()
-    candidates = (
-        image,
-        np.rot90(image, 1),
-        np.rot90(image, 2),
-        np.rot90(image, 3),
-    )
+
+def _ocr_best_orientation(image: np.ndarray) -> list[OcrToken]:
+    """OCR the minimum number of orientations needed for a table.
+
+    The first successful orientation that exposes all four expected table
+    columns wins. This avoids running four full ONNX passes for every page.
+    """
 
     best_tokens: list[OcrToken] = []
     best_score = -1.0
-    for candidate in candidates:
-        try:
-            result = engine(candidate)
-        except Exception:
+
+    # Most PDFs are upright. The common scanned-photo case is ±90 degrees.
+    # Try 180 only as a last resort.
+    for turns in (0, 1, 3, 2):
+        candidate = image if turns == 0 else np.ascontiguousarray(np.rot90(image, turns))
+        tokens = _ocr_once(candidate)
+        if not tokens:
             continue
-        tokens = _tokens_from_result(result)
+
         score = _orientation_score(tokens)
         if score > best_score:
-            best_score = score
             best_tokens = tokens
+            best_score = score
+
+        if _header_columns(tokens) is not None:
+            return tokens
+
     return best_tokens
 
 
@@ -317,8 +346,8 @@ def try_local_ocr_lab_case(
     all_rows: list[dict[str, Any]] = []
     try:
         for page_number, page in enumerate(document, start=1):
-            # ~180 DPI balances OCR quality and Render memory usage.
-            pixmap = page.get_pixmap(matrix=pymupdf.Matrix(2.5, 2.5), alpha=False)
+            # ~115 DPI is enough for printed lab tables while keeping CPU/RAM low.
+            pixmap = page.get_pixmap(matrix=pymupdf.Matrix(1.6, 1.6), alpha=False)
             image = np.frombuffer(pixmap.samples, dtype=np.uint8).reshape(
                 pixmap.height,
                 pixmap.width,
