@@ -106,6 +106,84 @@ def _dedupe_lab_rows(rows: list[dict]) -> list[dict]:
     return output
 
 
+def _parse_numeric_observation(value):
+    if value is None or isinstance(value, bool):
+        return None
+    text = str(value).strip().replace(",", ".")
+    match = __import__("re").fullmatch(r"\s*([<>]=?)?\s*(-?\d+(?:\.\d+)?)\s*", text)
+    if match is None:
+        return None
+    try:
+        number = float(match.group(2))
+    except ValueError:
+        return None
+    return number, (match.group(1) or None)
+
+
+def _classify_lab_for_display(row: dict) -> tuple[str, str | None]:
+    """Deterministic presentation classification from source-reported bounds only."""
+
+    observed = _parse_numeric_observation(
+        row.get("raw_value")
+        if row.get("raw_value") not in (None, "")
+        else row.get("normalized_value")
+    )
+    if observed is None:
+        return "unclassified", None
+
+    minimum = _decimal_or_none(row.get("reference_min"))
+    maximum = _decimal_or_none(row.get("reference_max"))
+    if minimum is None and maximum is None:
+        reference = str(row.get("reference_text") or "").strip().replace(",", ".")
+        range_match = __import__("re").match(
+            r"^\s*(-?\d+(?:\.\d+)?)\s*[-–—]\s*(-?\d+(?:\.\d+)?)",
+            reference,
+        )
+        if range_match is not None:
+            minimum = _decimal_or_none(range_match.group(1))
+            maximum = _decimal_or_none(range_match.group(2))
+        else:
+            one_sided = __import__("re").match(
+                r"^\s*([<>]=?)\s*(-?\d+(?:\.\d+)?)",
+                reference,
+            )
+            if one_sided is not None:
+                limit = _decimal_or_none(one_sided.group(2))
+                if one_sided.group(1).startswith("<"):
+                    maximum = limit
+                else:
+                    minimum = limit
+
+    if minimum is None and maximum is None:
+        return "unclassified", None
+    if minimum is not None and maximum is not None and minimum > maximum:
+        return "unclassified", None
+
+    value, comparator = observed
+    numeric = Decimal(str(value))
+
+    if comparator is None:
+        if minimum is not None and numeric < minimum:
+            return "abnormal", "low"
+        if maximum is not None and numeric > maximum:
+            return "abnormal", "high"
+        return "normal", None
+
+    # Conservative handling for censored values such as <2 or >90.
+    if comparator.startswith("<"):
+        if minimum is not None and numeric <= minimum:
+            return "abnormal", "low"
+        if minimum is None and maximum is not None and numeric <= maximum:
+            return "normal", None
+        return "unclassified", None
+
+    if maximum is not None and numeric >= maximum:
+        return "abnormal", "high"
+    if maximum is None and minimum is not None and numeric >= minimum:
+        return "normal", None
+    return "unclassified", None
+
+
 def _parse_measured_at(value):
     if value in (None, ""):
         return None
@@ -662,6 +740,8 @@ async def upload_lab_pdf(
         raw_value = row.get("raw_value")
         value = raw_value if raw_value not in (None, "") else row.get("normalized_value")
 
+        display_status, display_direction = _classify_lab_for_display(row)
+
         rows.append(
             LabResultInput(
                 test_name=test_name,
@@ -714,6 +794,8 @@ async def upload_lab_pdf(
                     # The clinical AI payload does not consume source_metadata.
                     "reference_min": row.get("reference_min"),
                     "reference_max": row.get("reference_max"),
+                    "display_status": display_status,
+                    "display_direction": display_direction,
                 },
             )
         )
