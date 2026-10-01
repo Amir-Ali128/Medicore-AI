@@ -29,12 +29,14 @@ class ExtractedLabValue(BaseModel):
     needs_review: bool = False
     extraction_note: str | None = None
     source_flag: str | None = None
+    reference_text: str | None = None
 
 
 class LabExtractionResult(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     values: list[ExtractedLabValue] = Field(default_factory=list)
+    visible_row_count: int | None = Field(default=None, ge=0, le=5000)
     overall_needs_review: bool = False
     extraction_confidence: float | None = None
     source_file_name: str | None = None

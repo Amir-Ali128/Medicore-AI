@@ -51,6 +51,8 @@ _USER_PROMPT = (
     "- Do not diagnose. Do not interpret. Do not recommend treatment.\n"
     "- Extract only what is visibly present in the document.\n"
     "- Do not invent missing values.\n"
+    "- Count visible laboratory rows independently before transcription; return visible_row_count, or null if the count is unclear.\n"
+    "- Copy the printed reference cell exactly into reference_text, including inequalities and textual references.\n"
     "- IMPORTANT: scan the laboratory table from top to bottom and extract EVERY visible parameter row, not only abnormal rows and not only rows with a reference range.\n"
     "- Rows that have only Parametre + Değer, or Parametre + Değer + explicit status (for example Beklenen durum: Yüksek/Düşük/Normal), are valid laboratory rows and MUST be returned.\n"
     "- Preserve derived rows exactly when printed, including ratios and calculated values such as BUN/Kreatinin, Anyon Açığı, Kalsiyum/Fosfor Oranı and GFR.\n"
@@ -62,6 +64,7 @@ _USER_PROMPT = (
     "- If a field is unclear, use null and set needs_review=true for that item.\n"
     "Return JSON in EXACTLY this schema:\n"
     "{\n"
+    '  "visible_row_count": number | null,\n'
     '  "values": [\n'
     "    {\n"
     '      "raw_parameter_name": string | null,\n'
@@ -74,7 +77,8 @@ _USER_PROMPT = (
     '      "measured_at": string | null,\n'
     '      "needs_review": boolean,\n'
     '      "extraction_note": string | null,\n'
-    '      "source_flag": string | null\n'
+    '      "source_flag": string | null,\n'
+    '      "reference_text": string | null\n'
     "    }\n"
     "  ],\n"
     '  "overall_needs_review": boolean,\n'
@@ -138,11 +142,16 @@ class ClaudeLabExtractionService:
         # Photographed tables are the most common place for models to stop early.
         # If only a small subset was returned, run one explicit completeness audit
         # and merge unique rows rather than silently accepting a truncated table.
-        if content_type and content_type.startswith("image/") and len(first.values) <= 8:
-            second = await run(_USER_PROMPT + _IMAGE_AUDIT_PROMPT + (
+        if content_type and content_type.startswith("image/") and (
+            len(first.values) <= 8 or (first.visible_row_count is not None and first.visible_row_count > len(first.values))
+        ):
+            try:
+                second = await run(_USER_PROMPT + _IMAGE_AUDIT_PROMPT + (
                 "\nThe previous extraction may have been incomplete. Perform a fresh full-table pass. "
                 "Return every visible row exactly once."
-            ))
+                ))
+            except Exception:
+                return first.model_copy(update={"overall_needs_review": True, "warnings": [*first.warnings, "image_completeness_audit_failed"]})
 
             merged = []
             seen = set()
@@ -151,6 +160,11 @@ class ClaudeLabExtractionService:
                     (item.raw_parameter_name or "").strip().casefold(),
                     (item.raw_value or "").strip().casefold(),
                     (item.unit or item.extracted_unit or "").strip().casefold(),
+                    str(item.measured_at or ""),
+                    str(item.reference_text or ""),
+                    str(item.extracted_reference_min),
+                    str(item.extracted_reference_max),
+                    str(item.source_flag or ""),
                 )
                 if key in seen:
                     continue
@@ -160,6 +174,7 @@ class ClaudeLabExtractionService:
             first = first.model_copy(
                 update={
                     "values": merged,
+                    "visible_row_count": max((n for n in (first.visible_row_count, second.visible_row_count) if n is not None), default=None),
                     "overall_needs_review": first.overall_needs_review or second.overall_needs_review,
                     "extraction_confidence": max(
                         first.extraction_confidence or 0.0,
