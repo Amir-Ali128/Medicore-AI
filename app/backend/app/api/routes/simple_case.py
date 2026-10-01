@@ -14,9 +14,7 @@ from sqlalchemy import delete
 
 from app.api.dependencies import SessionDep
 from app.api.routes.auth import get_current_active_user
-from app.core.config import get_settings
 from app.domain.enums import ResultStatus, TrendStatus, UserRole
-from app.domain.claude_lab_extraction_service import ClaudeLabExtractionService
 from app.domain.canonical_lab_model import SOURCE_FILE_UPLOAD
 from app.domain.fast_pdf_lab_parser import try_fast_pdf_lab_case
 from app.domain.openai_lab_extraction_service import (
@@ -451,64 +449,60 @@ async def _extract_lab_document_with_claude(
     content: bytes,
     file_name: str,
 ) -> dict | None:
-    """Use the existing Claude PDF/vision extractor without clinical interpretation."""
+    """Read an image-only lab PDF with the proven scanned-PDF vision path.
 
-    settings = get_settings()
-    if not settings.anthropic_api_key or not settings.claude_extraction_model:
+    The generic scanned-report extractor already falls back from OpenAI to the
+    configured Anthropic page-vision reader. We then run the existing
+    deterministic lab text parser over the extracted visible text.
+    """
+
+    try:
+        extraction = await extract_scanned_medical_report_pdf(
+            content=content,
+            file_name=file_name,
+        )
+    except ScannedMedicalReportExtractionError:
+        return None
+
+    if extraction is None or not extraction.deidentified_text.strip():
         return None
 
     try:
-        service = ClaudeLabExtractionService(
-            api_key=settings.anthropic_api_key,
-            model=settings.claude_extraction_model,
-        )
-        result = await service.extract_from_bytes(
-            content,
-            file_name,
-            "application/pdf",
-        )
+        from app.api.routes.lab_analysis import _parse_lab_values_from_text
+
+        parsed_rows = _parse_lab_values_from_text(extraction.deidentified_text)
     except Exception:
         return None
 
     rows: list[dict] = []
-    confidence = result.extraction_confidence
-    for item in result.values:
-        name = (item.raw_parameter_name or "").strip()
-        if not name or item.raw_value in (None, ""):
+    for row in parsed_rows:
+        if not isinstance(row, dict):
             continue
-
-        ref_min = item.extracted_reference_min
-        ref_max = item.extracted_reference_max
-        reference_text = None
-        if ref_min is not None and ref_max is not None:
-            reference_text = f"{ref_min} - {ref_max}"
-        elif ref_min is not None:
-            reference_text = f">= {ref_min}"
-        elif ref_max is not None:
-            reference_text = f"<= {ref_max}"
+        name = str(row.get("raw_parameter_name") or "").strip()
+        raw_value = row.get("raw_value")
+        if not name or raw_value in (None, ""):
+            continue
 
         rows.append(
             {
                 "raw_parameter_name": name,
-                "raw_value": item.raw_value,
-                "normalized_value": (
-                    float(item.normalized_value)
-                    if item.normalized_value is not None
-                    else None
+                "raw_value": raw_value,
+                "normalized_value": row.get("normalized_value"),
+                "unit": row.get("unit") or row.get("extracted_unit"),
+                "reference_min": row.get(
+                    "reference_min",
+                    row.get("extracted_reference_min"),
                 ),
-                "unit": item.unit or item.extracted_unit,
-                "reference_min": float(ref_min) if ref_min is not None else None,
-                "reference_max": float(ref_max) if ref_max is not None else None,
-                "reference_text": reference_text,
-                "measured_at": (
-                    item.measured_at.isoformat()
-                    if item.measured_at is not None
-                    else None
+                "reference_max": row.get(
+                    "reference_max",
+                    row.get("extracted_reference_max"),
                 ),
-                "source_file_name": result.source_file_name or file_name,
-                "source_page": None,
-                "needs_review": item.needs_review,
-                "confidence": confidence,
+                "reference_text": row.get("reference_text"),
+                "measured_at": row.get("measured_at"),
+                "source_file_name": file_name,
+                "source_page": row.get("source_page"),
+                "needs_review": True,
+                "confidence": extraction.confidence,
             }
         )
 
@@ -517,8 +511,11 @@ async def _extract_lab_document_with_claude(
 
     return {
         "labs": rows,
-        "warnings": [*result.warnings, "claude_pdf_vision_fallback"],
-        "extraction_confidence": confidence,
+        "warnings": [
+            *extraction.warnings,
+            "scanned_pdf_vision_to_deterministic_lab_parser",
+        ],
+        "extraction_confidence": extraction.confidence,
     }
 
 
