@@ -12,9 +12,12 @@ from sqlalchemy.exc import IntegrityError
 from app.api.dependencies import SessionDep
 from app.api.routes.auth import get_current_active_user
 from app.domain.enums import UserRole
+from app.domain.patient_clinical_context import normalize_patient_clinical, patient_clinical_context
+from app.domain.simple_case import case_fingerprint
 from app.infrastructure.database.models.patient import Patient
 from app.infrastructure.database.models.user import User
 from app.schemas.patient_record import PatientRecordResponse, PatientRecordUpsert
+from app.schemas.simple_case import VitalSigns
 
 router = APIRouter(prefix="/patients", tags=["patients"])
 
@@ -24,7 +27,7 @@ def _metadata_from_payload(
     *,
     owner_user_id: uuid.UUID,
 ) -> dict:
-    return {
+    metadata = {
         "age": payload.age,
         "height_cm": payload.height_cm,
         "weight_kg": payload.weight_kg,
@@ -32,6 +35,10 @@ def _metadata_from_payload(
         "record_source": "medicore_frontend",
         "owner_user_id": str(owner_user_id),
     }
+    if 'vital_signs' in payload.clinical_context:
+        metadata.pop('height_cm')
+        metadata.pop('weight_kg')
+    return metadata
 
 
 def _ensure_patient_access(patient: Patient, current_user: User) -> None:
@@ -173,15 +180,78 @@ async def update_patient_record(
     )
 
     patient.protocol_no = payload.protocol_no
-    patient.sex = payload.sex
+    if "sex" in payload.model_fields_set:
+        patient.sex = payload.sex
+    metadata = dict(patient.metadata_json or {})
+    previous = patient_clinical_context({**metadata, "sex": str(patient.sex)})
     updated_metadata = _metadata_from_payload(payload, owner_user_id=current_user.id)
     # Editing demographics must never transfer ownership to the editor.
     updated_metadata.pop("owner_user_id")
-    patient.metadata_json = {
-        **dict(patient.metadata_json or {}),
-        **updated_metadata,
-    }
-    patient.metadata_json.pop("full_name", None)
+    for field in ("age", "height_cm", "weight_kg", "clinical_context"):
+        if field not in payload.model_fields_set:
+            updated_metadata.pop(field, None)
+    metadata.update(updated_metadata)
+    metadata.pop("full_name", None)
+
+    clinical_fields = {"clinical_context", "age", "sex", "height_cm", "weight_kg"}
+    if clinical_fields & payload.model_fields_set:
+        context_updated = "clinical_context" in payload.model_fields_set
+        clinical = (
+            normalize_patient_clinical(payload.clinical_context, {**metadata, "sex": str(patient.sex)})
+            if context_updated else previous
+        )
+        if context_updated and "vital_signs" not in payload.clinical_context:
+            # Older clients may edit history without knowing the new vital fields.
+            # Only explicitly supplied legacy measurements replace stored values.
+            raw = payload.clinical_context
+            legacy_fields = {
+                "patient_information": {"height_cm": "height_cm", "weight_kg": "weight_kg"},
+                "physical_exam": {
+                    "blood_pressure_systolic": "systolic_bp",
+                    "blood_pressure_diastolic": "diastolic_bp",
+                    "pulse_bpm": "heart_rate", "respiratory_rate": "respiratory_rate",
+                    "temperature_c": "temperature", "oxygen_saturation_percent": "spo2",
+                },
+            }
+            updates = {}
+            for section, fields in legacy_fields.items():
+                values = raw.get(section)
+                if isinstance(values, dict):
+                    for old, new in fields.items():
+                        if old in values:
+                            updates[new] = getattr(clinical.vital_signs or VitalSigns(), new)
+            vitals = previous.vital_signs or VitalSigns()
+            clinical = clinical.model_copy(update={"vital_signs": vitals.model_copy(update=updates)})
+        if not context_updated or "vital_signs" not in payload.clinical_context:
+            updates = {
+                field: getattr(payload, field) for field in ("height_cm", "weight_kg")
+                if field in payload.model_fields_set
+            }
+            if updates:
+                clinical = clinical.model_copy(update={
+                    "vital_signs": (clinical.vital_signs or VitalSigns()).model_copy(update=updates),
+                })
+        clinical = clinical.model_copy(update={
+            field: getattr(payload, field) for field in ("age", "sex")
+            if field in payload.model_fields_set
+        })
+        # Keep the legacy context readable, with one structured measurement source.
+        stored_context = metadata.get("clinical_context")
+        raw_context = dict(stored_context) if isinstance(stored_context, dict) else {}
+        raw_context.update(age=clinical.age, sex=str(clinical.sex),
+                           vital_signs=clinical.vital_signs.model_dump(mode="json") if clinical.vital_signs else None)
+        metadata["clinical_context"] = raw_context
+        metadata["age"] = clinical.age
+        metadata.pop("height_cm", None)
+        metadata.pop("weight_kg", None)
+        snapshot = metadata.get("simple_case")
+        if isinstance(snapshot, dict):
+            snapshot = {**snapshot, "clinical": clinical.model_dump(mode="json")}
+            metadata["simple_case"] = snapshot
+            report = metadata.get("simple_case_ai_report")
+            if isinstance(report, dict) and report.get("case_fingerprint") != case_fingerprint(snapshot):
+                metadata.pop("simple_case_ai_report", None)
+    patient.metadata_json = metadata
 
     try:
         await session.commit()

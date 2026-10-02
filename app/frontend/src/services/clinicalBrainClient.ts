@@ -6,6 +6,7 @@ import {
   type LabAnalysisResult,
 } from './labAnalysisClient';
 import { getPatientRecord } from './patientClient';
+import { legacyClinicalIntake, recordClinical } from './clinicalRecord';
 import {
   ACTIVE_PATIENT_ID_KEY,
   isAnalyzableRadiologyReport,
@@ -260,7 +261,7 @@ async function restoreBackendSources(input: ClinicalBrainInput): Promise<Clinica
   if (!hasMeaningfulClinicalContext(clinicalContext)) {
     try {
       const patient = await getPatientRecord(activePatientId);
-      clinicalContext = patient.metadata_json?.clinical_context ?? clinicalContext;
+      clinicalContext = legacyClinicalIntake(recordClinical(patient), patient.metadata_json?.clinical_context);
     } catch {
       // Keep the browser draft when the persistent patient record cannot be restored.
     }

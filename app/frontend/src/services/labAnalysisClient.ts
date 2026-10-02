@@ -190,6 +190,7 @@ export type ClinicalAttachmentInput = {
 };
 
 export type ClinicalIntakeInput = {
+  vital_signs?: import('./simpleCaseClient').VitalSigns | null;
   patient_information: {
     full_name: string | null;
     age: number | null;

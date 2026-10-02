@@ -16,7 +16,8 @@ from sqlalchemy import delete
 from app.api.dependencies import SessionDep
 from app.api.routes.auth import get_current_active_user
 from app.core.config import get_settings
-from app.domain.enums import ResultStatus, TrendStatus, UserRole
+from app.domain.enums import ResultStatus, Sex, TrendStatus, UserRole
+from app.domain.patient_clinical_context import patient_clinical_context
 from app.domain.claude_lab_extraction_service import ClaudeLabExtractionService
 from app.domain.canonical_lab_model import SOURCE_FILE_UPLOAD
 from app.domain.fast_pdf_lab_parser import try_fast_pdf_lab_case
@@ -367,6 +368,9 @@ async def get_saved_simple_case(
         "protocol_no": patient.protocol_no,
         "sex": str(patient.sex.value if hasattr(patient.sex, "value") else patient.sex),
         "age": metadata.get("age"),
+        "clinical": patient_clinical_context({
+            **metadata, "sex": str(patient.sex),
+        }).model_dump(mode="json"),
         "simple_case": metadata.get("simple_case"),
         "ai_report": ai_report,
     }
@@ -850,6 +854,16 @@ async def save_case_for_patient(
         if owner_user_id != str(current_user.id):
             raise HTTPException(status_code=404, detail="Hasta kaydı bulunamadı.")
 
+    previous = patient_clinical_context({**(patient.metadata_json or {}), "sex": str(patient.sex)})
+    # Additive fields must survive requests from clients that do not know them.
+    preserved = {
+        name: getattr(previous, name) for name in previous.__class__.model_fields
+        if name not in payload.clinical.model_fields_set
+    }
+    if preserved:
+        payload = payload.model_copy(update={
+            "clinical": payload.clinical.model_copy(update=preserved),
+        })
     normalized = normalize_simple_case(payload)
     await _persist_simple_case_sources(
         patient_id=patient_id,
@@ -868,6 +882,11 @@ async def save_case_for_patient(
     metadata["clinical_context"] = normalized.clinical.model_dump(mode="json")
     metadata["simple_case"] = case_snapshot
     metadata["simple_case_contract_version"] = normalized.contract_version
+    metadata["age"] = normalized.clinical.age
+    # Legacy height/weight have now been read into the canonical measurements.
+    metadata.pop("height_cm", None)
+    metadata.pop("weight_kg", None)
+    patient.sex = Sex(normalized.clinical.sex)
     patient.metadata_json = metadata
 
     await session.commit()

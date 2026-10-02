@@ -13,10 +13,32 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 SexValue = Literal["female", "male", "other", "unknown"]
+
+
+class VitalSigns(BaseModel):
+    """Observed numeric measurements in fixed units; no inferred values."""
+    model_config = ConfigDict(allow_inf_nan=False)
+
+    systolic_bp: float | None = Field(default=None, ge=0, le=400)
+    diastolic_bp: float | None = Field(default=None, ge=0, le=300)
+    heart_rate: float | None = Field(default=None, ge=0, le=350)
+    respiratory_rate: float | None = Field(default=None, ge=0, le=120)
+    temperature: float | None = Field(default=None, ge=10, le=50)
+    spo2: float | None = Field(default=None, ge=0, le=100)
+    height_cm: float | None = Field(default=None, ge=10, le=300)
+    weight_kg: float | None = Field(default=None, ge=0.1, le=700)
+    glucose_mg_dl: float | None = Field(default=None, ge=0, le=2000)
+
+    @field_validator('*', mode='before')
+    @classmethod
+    def reject_boolean_measurement(cls, value):
+        if isinstance(value, bool):
+            raise ValueError('Vital measurements must be numeric, not boolean.')
+        return value
 
 
 class ClinicalContext(BaseModel):
@@ -26,6 +48,7 @@ class ClinicalContext(BaseModel):
     history: list[str] = Field(default_factory=list)
     medications: list[str] = Field(default_factory=list)
     notes: str | None = None
+    vital_signs: VitalSigns | None = None
 
 
 class LabReferenceRange(BaseModel):

@@ -17,10 +17,13 @@ import {
   type SimpleCaseRequest,
   type SimpleCaseResponse,
 } from '../services/simpleCaseClient';
-import { getActivePatientId } from '../services/patientClient';
+import { getActivePatientId, setActiveClinicalDraft } from '../services/patientClient';
 import { simpleCaseInputKey } from '../services/simpleCaseInputKey';
 import { classifyLabForDisplay, type LabDisplayClassification } from '../services/labDisplayClassification';
 import { mergeLabDocuments } from '../services/labDocumentMerge';
+import { normalizeClinical, parseVitalDraft, vitalDraft, type VitalDraft } from '../services/clinicalRecord';
+import ClinicalHistorySummary from '../components/clinical/ClinicalHistorySummary';
+import VitalSignsFields from '../components/clinical/VitalSignsFields';
 
 type Step = 'patient' | 'clinical' | 'labs' | 'reports' | 'summary';
 
@@ -142,6 +145,7 @@ export default function SimpleCaseWorkspacePage() {
   const [history, setHistory] = useState('');
   const [medications, setMedications] = useState('');
   const [notes, setNotes] = useState('');
+  const [vitalValues, setVitalValues] = useState<VitalDraft>(() => vitalDraft());
 
   const [labs, setLabs] = useState<LabInput[]>([]);
   const [labBusy, setLabBusy] = useState(false);
@@ -182,7 +186,7 @@ export default function SimpleCaseWorkspacePage() {
         setProtocolNo(saved.protocol_no);
 
         const simpleCase = saved.simple_case;
-        const clinical = simpleCase?.clinical;
+        const clinical = normalizeClinical(saved.clinical ?? simpleCase?.clinical, { age: saved.age, sex: saved.sex });
 
         setAge(
           clinical?.age !== null && clinical?.age !== undefined
@@ -195,7 +199,9 @@ export default function SimpleCaseWorkspacePage() {
         setComplaints((clinical?.complaints ?? []).join('\n'));
         setHistory((clinical?.history ?? []).join('\n'));
         setMedications((clinical?.medications ?? []).join('\n'));
-        setNotes(clinical?.notes ?? '');
+        setNotes(clinical.notes ?? '');
+        setVitalValues(vitalDraft(clinical.vital_signs));
+        setActiveClinicalDraft(saved.patient_id, saved.protocol_no, clinical);
 
         const restoredLabs: LabInput[] = (simpleCase?.labs ?? []).map((item) => ({
           test_name: item.test_name,
@@ -213,7 +219,7 @@ export default function SimpleCaseWorkspacePage() {
         if (simpleCase) {
           setResult({
             contract_version: simpleCase.contract_version,
-            clinical: simpleCase.clinical,
+            clinical,
             labs: simpleCase.labs.map((item) => ({
               test_name: item.test_name,
               value: item.value,
@@ -233,7 +239,7 @@ export default function SimpleCaseWorkspacePage() {
         setAiResult(saved.ai_report && simpleCase ? {
           report: saved.ai_report,
           inputKey: simpleCaseInputKey(saved.patient_id, {
-            clinical: simpleCase.clinical,
+            clinical,
             labs: restoredLabs,
             reports: simpleCase.reports,
           }),
@@ -271,11 +277,12 @@ export default function SimpleCaseWorkspacePage() {
         history: splitLines(history),
         medications: splitLines(medications),
         notes: notes.trim() || null,
+        vital_signs: parseVitalDraft(vitalValues).values,
       },
       labs,
       reports,
     }),
-    [age, sex, complaints, history, medications, notes, labs, reports],
+    [age, sex, complaints, history, medications, notes, vitalValues, labs, reports],
   );
 
   // Hide responses produced for earlier inputs, including late AI responses.
@@ -318,7 +325,8 @@ export default function SimpleCaseWorkspacePage() {
 
   const completed = {
     patient: Boolean(patientId),
-    clinical: Boolean(complaints.trim() || history.trim() || medications.trim() || notes.trim()),
+    clinical: Boolean(complaints.trim() || history.trim() || medications.trim() || notes.trim()
+      || Object.values(payload.clinical.vital_signs ?? {}).some((value) => value !== null)),
     labs: labs.length > 0,
     reports: reports.length > 0,
     summary: Boolean(result || saved),
@@ -339,6 +347,7 @@ export default function SimpleCaseWorkspacePage() {
         clinical_context: payload.clinical,
       });
       setPatientId(patient.id);
+      setActiveClinicalDraft(patient.id, patient.protocol_no, payload.clinical);
       setSaved(false);
       setStep('clinical');
     } catch (err) {
@@ -408,7 +417,16 @@ export default function SimpleCaseWorkspacePage() {
     }
   }
 
+  function validateVitals() {
+    const { errors } = parseVitalDraft(vitalValues);
+    if (!errors.length) return true;
+    setError(errors.join(' '));
+    setStep('clinical');
+    return false;
+  }
+
   async function runAIInterpretation() {
+    if (!validateVitals()) return;
     setAiBusy(true);
     setError('');
     setAiReportWarning('');
@@ -433,7 +451,8 @@ export default function SimpleCaseWorkspacePage() {
     }
   }
 
-  async function saveCase() {
+  async function persistCase(nextStep: Step) {
+    if (!validateVitals()) return;
     if (!patientId) {
       setError('Önce hasta kaydını oluştur.');
       setStep('patient');
@@ -444,13 +463,18 @@ export default function SimpleCaseWorkspacePage() {
     try {
       const normalized = await saveSimpleCase(patientId, payload);
       setResult(normalized);
+      setActiveClinicalDraft(patientId, protocolNo, normalized.clinical);
       setSaved(true);
-      setStep('summary');
+      setStep(nextStep);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Vaka kaydedilemedi.');
     } finally {
       setSaving(false);
     }
+  }
+
+  async function saveCase() {
+    await persistCase('summary');
   }
 
   return (
@@ -627,12 +651,18 @@ export default function SimpleCaseWorkspacePage() {
                 </label>
               </div>
 
+              <VitalSignsFields
+                values={vitalValues}
+                onChange={(values) => { setVitalValues(values); setSaved(false); }}
+              />
+
               <button
                 type="button"
-                onClick={() => setStep('labs')}
-                className="mt-5 rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white"
+                onClick={() => void persistCase('labs')}
+                disabled={saving}
+                className="mt-5 rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white disabled:opacity-40"
               >
-                Klinik bilgiyi kaydet ve devam et
+                {saving ? 'Kaydediliyor…' : 'Klinik bilgiyi kaydet ve devam et'}
               </button>
             </div>
           ) : null}
@@ -964,6 +994,11 @@ export default function SimpleCaseWorkspacePage() {
                   </div>
                 ))}
               </div>
+
+              <section className="rounded-3xl border border-slate-200 p-5">
+                <h3 className="mb-4 font-semibold text-slate-950">Klinik Öykü</h3>
+                <ClinicalHistorySummary clinical={payload.clinical} />
+              </section>
 
               <div className="rounded-3xl border border-slate-200 p-5">
                 <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">

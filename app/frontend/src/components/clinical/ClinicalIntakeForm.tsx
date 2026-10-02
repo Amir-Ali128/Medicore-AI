@@ -106,6 +106,7 @@ function normalizeStoredClinicalIntake(raw: unknown): ClinicalIntakeInput | null
       ...(source.imaging_results ?? {}),
     },
     attachments: Array.isArray(source.attachments) ? source.attachments : [],
+    vital_signs: source.vital_signs,
   };
 }
 

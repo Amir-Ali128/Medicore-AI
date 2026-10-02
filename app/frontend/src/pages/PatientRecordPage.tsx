@@ -7,6 +7,7 @@ import ClinicalIntakeForm, {
 import ManualLabEntrySection from '../components/lab/ManualLabEntrySection';
 import SectionCard from '../components/ui/SectionCard';
 import { createAnonymizedClinicalFixture } from '../fixtures/anonymizedClinicalFixture';
+import { legacyClinicalIntake, recordClinical } from '../services/clinicalRecord';
 import { getStoredUser } from '../services/authClient';
 import type { ClinicalIntakeInput, LabReportSummary } from '../services/labAnalysisClient';
 import {
@@ -170,7 +171,8 @@ export default function PatientRecordPage() {
         const latest = records.find(
           (record) => Boolean(record.metadata_json?.clinical_context),
         );
-        const storedIntake = latest?.metadata_json?.clinical_context;
+        const storedContext = latest?.metadata_json?.clinical_context;
+        const storedIntake = latest && storedContext ? legacyClinicalIntake(recordClinical(latest), storedContext) : null;
         if (!latest || !storedIntake) return;
 
         activatePatientRecord(latest);

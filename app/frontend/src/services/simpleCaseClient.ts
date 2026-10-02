@@ -2,6 +2,17 @@ import { API_BASE_URL, apiClient } from './apiClient';
 import { getAccessToken } from './authClient';
 
 export type SexValue = 'female' | 'male' | 'other' | 'unknown';
+export type VitalSigns = {
+  systolic_bp: number | null;
+  diastolic_bp: number | null;
+  heart_rate: number | null;
+  respiratory_rate: number | null;
+  temperature: number | null;
+  spo2: number | null;
+  height_cm: number | null;
+  weight_kg: number | null;
+  glucose_mg_dl: number | null;
+};
 
 export type ClinicalContext = {
   age: number | null;
@@ -10,6 +21,7 @@ export type ClinicalContext = {
   history: string[];
   medications: string[];
   notes: string | null;
+  vital_signs?: VitalSigns | null;
 };
 
 export type LabReference = {
@@ -72,6 +84,7 @@ export type SavedSimpleCase = {
   protocol_no: string;
   sex: SexValue;
   age: number | null;
+  clinical?: ClinicalContext;
   simple_case: {
     contract_version: 'medicore-simple-case-v1';
     clinical: ClinicalContext;

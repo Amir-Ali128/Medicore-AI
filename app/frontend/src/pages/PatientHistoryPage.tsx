@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import ClinicalHistorySummary from '../components/clinical/ClinicalHistorySummary';
+import { clinicalRows, formatVitals, legacyClinicalIntake, recordClinical } from '../services/clinicalRecord';
 
 import type { LabReportSummary } from '../services/labAnalysisClient';
 import {
@@ -69,43 +71,26 @@ function clip(value: string | null | undefined, max = 145) {
 }
 
 function recordDisplayName(record: PatientRecord) {
-  const name = record.metadata_json?.clinical_context?.patient_information?.full_name?.trim();
+  const name = legacyClinicalIntake(recordClinical(record), record.metadata_json?.clinical_context).patient_information.full_name?.trim();
   return name || `Hasta ${record.protocol_no}`;
 }
 
 function recordSearchText(record: PatientRecord) {
-  const context = record.metadata_json?.clinical_context;
-  const patient = context?.patient_information;
+  const clinical = recordClinical(record);
   return [
     record.protocol_no,
     record.external_ref,
     recordDisplayName(record),
-    patient?.age,
-    patient?.height_cm,
-    patient?.weight_kg,
+    clinical.age,
+    clinical.vital_signs?.height_cm,
+    clinical.vital_signs?.weight_kg,
     sexLabel(record.sex),
-    context?.presenting_complaint?.chief_complaint,
-    context?.clinical_history_details?.current_medical_conditions,
-    context?.clinical_history_details?.past_medical_history,
-    context?.clinical_history_details?.medications,
+    ...clinicalRows(clinical).map(([, value]) => value),
+    ...formatVitals(clinical.vital_signs),
   ]
     .filter((value) => value !== null && value !== undefined)
     .join(' ')
     .toLocaleLowerCase('tr-TR');
-}
-
-function clinicalRows(record: PatientRecord) {
-  const context = record.metadata_json?.clinical_context;
-  if (!context) return [];
-
-  return [
-    ['Şikâyet', clip(context.presenting_complaint?.chief_complaint)],
-    ['Mevcut hastalıklar', clip(context.clinical_history_details?.current_medical_conditions)],
-    ['Geçmiş öykü', clip(context.clinical_history_details?.past_medical_history)],
-    ['İlaçlar', clip(context.clinical_history_details?.medications)],
-    ['Alerjiler', clip(context.clinical_history_details?.allergies)],
-    ['Muayene', clip(context.physical_exam?.examination_findings)],
-  ].filter((item): item is [string, string] => Boolean(item[1]));
 }
 
 function labTitle(report: LabReportSummary) {
@@ -151,12 +136,10 @@ function RecordCard({
   const [labError, setLabError] = useState('');
   const [showAllLabs, setShowAllLabs] = useState(false);
   const [showAllRadiology, setShowAllRadiology] = useState(false);
-  const context = record.metadata_json?.clinical_context;
-  const patient = context?.patient_information;
-  const age = patient?.age ?? record.metadata_json?.age ?? null;
-  const height = patient?.height_cm ?? record.metadata_json?.height_cm ?? null;
-  const weight = patient?.weight_kg ?? record.metadata_json?.weight_kg ?? null;
-  const clinical = clinicalRows(record);
+  const clinical = recordClinical(record);
+  const age = clinical.age;
+  const height = clinical.vital_signs?.height_cm ?? null;
+  const weight = clinical.vital_signs?.weight_kg ?? null;
   const labs = [...(attachments?.labReports ?? [])].sort(
     (first, second) =>
       historyTime(second.report_date || second.created_at) -
@@ -258,17 +241,7 @@ function RecordCard({
 
         <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 sm:col-span-1 xl:col-span-1">
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Klinik öykü</p>
-          {clinical.length > 0 ? (
-            <div className="mt-3 space-y-2">
-              {clinical.slice(0, 4).map(([label, value]) => (
-                <p key={label} className="text-xs leading-5 text-slate-700">
-                  <span className="font-semibold">{label}:</span> {value}
-                </p>
-              ))}
-            </div>
-          ) : (
-            <p className="mt-3 text-sm text-slate-500">Henüz klinik bilgi eklenmedi.</p>
-          )}
+          <ClinicalHistorySummary clinical={clinical} />
         </div>
 
         <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-4">

@@ -1,5 +1,7 @@
 import { getAccessToken } from './authClient';
 import type { ClinicalIntakeInput } from './labAnalysisClient';
+import type { ClinicalContext } from './simpleCaseClient';
+import { legacyClinicalIntake, normalizeClinical, recordClinical } from './clinicalRecord';
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000';
@@ -7,11 +9,13 @@ const API_BASE_URL =
 export const ACTIVE_PATIENT_ID_KEY = 'medicore:activePatientId';
 export const ACTIVE_PATIENT_PROTOCOL_KEY = 'medicore:activePatientProtocol';
 export const ACTIVE_CLINICAL_INTAKE_KEY = 'medicore:activeClinicalIntake';
+const SYNCED_CLINICAL_DRAFT_KEY = 'medicore:syncedClinicalDraft';
 
 const PATIENT_WORKFLOW_KEYS = [
   ACTIVE_PATIENT_ID_KEY,
   ACTIVE_PATIENT_PROTOCOL_KEY,
   ACTIVE_CLINICAL_INTAKE_KEY,
+  SYNCED_CLINICAL_DRAFT_KEY,
   'medicore:lastPatientAge',
   'medicore:lastPatientSex',
   'medicore:lastPatientDisplayName',
@@ -27,12 +31,13 @@ export type PatientRecord = {
   sex: string;
   date_of_birth: string | null;
   is_pregnant: boolean | null;
+  clinical?: ClinicalContext;
   metadata_json: {
     full_name?: string | null;
     age?: number | null;
     height_cm?: number | null;
     weight_kg?: number | null;
-    clinical_context?: ClinicalIntakeInput;
+    clinical_context?: ClinicalIntakeInput | ClinicalContext;
     owner_user_id?: string;
     [key: string]: unknown;
   };
@@ -59,13 +64,19 @@ function createInternalIndividualReference(): string {
 
 function payloadFromIntake(intake: ClinicalIntakeInput, protocolNo: string) {
   const patient = intake.patient_information;
+  const { vital_signs: previousVitals, ...legacyFields } = intake;
+  const vitals = normalizeClinical(legacyFields).vital_signs;
+  if (vitals) vitals.glucose_mg_dl = previousVitals?.glucose_mg_dl ?? null;
   return {
     protocol_no: protocolNo,
     age: patient.age,
     sex: patient.sex ?? 'unknown',
     height_cm: patient.height_cm,
     weight_kg: patient.weight_kg,
-    clinical_context: intake,
+    clinical_context: {
+      ...intake,
+      vital_signs: vitals,
+    },
   };
 }
 
@@ -112,13 +123,28 @@ export function clearActivePatientRecord(): void {
   window.dispatchEvent(new CustomEvent('medicore:case-summary-updated'));
 }
 
+export function setActiveClinicalDraft(patientId: string, protocolNo: string, clinical: ClinicalContext): void {
+  const previous = getActivePatientId() === patientId ? readActiveClinicalDraft() : null;
+  localStorage.setItem(ACTIVE_PATIENT_ID_KEY, patientId);
+  localStorage.setItem(ACTIVE_PATIENT_PROTOCOL_KEY, protocolNo);
+  const draft = JSON.stringify(legacyClinicalIntake(clinical, previous));
+  localStorage.setItem(ACTIVE_CLINICAL_INTAKE_KEY, draft);
+  localStorage.setItem(SYNCED_CLINICAL_DRAFT_KEY, draft);
+  if (clinical.age !== null) localStorage.setItem('medicore:lastPatientAge', String(clinical.age));
+  else localStorage.removeItem('medicore:lastPatientAge');
+  if (clinical.sex !== 'unknown') localStorage.setItem('medicore:lastPatientSex', clinical.sex);
+  else localStorage.removeItem('medicore:lastPatientSex');
+}
+
 export function activatePatientRecord(record: PatientRecord): void {
   localStorage.setItem(ACTIVE_PATIENT_ID_KEY, record.id);
   localStorage.setItem(ACTIVE_PATIENT_PROTOCOL_KEY, record.protocol_no);
 
-  const intake = record.metadata_json?.clinical_context;
+  const intake = legacyClinicalIntake(recordClinical(record), record.metadata_json?.clinical_context);
   if (intake) {
-    localStorage.setItem(ACTIVE_CLINICAL_INTAKE_KEY, JSON.stringify(intake));
+    const draft = JSON.stringify(intake);
+    localStorage.setItem(ACTIVE_CLINICAL_INTAKE_KEY, draft);
+    localStorage.setItem(SYNCED_CLINICAL_DRAFT_KEY, draft);
   } else {
     localStorage.removeItem(ACTIVE_CLINICAL_INTAKE_KEY);
   }
@@ -175,6 +201,7 @@ export async function syncActivePatientDraft(): Promise<PatientRecord | null> {
   const draft = readActiveClinicalDraft();
 
   if (!activeId || !protocolNo || !draft) return null;
+  if (localStorage.getItem(ACTIVE_CLINICAL_INTAKE_KEY) === localStorage.getItem(SYNCED_CLINICAL_DRAFT_KEY)) return null;
 
   try {
     const response = await sendPatientSave(
