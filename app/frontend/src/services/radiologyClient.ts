@@ -1,4 +1,5 @@
 import { getAccessToken } from './authClient';
+import { assertCurrentPatientScope, capturePatientScope, type PatientScope } from './patientScope';
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000';
@@ -52,6 +53,8 @@ export type RadiologyReport = {
   metadata_json: Record<string, unknown>;
   created_at: string;
   updated_at: string;
+  inferred_report_type?: 'CT' | 'ULTRASOUND' | 'MRI' | 'X_RAY' | 'PATHOLOGY' | 'ECHOCARDIOGRAPHY' | 'ENDOSCOPY' | 'OTHER' | 'UNKNOWN';
+  report_type_confidence?: number;
 };
 
 export type RadiologyReportInput = {
@@ -127,12 +130,14 @@ export function isVisualAiReview(report: RadiologyReport): boolean {
   return report.metadata_json.visual_analysis_available === true;
 }
 
-async function parseReportResponse(response: Response): Promise<RadiologyReport> {
+async function parseReportResponse(response: Response, scope: PatientScope): Promise<RadiologyReport> {
   if (!response.ok) {
     const message = await readErrorMessage(response);
     throw new Error(`Radyoloji/dosya işlemi başarısız: ${response.status} ${message}`);
   }
   const report = normalizeReport((await response.json()) as RadiologyReport);
+  assertCurrentPatientScope(scope);
+  if (report.patient_id !== scope.patientId) throw new Error('Tetkik yanıtı seçilen hasta ile eşleşmiyor.');
   localStorage.setItem(LAST_RADIOLOGY_REPORT_ID_KEY, report.id);
   return report;
 }
@@ -145,6 +150,7 @@ function isPdfFile(file: File): boolean {
 export async function createManualRadiologyReport(
   input: RadiologyReportInput,
 ): Promise<RadiologyReport> {
+  const scope = capturePatientScope();
   const response = await fetch(`${API_BASE_URL}/radiology-reports/manual`, {
     method: 'POST',
     headers: {
@@ -160,14 +166,16 @@ export async function createManualRadiologyReport(
       file_name: null,
       metadata_json: { source: 'radiology_workspace' },
     }),
+    signal: scope.signal,
   });
-  return parseReportResponse(response);
+  return parseReportResponse(response, scope);
 }
 
 export async function uploadRadiologyReportFile(
   file: File,
   input: Omit<RadiologyReportInput, 'reportText'>,
 ): Promise<RadiologyReport> {
+  const scope = capturePatientScope();
   const formData = new FormData();
   formData.append('file', file);
   formData.append('patient_id', requireActivePatientId());
@@ -186,8 +194,9 @@ export async function uploadRadiologyReportFile(
     method: 'POST',
     headers: authHeaders(),
     body: formData,
+    signal: scope.signal,
   });
-  return parseReportResponse(response);
+  return parseReportResponse(response, scope);
 }
 
 export async function uploadRadiologyImageReview(
@@ -195,6 +204,7 @@ export async function uploadRadiologyImageReview(
   modality: RadiologyImageModality,
   reportDate: string | null = new Date().toISOString().slice(0, 10),
 ): Promise<RadiologyReport> {
+  const scope = capturePatientScope();
   const formData = new FormData();
   formData.append('file', file);
   formData.append('patient_id', requireActivePatientId());
@@ -205,8 +215,9 @@ export async function uploadRadiologyImageReview(
     method: 'POST',
     headers: authHeaders(),
     body: formData,
+    signal: scope.signal,
   });
-  return parseReportResponse(response);
+  return parseReportResponse(response, scope);
 }
 
 /** Backward-compatible alias for older callers. */
@@ -230,32 +241,40 @@ export async function listPatientRadiologyReports(
 
   const rawReports = (await response.json()) as RadiologyReport[];
   const reports = Array.isArray(rawReports) ? rawReports.map(normalizeReport) : [];
+  if (reports.some((report) => report.patient_id !== resolvedPatientId)) throw new Error('Tetkik listesi seçilen hasta ile eşleşmiyor.');
   return options.includeUnanalyzed
     ? reports
     : reports.filter(isAnalyzableRadiologyReport);
 }
 
 export async function downloadRadiologyOriginalFile(reportId: string): Promise<Blob> {
+  const scope = capturePatientScope();
   const response = await fetch(`${API_BASE_URL}/radiology-reports/${reportId}/file`, {
     headers: authHeaders(),
+    signal: scope.signal,
   });
   if (!response.ok) {
     const message = await readErrorMessage(response);
     throw new Error(`Dosya açılamadı: ${response.status} ${message}`);
   }
-  return response.blob();
+  const file = await response.blob();
+  assertCurrentPatientScope(scope);
+  return file;
 }
 
 export async function deleteRadiologyReport(reportId: string): Promise<void> {
+  const scope = capturePatientScope();
   const response = await fetch(`${API_BASE_URL}/radiology-reports/${reportId}`, {
     method: 'DELETE',
     headers: authHeaders(),
+    signal: scope.signal,
   });
 
   if (!response.ok) {
     const message = await readErrorMessage(response);
     throw new Error(`Radyoloji/dosya kaydı silinemedi: ${response.status} ${message}`);
   }
+  assertCurrentPatientScope(scope);
 
   if (localStorage.getItem(LAST_RADIOLOGY_REPORT_ID_KEY) === reportId) {
     localStorage.removeItem(LAST_RADIOLOGY_REPORT_ID_KEY);

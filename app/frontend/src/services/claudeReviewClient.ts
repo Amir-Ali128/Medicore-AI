@@ -1,4 +1,5 @@
 import { getAccessToken } from './authClient';
+import { assertCurrentPatientScope, capturePatientScope } from './patientScope';
 import type { ClinicalHypothesis } from './clinicalHypothesesClient';
 import type { ClinicalIntakeInput } from './labAnalysisClient';
 
@@ -151,6 +152,7 @@ export async function evaluateClaudeAbnormalResults(
   maxHypotheses: number,
   clinicalContext?: ClaudeClinicalContext,
 ): Promise<ClaudeReviewGenerationResult> {
+  const scope = capturePatientScope();
   // Kept in the public function signature for older callers. Compact mode always
   // returns at most one short risk summary.
   void maxHypotheses;
@@ -177,6 +179,7 @@ export async function evaluateClaudeAbnormalResults(
           vitals,
         },
       }),
+      signal: scope.signal,
     },
   );
 
@@ -186,6 +189,7 @@ export async function evaluateClaudeAbnormalResults(
   }
 
   const result = (await response.json()) as ClaudeReviewGenerationResult;
+  assertCurrentPatientScope(scope);
   window.dispatchEvent(new Event('medicore:case-summary-updated'));
   return result;
 }

@@ -2,6 +2,7 @@ import { getAccessToken } from './authClient';
 import type { ClinicalIntakeInput } from './labAnalysisClient';
 import type { ClinicalContext } from './simpleCaseClient';
 import { legacyClinicalIntake, normalizeClinical, recordClinical } from './clinicalRecord';
+import { assertCurrentPatientScope, capturePatientScope, clearPatientScope, forgetPatientScope, isCurrentPatientScope, selectPatientScope, type PatientScope } from './patientScope';
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000';
@@ -10,19 +11,6 @@ export const ACTIVE_PATIENT_ID_KEY = 'medicore:activePatientId';
 export const ACTIVE_PATIENT_PROTOCOL_KEY = 'medicore:activePatientProtocol';
 export const ACTIVE_CLINICAL_INTAKE_KEY = 'medicore:activeClinicalIntake';
 const SYNCED_CLINICAL_DRAFT_KEY = 'medicore:syncedClinicalDraft';
-
-const PATIENT_WORKFLOW_KEYS = [
-  ACTIVE_PATIENT_ID_KEY,
-  ACTIVE_PATIENT_PROTOCOL_KEY,
-  ACTIVE_CLINICAL_INTAKE_KEY,
-  SYNCED_CLINICAL_DRAFT_KEY,
-  'medicore:lastPatientAge',
-  'medicore:lastPatientSex',
-  'medicore:lastPatientDisplayName',
-  'medicore:lastAnalysisRunId',
-  'medicore:lastLabReportId',
-  'medicore:lastRadiologyReportId',
-] as const;
 
 export type PatientRecord = {
   id: string;
@@ -115,17 +103,14 @@ export function getActivePatientProtocolNo(): string | null {
  * UI even though the backend records are correctly separated.
  */
 export function clearActivePatientRecord(): void {
-  for (const key of PATIENT_WORKFLOW_KEYS) {
-    localStorage.removeItem(key);
-  }
-
+  clearPatientScope();
   window.dispatchEvent(new CustomEvent('medicore:patient-cleared'));
   window.dispatchEvent(new CustomEvent('medicore:case-summary-updated'));
 }
 
 export function setActiveClinicalDraft(patientId: string, protocolNo: string, clinical: ClinicalContext): void {
-  const previous = getActivePatientId() === patientId ? readActiveClinicalDraft() : null;
-  localStorage.setItem(ACTIVE_PATIENT_ID_KEY, patientId);
+  selectPatientScope(patientId);
+  const previous = readActiveClinicalDraft();
   localStorage.setItem(ACTIVE_PATIENT_PROTOCOL_KEY, protocolNo);
   const draft = JSON.stringify(legacyClinicalIntake(clinical, previous));
   localStorage.setItem(ACTIVE_CLINICAL_INTAKE_KEY, draft);
@@ -137,7 +122,7 @@ export function setActiveClinicalDraft(patientId: string, protocolNo: string, cl
 }
 
 export function activatePatientRecord(record: PatientRecord): void {
-  localStorage.setItem(ACTIVE_PATIENT_ID_KEY, record.id);
+  selectPatientScope(record.id);
   localStorage.setItem(ACTIVE_PATIENT_PROTOCOL_KEY, record.protocol_no);
 
   const intake = legacyClinicalIntake(recordClinical(record), record.metadata_json?.clinical_context);
@@ -162,6 +147,8 @@ export function activatePatientRecord(record: PatientRecord): void {
   } else {
     localStorage.removeItem('medicore:lastPatientSex');
   }
+  if (record.date_of_birth) localStorage.setItem('medicore:lastPatientBirthDate', record.date_of_birth);
+  else localStorage.removeItem('medicore:lastPatientBirthDate');
 
   window.dispatchEvent(
     new CustomEvent<PatientRecord>('medicore:patient-saved', {
@@ -175,12 +162,14 @@ async function sendPatientSave(
   intake: ClinicalIntakeInput,
   patientId: string | null,
   protocolNo: string,
+  scope: PatientScope,
 ) {
   return fetch(
     patientId ? `${API_BASE_URL}/patients/${patientId}` : `${API_BASE_URL}/patients`,
     {
       method: patientId ? 'PUT' : 'POST',
       headers: headers(),
+      signal: scope.signal,
       body: JSON.stringify(payloadFromIntake(intake, protocolNo)),
     },
   );
@@ -196,6 +185,7 @@ async function sendPatientSave(
  * This best-effort sync closes that gap without creating a new patient record.
  */
 export async function syncActivePatientDraft(): Promise<PatientRecord | null> {
+  const scope = capturePatientScope();
   const activeId = getActivePatientId();
   const protocolNo = getActivePatientProtocolNo();
   const draft = readActiveClinicalDraft();
@@ -208,6 +198,7 @@ export async function syncActivePatientDraft(): Promise<PatientRecord | null> {
       draft,
       activeId,
       normalizeProtocolNo(protocolNo),
+      scope,
     );
 
     // A background archive sync must never create a replacement patient if the
@@ -216,7 +207,10 @@ export async function syncActivePatientDraft(): Promise<PatientRecord | null> {
     if (!response.ok) return null;
 
     const record = (await response.json()) as PatientRecord;
-    activatePatientRecord(record);
+    if (!isCurrentPatientScope(scope) || record.id !== activeId) return null;
+    // An older background response must not overwrite edits made while saving.
+    if (JSON.stringify(draft) !== localStorage.getItem(ACTIVE_CLINICAL_INTAKE_KEY)) return record;
+    localStorage.setItem(SYNCED_CLINICAL_DRAFT_KEY, JSON.stringify(draft));
     return record;
   } catch {
     // Archive loading remains usable when a best-effort draft sync is offline.
@@ -228,22 +222,24 @@ export async function savePatientRecord(
   intake: ClinicalIntakeInput,
   protocolNo?: string,
 ): Promise<PatientRecord> {
+  const scope = capturePatientScope();
   const activeId = getActivePatientId();
   const existingProtocolNo = getActivePatientProtocolNo();
   let resolvedProtocolNo = normalizeProtocolNo(
     protocolNo ?? existingProtocolNo ?? createInternalIndividualReference(),
   );
+  let replacingInaccessibleRecord = false;
 
-  let response = await sendPatientSave(intake, activeId, resolvedProtocolNo);
+  let response = await sendPatientSave(intake, activeId, resolvedProtocolNo, scope);
+  assertCurrentPatientScope(scope);
 
   // Records created by older builds were not account-owned. If an old local
   // patient id can no longer be updated, preserve the current form by creating
   // a fresh account-owned record instead of forcing the patient to re-enter it.
   if (activeId && (response.status === 403 || response.status === 404)) {
-    localStorage.removeItem(ACTIVE_PATIENT_ID_KEY);
-    localStorage.removeItem(ACTIVE_PATIENT_PROTOCOL_KEY);
+    replacingInaccessibleRecord = true;
     resolvedProtocolNo = createInternalIndividualReference();
-    response = await sendPatientSave(intake, null, resolvedProtocolNo);
+    response = await sendPatientSave(intake, null, resolvedProtocolNo, scope);
   }
 
   if (!response.ok) {
@@ -251,19 +247,24 @@ export async function savePatientRecord(
   }
 
   const record = (await response.json()) as PatientRecord;
+  assertCurrentPatientScope(scope);
+  if (activeId && record.id !== activeId && !replacingInaccessibleRecord) {
+    throw new Error('Hasta kaydı yanıtı beklenen hasta ile eşleşmiyor.');
+  }
   activatePatientRecord(record);
   return record;
 }
 
-export async function getPatientRecord(patientId: string): Promise<PatientRecord> {
+export async function getPatientRecord(patientId: string, signal?: AbortSignal): Promise<PatientRecord> {
   const response = await fetch(`${API_BASE_URL}/patients/${patientId}`, {
     headers: headers(),
+    signal,
   });
   if (!response.ok) {
     throw new Error(`Hasta kaydı alınamadı: ${response.status} ${await readError(response)}`);
   }
   const record = (await response.json()) as PatientRecord;
-  activatePatientRecord(record);
+  if (record.id !== patientId) throw new Error('Hasta kaydı yanıtı beklenen hasta ile eşleşmiyor.');
   return record;
 }
 
@@ -277,9 +278,7 @@ export async function deletePatientRecord(patientId: string): Promise<void> {
     throw new Error(`Hasta kaydı silinemedi: ${response.status} ${await readError(response)}`);
   }
 
-  if (getActivePatientId() === patientId) {
-    clearActivePatientRecord();
-  }
+  forgetPatientScope(patientId);
 }
 
 export async function listPatientRecords(limit = 500): Promise<PatientRecord[]> {

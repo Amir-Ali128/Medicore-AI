@@ -29,7 +29,13 @@ class PatientRecordUpsert(BaseModel):
     @classmethod
     def validate_structured_vitals(cls, value: dict[str, Any]) -> dict[str, Any]:
         if value.get('vital_signs') is not None:
-            value = {**value, 'vital_signs': VitalSigns.model_validate(value['vital_signs']).model_dump(mode='json')}
+            normalized = VitalSigns.model_validate(value['vital_signs']).model_dump(mode='json')
+            # Retain legacy provenance for the route's patient/source guard.
+            # Numeric normalization must not silently discard patient markers.
+            value = {**value, 'vital_signs': {
+                **value['vital_signs'],
+                **normalized,
+            }}
         return value
 
     @field_validator("protocol_no")

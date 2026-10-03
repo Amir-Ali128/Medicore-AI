@@ -1,6 +1,8 @@
+import { useSyncExternalStore } from 'react';
 import { Outlet } from 'react-router-dom';
 
 import { getAuthenticatedRole } from '../services/authClient';
+import { patientScopeVersion, subscribePatientScope } from '../services/patientScope';
 import AdminMobileNavigation from './AdminMobileNavigation';
 import AdminSidebar from './AdminSidebar';
 import MobileNavigation from './MobileNavigation';
@@ -9,6 +11,7 @@ import Topbar from './Topbar';
 
 export default function AppLayout() {
   const isAdmin = getAuthenticatedRole() === 'admin';
+  const scopeVersion = useSyncExternalStore(subscribePatientScope, patientScopeVersion, patientScopeVersion);
 
   return (
     <div className="min-h-screen bg-[#f6f7f9] text-slate-950 lg:grid lg:grid-cols-[16rem_minmax(0,1fr)]">
@@ -19,7 +22,7 @@ export default function AppLayout() {
       <div className="min-w-0 min-h-screen">
         <Topbar />
         <main className="px-4 py-5 pb-28 sm:px-6 lg:px-8 lg:py-8 lg:pb-8">
-          <Outlet />
+          <Outlet key={scopeVersion} />
         </main>
       </div>
 

@@ -7,15 +7,17 @@ from datetime import UTC, date, datetime
 from typing import Annotated, Any
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import text as sql_text
+from sqlalchemy import select, text as sql_text
 
 from app.api.dependencies import LabReportRepositoryDep, SessionDep
 from app.api.routes.auth import get_current_active_user
 from app.domain.enums import UserRole
+from app.domain.patient_scope import validate_source_metadata
 from app.domain.pdf_privacy import anonymize_lab_pdf
 from app.infrastructure.database.models.patient import Patient
+from app.infrastructure.database.models.lab_report import LabReport
 from app.infrastructure.database.models.user import User
 from app.schemas.lab_analysis import (
     ClinicalAttachmentInput,
@@ -25,6 +27,7 @@ from app.schemas.lab_analysis import (
     PhysicalExamInput,
     PresentingComplaintInput,
 )
+from app.schemas.radiology_report import DEMO_PATIENT_ID
 
 router = APIRouter(tags=["lab-reports"])
 
@@ -97,6 +100,33 @@ async def _get_accessible_patient(
     return patient
 
 
+async def _ensure_report_access(report, session: SessionDep, current_user: User) -> None:
+    if report.patient_id == DEMO_PATIENT_ID:
+        if report.uploaded_by_user_id != current_user.id:
+            raise HTTPException(status_code=404, detail="Laboratuvar raporu bulunamadı.")
+    else:
+        await _get_accessible_patient(report.patient_id, session, current_user)
+    await validate_source_metadata(
+        session, patient_id=report.patient_id, metadata=report.metadata_json or {},
+        current_user_id=current_user.id,
+    )
+
+
+def _bind_staged_patient(value, patient_id):
+    """Rebind proven staging markers when the uploader archives this source."""
+    if isinstance(value, dict):
+        bound = {}
+        for key, item in value.items():
+            if key == "patient_id" and item is not None and uuid.UUID(str(item)) == DEMO_PATIENT_ID:
+                bound[key] = str(patient_id)
+            else:
+                bound[key] = _bind_staged_patient(item, patient_id)
+        return bound
+    if isinstance(value, list):
+        return [_bind_staged_patient(item, patient_id) for item in value]
+    return value
+
+
 async def _ensure_lab_file_columns(session: SessionDep) -> None:
     """Add archived-file columns to existing databases without a destructive migration."""
     await session.execute(
@@ -124,7 +154,7 @@ async def get_lab_report(
     report = await repository.get_by_id(lab_report_id)
     if report is None:
         raise HTTPException(status_code=404, detail="Lab report not found.")
-    await _get_accessible_patient(report.patient_id, session, current_user)
+    await _ensure_report_access(report, session, current_user)
     return report
 
 
@@ -143,7 +173,7 @@ async def update_lab_report_patient_metadata(
     report = await repository.get_by_id(lab_report_id)
     if report is None:
         raise HTTPException(status_code=404, detail="Lab report not found.")
-    await _get_accessible_patient(report.patient_id, session, current_user)
+    await _ensure_report_access(report, session, current_user)
 
     metadata = dict(report.metadata_json or {})
 
@@ -170,6 +200,7 @@ async def update_lab_report_patient_metadata(
 async def update_lab_report_clinical_context(
     lab_report_id: uuid.UUID,
     payload: LabReportClinicalContextUpdate,
+    request: Request,
     repository: LabReportRepositoryDep,
     session: SessionDep,
     current_user: Annotated[User, Depends(get_current_active_user)],
@@ -178,10 +209,16 @@ async def update_lab_report_clinical_context(
     report = await repository.get_by_id(lab_report_id)
     if report is None:
         raise HTTPException(status_code=404, detail="Lab report not found.")
-    await _get_accessible_patient(report.patient_id, session, current_user)
+    await _ensure_report_access(report, session, current_user)
 
     context = payload.model_dump(mode="json")
+    await validate_source_metadata(
+        session, patient_id=report.patient_id, metadata=await request.json(),
+        current_user_id=current_user.id,
+    )
     metadata = dict(report.metadata_json or {})
+    if metadata.get("clinical_context") != context:
+        metadata["clinical_context_recorded_at"] = datetime.now(UTC).isoformat()
     metadata["clinical_context"] = context
     metadata["clinical_context_source"] = "analysis_workspace"
 
@@ -224,12 +261,27 @@ async def save_lab_report_to_patient(
     if report is None:
         raise HTTPException(status_code=404, detail="Laboratuvar raporu bulunamadı.")
 
-    await _get_accessible_patient(report.patient_id, session, current_user)
+    previous_patient_id = report.patient_id
+    if previous_patient_id == DEMO_PATIENT_ID:
+        # A temporary upload may be archived once, only by its uploader. The
+        # shared legacy holding identity must not expose another user's upload.
+        if report.uploaded_by_user_id != current_user.id:
+            raise HTTPException(status_code=404, detail="Laboratuvar raporu bulunamadı.")
+    else:
+        await _get_accessible_patient(previous_patient_id, session, current_user)
     await _get_accessible_patient(payload.patient_id, session, current_user)
+    if previous_patient_id != payload.patient_id and previous_patient_id != DEMO_PATIENT_ID:
+        raise HTTPException(status_code=409, detail="Kayıtlı rapor başka bir hastaya taşınamaz.")
+    await validate_source_metadata(
+        session, patient_id=previous_patient_id, metadata=report.metadata_json or {},
+        current_user_id=current_user.id,
+    )
 
     report.patient_id = payload.patient_id
     report.uploaded_by_user_id = current_user.id
     metadata = dict(report.metadata_json or {})
+    if previous_patient_id == DEMO_PATIENT_ID:
+        metadata = _bind_staged_patient(metadata, payload.patient_id)
     metadata.update(
         {
             "archived": True,
@@ -242,29 +294,34 @@ async def save_lab_report_to_patient(
     params = {
         "patient_id": str(payload.patient_id),
         "lab_report_id": str(lab_report_id),
+        "previous_patient_id": str(previous_patient_id),
     }
     await session.execute(
         sql_text(
             "UPDATE analysis_runs SET patient_id = :patient_id "
-            "WHERE lab_report_id = :lab_report_id"
+            "WHERE lab_report_id = :lab_report_id AND patient_id = :previous_patient_id"
         ),
         params,
     )
     await session.execute(
         sql_text(
             "UPDATE lab_results SET patient_id = :patient_id "
-            "WHERE lab_report_id = :lab_report_id"
+            "WHERE lab_report_id = :lab_report_id AND patient_id = :previous_patient_id"
         ),
         params,
     )
     await session.execute(
         sql_text(
             "UPDATE clinical_hypotheses SET patient_id = :patient_id "
-            "WHERE lab_report_id = :lab_report_id"
+            "WHERE lab_report_id = :lab_report_id AND patient_id = :previous_patient_id"
         ),
         params,
     )
 
+    await validate_source_metadata(
+        session, patient_id=payload.patient_id, metadata=metadata,
+        current_user_id=current_user.id,
+    )
     await session.commit()
     await session.refresh(report)
     return report
@@ -287,7 +344,7 @@ async def store_lab_report_original_file(
     if report is None:
         raise HTTPException(status_code=404, detail="Laboratuvar raporu bulunamadı.")
 
-    await _get_accessible_patient(report.patient_id, session, current_user)
+    await _ensure_report_access(report, session, current_user)
 
     filename = (file.filename or report.file_name or "laboratuvar-raporu.pdf").strip()
     content_type = (file.content_type or "").lower().strip()
@@ -318,12 +375,13 @@ async def store_lab_report_original_file(
             "SET original_file_data = :content, "
             "original_file_content_type = :content_type, "
             "updated_at = NOW() "
-            "WHERE id = :lab_report_id"
+            "WHERE id = :lab_report_id AND patient_id = :patient_id"
         ),
         {
             "content": anonymized.content,
             "content_type": stored_content_type,
             "lab_report_id": str(lab_report_id),
+            "patient_id": str(report.patient_id),
         },
     )
 
@@ -360,15 +418,15 @@ async def open_lab_report_original_file(
     if report is None:
         raise HTTPException(status_code=404, detail="Laboratuvar raporu bulunamadı.")
 
-    await _get_accessible_patient(report.patient_id, session, current_user)
+    await _ensure_report_access(report, session, current_user)
 
     row = (
         await session.execute(
             sql_text(
                 "SELECT original_file_data, original_file_content_type "
-                "FROM lab_reports WHERE id = :lab_report_id"
+                "FROM lab_reports WHERE id = :lab_report_id AND patient_id = :patient_id"
             ),
-            {"lab_report_id": str(lab_report_id)},
+            {"lab_report_id": str(lab_report_id), "patient_id": str(report.patient_id)},
         )
     ).mappings().one_or_none()
 
@@ -402,13 +460,14 @@ async def delete_lab_report(
     if report is None:
         raise HTTPException(status_code=404, detail="Laboratuvar raporu bulunamadı.")
 
-    await _get_accessible_patient(report.patient_id, session, current_user)
+    await _ensure_report_access(report, session, current_user)
 
     # Hypotheses use SET NULL for report deletion, so remove report-specific ones
     # explicitly instead of leaving detached clinical suggestions behind.
     await session.execute(
-        sql_text("DELETE FROM clinical_hypotheses WHERE lab_report_id = :lab_report_id"),
-        {"lab_report_id": str(lab_report_id)},
+        sql_text("DELETE FROM clinical_hypotheses WHERE lab_report_id = :lab_report_id "
+                 "AND patient_id = :patient_id"),
+        {"lab_report_id": str(lab_report_id), "patient_id": str(report.patient_id)},
     )
     await session.delete(report)
     await session.commit()
@@ -426,4 +485,17 @@ async def list_patient_lab_reports(
     current_user: Annotated[User, Depends(get_current_active_user)],
 ) -> list[LabReportSummary]:
     await _get_accessible_patient(patient_id, session, current_user)
-    return list(await repository.list_for_patient(patient_id))
+    if patient_id == DEMO_PATIENT_ID:
+        reports = list((await session.execute(select(LabReport).where(
+            LabReport.patient_id == patient_id,
+            LabReport.uploaded_by_user_id == current_user.id,
+        ).order_by(LabReport.report_date.desc().nulls_last(),
+                   LabReport.created_at.desc()))).scalars().all())
+    else:
+        reports = list(await repository.list_for_patient(patient_id))
+    for report in reports:
+        await validate_source_metadata(
+            session, patient_id=patient_id, metadata=report.metadata_json or {},
+            current_user_id=current_user.id,
+        )
+    return reports

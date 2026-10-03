@@ -5,8 +5,9 @@ import {
   ACTIVE_CLINICAL_INTAKE_KEY,
   ACTIVE_PATIENT_ID_KEY,
   ACTIVE_PATIENT_PROTOCOL_KEY,
-  savePatientRecord,
+  syncActivePatientDraft,
 } from '../services/patientClient';
+import { capturePatientScope, isCurrentPatientScope } from '../services/patientScope';
 
 function readIntake(): ClinicalIntakeInput | null {
   try {
@@ -57,12 +58,16 @@ export default function PatientPersistenceBridge() {
       }
 
       const serialized = JSON.stringify(intake);
-      if (serialized === lastSaved.current || busy.current) return;
+      const identity = `${activePatientId}:${serialized}`;
+      if (identity === lastSaved.current || busy.current) return;
 
       busy.current = true;
+      const scope = capturePatientScope();
       try {
-        await savePatientRecord(intake);
-        lastSaved.current = serialized;
+        await syncActivePatientDraft();
+        if (isCurrentPatientScope(scope) && localStorage.getItem('medicore:syncedClinicalDraft') === serialized) {
+          lastSaved.current = identity;
+        }
       } catch {
         // The form remains available offline; the explicit save action can retry later.
       } finally {

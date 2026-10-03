@@ -10,12 +10,14 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
 from pypdf import PdfReader
-from sqlalchemy import text as sql_text
+from sqlalchemy import select, text as sql_text
 
 from app.api.dependencies import SessionDep
 from app.api.routes.auth import get_current_active_user
 from app.domain.enums import Sex, UserRole
+from app.domain.patient_scope import validate_source_metadata
 from app.domain.radiology_report_parser import analyze_radiology_report
+from app.domain.report_type_inference import infer_report_type
 from app.infrastructure.database.models.patient import Patient
 from app.infrastructure.database.models.radiology_report import RadiologyReport
 from app.infrastructure.database.models.user import User
@@ -161,6 +163,18 @@ async def _get_accessible_patient(
     return patient
 
 
+async def _ensure_report_access(report, session: SessionDep, current_user: User) -> None:
+    if report.patient_id == DEMO_PATIENT_ID:
+        if report.uploaded_by_user_id != current_user.id:
+            raise HTTPException(status_code=404, detail="Rapor bulunamadı.")
+    else:
+        await _get_accessible_patient(report.patient_id, session, current_user)
+    await validate_source_metadata(
+        session, patient_id=report.patient_id, metadata=report.metadata_json or {},
+        current_user_id=current_user.id,
+    )
+
+
 def _extract_pdf_text(content: bytes) -> str:
     try:
         reader = PdfReader(io.BytesIO(content))
@@ -239,6 +253,10 @@ async def _persist_report(
 ) -> RadiologyReport:
     await _ensure_phase2_table(session)
     await _get_accessible_patient(payload.patient_id, session, current_user)
+    await validate_source_metadata(
+        session, patient_id=payload.patient_id, metadata=payload.metadata_json,
+        current_user_id=current_user.id,
+    )
 
     try:
         analysis = analyze_radiology_report(payload.report_text)
@@ -246,6 +264,17 @@ async def _persist_report(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     metadata = dict(payload.metadata_json)
+    metadata.update(
+        infer_report_type(
+            title=metadata.get("title") or metadata.get("report_title"),
+            examination=metadata.get("examination") or metadata.get("examination_name"),
+            technique=metadata.get("technique"),
+            findings=analysis["findings"],
+            impression=analysis["impression"],
+            source_text=payload.report_text,
+            modality=payload.modality,
+        ).to_metadata()
+    )
     metadata.update(
         {
             "parser_version": analysis["parser_version"],
@@ -319,6 +348,7 @@ async def _persist_binary_file(
             "analysis_available": False,
             "original_file_stored": True,
             "physician_review_required": True,
+            **infer_report_type(modality=modality).to_metadata(),
         },
     )
     repository = RadiologyReportRepository(session)
@@ -432,7 +462,22 @@ async def list_patient_radiology_reports(
     await _get_accessible_patient(patient_id, session, current_user)
     repository = RadiologyReportRepository(session)
     safe_limit = max(1, min(limit, 100))
-    return list(await repository.list_for_patient(patient_id, limit=safe_limit))
+    if patient_id == DEMO_PATIENT_ID:
+        reports = list((await session.execute(
+            select(RadiologyReport).where(
+                RadiologyReport.patient_id == patient_id,
+                RadiologyReport.uploaded_by_user_id == current_user.id,
+            ).order_by(RadiologyReport.report_date.desc().nulls_last(),
+                       RadiologyReport.created_at.desc()).limit(safe_limit)
+        )).scalars().all())
+    else:
+        reports = list(await repository.list_for_patient(patient_id, limit=safe_limit))
+    for report in reports:
+        await validate_source_metadata(
+            session, patient_id=patient_id, metadata=report.metadata_json or {},
+            current_user_id=current_user.id,
+        )
+    return reports
 
 
 @router.get("/{report_id}/file")
@@ -446,15 +491,15 @@ async def download_radiology_file(
     report = await repository.get_by_id(report_id)
     if report is None:
         raise HTTPException(status_code=404, detail="Dosya bulunamadı.")
-    await _get_accessible_patient(report.patient_id, session, current_user)
+    await _ensure_report_access(report, session, current_user)
 
     row = (
         await session.execute(
             sql_text(
                 "SELECT original_file_data, original_file_content_type "
-                "FROM radiology_reports WHERE id = :report_id"
+                "FROM radiology_reports WHERE id = :report_id AND patient_id = :patient_id"
             ),
-            {"report_id": str(report_id)},
+            {"report_id": str(report_id), "patient_id": str(report.patient_id)},
         )
     ).mappings().one_or_none()
     if not row or row["original_file_data"] is None:
@@ -479,7 +524,7 @@ async def get_radiology_report(
     report = await repository.get_by_id(report_id)
     if report is None:
         raise HTTPException(status_code=404, detail="Radiology report not found.")
-    await _get_accessible_patient(report.patient_id, session, current_user)
+    await _ensure_report_access(report, session, current_user)
     return report
 
 
@@ -494,7 +539,7 @@ async def delete_radiology_report(
     report = await repository.get_by_id(report_id)
     if report is None:
         raise HTTPException(status_code=404, detail="Radiology report not found.")
-    await _get_accessible_patient(report.patient_id, session, current_user)
+    await _ensure_report_access(report, session, current_user)
 
     await session.delete(report)
     await session.commit()

@@ -193,6 +193,12 @@ function RecordCard({
         </div>
 
         <div className="flex shrink-0 flex-wrap gap-2">
+          <Link
+            to={`/patient-timeline?patient=${encodeURIComponent(record.id)}`}
+            className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-800 hover:bg-blue-100"
+          >
+            Geçmişi Gör
+          </Link>
           <a
             href={`#/case?patient=${encodeURIComponent(record.id)}&step=patient`}
             className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"

@@ -61,17 +61,19 @@ const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
 };
 
 export const apiClient = {
-  get<T>(path: string): Promise<T> {
-    return request<T>(path, { method: 'GET' });
+  get<T>(path: string, init?: RequestInit): Promise<T> {
+    return request<T>(path, { ...init, method: 'GET' });
   },
-  post<T>(path: string, body?: unknown): Promise<T> {
+  post<T>(path: string, body?: unknown, init?: RequestInit): Promise<T> {
     return request<T>(path, {
+      ...init,
       method: 'POST',
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   },
-  put<T>(path: string, body?: unknown): Promise<T> {
+  put<T>(path: string, body?: unknown, init?: RequestInit): Promise<T> {
     return request<T>(path, {
+      ...init,
       method: 'PUT',
       body: body === undefined ? undefined : JSON.stringify(body),
     });

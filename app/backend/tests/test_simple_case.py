@@ -201,7 +201,7 @@ def test_patient_cannot_access_or_move_another_patients_report(context, operatio
     c.session.commit.assert_not_awaited()
 
 
-def test_patient_can_read_and_move_own_report(context):
+def test_patient_can_read_but_cannot_move_an_archived_report(context):
     c = context
     authenticate(c)
     assert c.client.get(f"/lab-reports/{c.report.id}").status_code == 200
@@ -209,9 +209,9 @@ def test_patient_can_read_and_move_own_report(context):
     response = c.client.patch(
         f"/lab-reports/{c.report.id}/save", json={"patient_id": str(c.other.id)},
     )
-    assert response.status_code == 200
-    assert c.report.patient_id == c.other.id
-    c.session.commit.assert_awaited_once()
+    assert response.status_code == 409
+    assert c.report.patient_id == c.patient.id
+    c.session.commit.assert_not_awaited()
 
 
 @pytest.mark.parametrize("operation", ["create", "read", "list", "recent", "delete"])

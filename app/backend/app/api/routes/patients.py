@@ -12,12 +12,15 @@ from sqlalchemy.exc import IntegrityError
 from app.api.dependencies import SessionDep
 from app.api.routes.auth import get_current_active_user
 from app.domain.enums import UserRole
+from app.domain.clinical_record_dates import stamp_clinical_record_dates
 from app.domain.patient_clinical_context import normalize_patient_clinical, patient_clinical_context
+from app.domain.patient_scope import validate_source_metadata
 from app.domain.simple_case import case_fingerprint
 from app.infrastructure.database.models.patient import Patient
 from app.infrastructure.database.models.user import User
 from app.schemas.patient_record import PatientRecordResponse, PatientRecordUpsert
 from app.schemas.simple_case import VitalSigns
+from app.schemas.radiology_report import DEMO_PATIENT_ID
 
 router = APIRouter(prefix="/patients", tags=["patients"])
 
@@ -42,6 +45,8 @@ def _metadata_from_payload(
 
 
 def _ensure_patient_access(patient: Patient, current_user: User) -> None:
+    if patient.id == DEMO_PATIENT_ID:
+        raise HTTPException(status_code=404, detail="Hasta kaydı bulunamadı.")
     if current_user.role != UserRole.PATIENT:
         return
 
@@ -76,8 +81,10 @@ async def create_patient_record(
     current_user: Annotated[User, Depends(get_current_active_user)],
 ) -> Patient:
     await _ensure_protocol_available(session, payload.protocol_no)
-
+    patient_id = uuid.uuid4()
+    await validate_source_metadata(session, patient_id=patient_id, metadata=payload.clinical_context)
     patient = Patient(
+        id=patient_id,
         protocol_no=payload.protocol_no,
         external_ref=f"medicore-{uuid.uuid4()}",
         sex=payload.sex,
@@ -135,7 +142,7 @@ async def list_patient_records(
     limit: int = 100,
 ) -> list[Patient]:
     safe_limit = max(1, min(limit, 500))
-    stmt = select(Patient).order_by(Patient.updated_at.desc())
+    stmt = select(Patient).where(Patient.id != DEMO_PATIENT_ID).order_by(Patient.updated_at.desc())
 
     if current_user.role == UserRole.PATIENT:
         stmt = stmt.where(
@@ -145,7 +152,17 @@ async def list_patient_records(
         )
 
     stmt = stmt.limit(safe_limit)
-    return list((await session.execute(stmt)).scalars().all())
+    records = list((await session.execute(stmt)).scalars().all())
+    safe_records = []
+    for patient in records:
+        try:
+            await validate_source_metadata(session, patient_id=patient.id, metadata=patient.metadata_json)
+        except HTTPException as exc:
+            if exc.status_code in {404, 409, 422}:
+                continue
+            raise
+        safe_records.append(patient)
+    return safe_records
 
 
 @router.get("/{patient_id}", response_model=PatientRecordResponse)
@@ -158,6 +175,7 @@ async def get_patient_record(
     if patient is None:
         raise HTTPException(status_code=404, detail="Hasta kaydı bulunamadı.")
     _ensure_patient_access(patient, current_user)
+    await validate_source_metadata(session, patient_id=patient_id, metadata=patient.metadata_json)
     return patient
 
 
@@ -172,6 +190,8 @@ async def update_patient_record(
     if patient is None:
         raise HTTPException(status_code=404, detail="Hasta kaydı bulunamadı.")
     _ensure_patient_access(patient, current_user)
+
+    await validate_source_metadata(session, patient_id=patient_id, metadata=payload.clinical_context)
 
     await _ensure_protocol_available(
         session,
@@ -241,6 +261,7 @@ async def update_patient_record(
         raw_context.update(age=clinical.age, sex=str(clinical.sex),
                            vital_signs=clinical.vital_signs.model_dump(mode="json") if clinical.vital_signs else None)
         metadata["clinical_context"] = raw_context
+        metadata = stamp_clinical_record_dates(metadata, previous, clinical)
         metadata["age"] = clinical.age
         metadata.pop("height_cm", None)
         metadata.pop("weight_kg", None)
