@@ -1,4 +1,5 @@
 import { getAccessToken } from './authClient';
+import { assertCurrentPatientScope, capturePatientScope, isCurrentPatientScope } from './patientScope';
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000';
@@ -13,7 +14,6 @@ export const LAST_PATIENT_BIRTH_DATE_KEY = 'medicore:lastPatientBirthDate';
 
 const DEMO_PATIENT_ID = '3fa85f64-5717-4562-b3fc-2c963f66afa6';
 const DEMO_UPLOADED_BY_USER_ID = '3fa85f64-5717-4562-b3fc-2c963f66afa6';
-const ACTIVE_PATIENT_ID_KEY = 'medicore:activePatientId';
 
 export type LabResultStatus =
   | 'normal'
@@ -320,7 +320,8 @@ function rememberPatientMetadata(response: LabAnalysisResponse): void {
   }
 }
 
-export function rememberLatestAnalysis(response: LabAnalysisResponse): void {
+export function rememberLatestAnalysis(response: LabAnalysisResponse, scope = capturePatientScope()): void {
+  if (!isCurrentPatientScope(scope) || response.patient_id !== scope.patientId) return;
   localStorage.setItem(LAST_ANALYSIS_RUN_ID_KEY, response.analysis_run_id);
   localStorage.setItem(LAST_LAB_REPORT_ID_KEY, response.lab_report_id);
   rememberPatientMetadata(response);
@@ -396,6 +397,7 @@ async function submitStructuredLabReport(
   errorPrefix: string,
   endpoint = '/lab-analysis/mock',
 ): Promise<LabAnalysisResponse> {
+  const scope = capturePatientScope();
   const response = await fetch(`${API_BASE_URL}${endpoint}`, {
     method: 'POST',
     headers: {
@@ -403,6 +405,7 @@ async function submitStructuredLabReport(
       ...authHeaders(),
     },
     body: JSON.stringify(payload),
+    signal: scope.signal,
   });
 
   if (!response.ok) {
@@ -411,7 +414,9 @@ async function submitStructuredLabReport(
   }
 
   const result = (await response.json()) as LabAnalysisResponse;
-  rememberLatestAnalysis(result);
+  assertCurrentPatientScope(scope);
+  if (scope.patientId && result.patient_id !== scope.patientId) throw new Error('Laboratuvar yanıtı seçilen hasta ile eşleşmiyor.');
+  rememberLatestAnalysis(result, scope);
 
   return result;
 }
@@ -499,8 +504,10 @@ export async function uploadLabReportPdf(
   file: File,
   clinicalContext?: ClinicalIntakeInput,
 ): Promise<LabAnalysisResponse> {
+  const scope = capturePatientScope();
   const formData = new FormData();
   formData.append('file', file);
+  if (scope.patientId) formData.append('patient_id', scope.patientId);
 
   const response = await fetch(`${API_BASE_URL}/lab-analysis/upload`, {
     method: 'POST',
@@ -508,6 +515,7 @@ export async function uploadLabReportPdf(
       ...authHeaders(),
     },
     body: formData,
+    signal: scope.signal,
   });
 
   if (!response.ok) {
@@ -516,12 +524,15 @@ export async function uploadLabReportPdf(
   }
 
   const result = (await response.json()) as LabAnalysisResponse;
+  assertCurrentPatientScope(scope);
+  if (scope.patientId && result.patient_id !== scope.patientId) throw new Error('Laboratuvar yanıtı seçilen hasta ile eşleşmiyor.');
 
   await Promise.all([
     saveLabReportPatientMetadata(result.lab_report_id, result.patient),
     saveLabReportClinicalContext(result.lab_report_id, clinicalContext),
   ]);
-  rememberLatestAnalysis(result);
+  assertCurrentPatientScope(scope);
+  rememberLatestAnalysis(result, scope);
 
   return result;
 }
@@ -530,7 +541,8 @@ export async function analyzeLabReportImage(
   file: File,
   clinicalContext?: ClinicalIntakeInput,
 ): Promise<LabAnalysisResponse> {
-  const patientId = localStorage.getItem(ACTIVE_PATIENT_ID_KEY);
+  const scope = capturePatientScope();
+  const patientId = scope.patientId;
   if (!patientId) {
     throw new Error(
       'Önce Hasta Bilgileri bölümünde Kaydet’e basarak aktif hasta kaydını oluşturmalısın.',
@@ -547,6 +559,7 @@ export async function analyzeLabReportImage(
       ...authHeaders(),
     },
     body: formData,
+    signal: scope.signal,
   });
 
   if (!response.ok) {
@@ -556,12 +569,15 @@ export async function analyzeLabReportImage(
 
   const body = (await response.json()) as { analysis: LabAnalysisResponse };
   const result = body.analysis;
+  assertCurrentPatientScope(scope);
+  if (result.patient_id !== patientId) throw new Error('Laboratuvar yanıtı seçilen hasta ile eşleşmiyor.');
 
   await Promise.all([
     saveLabReportPatientMetadata(result.lab_report_id, result.patient),
     saveLabReportClinicalContext(result.lab_report_id, clinicalContext),
   ]);
-  rememberLatestAnalysis(result);
+  assertCurrentPatientScope(scope);
+  rememberLatestAnalysis(result, scope);
 
   return result;
 }
@@ -605,9 +621,10 @@ export async function getLatestAnalysisForLabReport(
   labReportId: string,
   patientId: string,
 ): Promise<LabAnalysisResponse | null> {
+  const scope = capturePatientScope();
   const response = await fetch(
     `${API_BASE_URL}/lab-reports/${labReportId}/analysis-runs`,
-    { headers: { ...authHeaders() } },
+    { headers: { ...authHeaders() }, signal: scope.signal },
   );
 
   if (!response.ok) {
@@ -625,11 +642,18 @@ export async function getLatestAnalysisForLabReport(
   })[0];
 
   if (!latestRun) return null;
+  if (latestRun.patient_id !== patientId || latestRun.lab_report_id !== labReportId) {
+    throw new Error('Laboratuvar analizi beklenen hasta/rapor ile eşleşmiyor.');
+  }
 
   const [results, report] = await Promise.all([
     getAnalysisRunResults(latestRun.id),
     getLabReportSummary(labReportId),
   ]);
+  assertCurrentPatientScope(scope);
+  if (!report || report.patient_id !== patientId || report.id !== labReportId) {
+    throw new Error('Laboratuvar raporu beklenen hasta ile eşleşmiyor.');
+  }
   const metadata = report?.metadata_json ?? {};
   const derivedMetrics = Array.isArray(metadata.derived_metrics)
     ? (metadata.derived_metrics as DerivedLabMetric[])
@@ -666,6 +690,6 @@ export async function getLatestAnalysisForLabReport(
     clinical_assessment: clinicalAssessment,
   };
 
-  rememberLatestAnalysis(restored);
+  rememberLatestAnalysis(restored, scope);
   return restored;
 }

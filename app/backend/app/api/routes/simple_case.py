@@ -3,21 +3,29 @@
 from __future__ import annotations
 
 import io
+import hashlib
+import json
 import logging
 import uuid
 from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from pypdf import PdfReader
-from sqlalchemy import delete
+from sqlalchemy import select
 
 from app.api.dependencies import SessionDep
 from app.api.routes.auth import get_current_active_user
 from app.core.config import get_settings
 from app.domain.enums import ResultStatus, Sex, TrendStatus, UserRole
 from app.domain.patient_clinical_context import patient_clinical_context
+from app.domain.clinical_record_dates import stamp_clinical_record_dates
+from app.domain.patient_lab_history import ensure_patient_access
+from app.domain.patient_scope import (
+    SOURCE_MODELS, source_references, validate_source_metadata,
+)
+from app.domain.report_type_inference import infer_report_type
 from app.domain.claude_lab_extraction_service import ClaudeLabExtractionService
 from app.domain.canonical_lab_model import SOURCE_FILE_UPLOAD
 from app.domain.fast_pdf_lab_parser import try_fast_pdf_lab_case
@@ -36,6 +44,7 @@ from app.domain.lab_document_errors import reader_failure
 from app.domain.lab_document_normalizer import DocumentPage
 from app.domain.simple_case_ai import interpret_simple_case
 from app.infrastructure.database.models.lab_report import LabReport
+from app.infrastructure.database.models.clinical_hypothesis import ClinicalHypothesis
 from app.infrastructure.database.models.lab_result import LabResult
 from app.infrastructure.database.models.patient import Patient
 from app.infrastructure.database.models.radiology_report import RadiologyReport
@@ -47,6 +56,7 @@ from app.schemas.simple_case import (
     SimpleCaseRequest,
     SimpleCaseResponse,
 )
+from app.schemas.radiology_report import DEMO_PATIENT_ID
 
 
 router = APIRouter(prefix="/simple-case", tags=["simple-case"])
@@ -189,6 +199,51 @@ def _report_modality(report_type: str) -> str:
     return "OTHER"
 
 
+def _source_fingerprint(value) -> str:
+    encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _ensure_actual_case_patient(patient_id: uuid.UUID) -> None:
+    if patient_id == DEMO_PATIENT_ID:
+        raise HTTPException(status_code=404, detail="Hasta kaydı bulunamadı.")
+
+
+async def _validate_case_patient_sources(
+    payload: SimpleCaseRequest, session: SessionDep, current_user: User,
+    patient_id: uuid.UUID | None = None,
+    raw_payload: dict | None = None,
+) -> None:
+    """Reject mixed patient references before persisting or paying for AI."""
+    metadata = raw_payload if raw_payload is not None else [
+        *(item.source_metadata for item in payload.labs),
+        *(item.metadata for item in payload.reports),
+    ]
+    references = set(source_references(metadata))
+    if patient_id is None:
+        # The standalone endpoint accepts unsaved text, but persisted references
+        # must still resolve to exactly one accessible patient.
+        patients = {source_id for source_type, source_id in references if source_type == "patient"}
+        for source_type, source_id in references:
+            if source_type == "patient":
+                continue
+            record = await session.get(SOURCE_MODELS[source_type], source_id)
+            if record is None:
+                raise HTTPException(status_code=404, detail="Hasta veri kaynağı bulunamadı.")
+            if source_type == "doctor_review":
+                record = await session.get(ClinicalHypothesis, record.clinical_hypothesis_id)
+                if record is None:
+                    raise HTTPException(status_code=404, detail="Hasta veri kaynağı bulunamadı.")
+            patients.add(record.patient_id)
+        if len(patients) > 1:
+            raise HTTPException(status_code=409, detail="Farklı hastaların verileri birlikte kullanılamaz.")
+        patient_id = next(iter(patients), None)
+    if patient_id is not None:
+        _ensure_actual_case_patient(patient_id)
+        await ensure_patient_access(session, patient_id=patient_id, current_user=current_user)
+        await validate_source_metadata(session, patient_id=patient_id, metadata=metadata)
+
+
 async def _persist_simple_case_sources(
     *,
     patient_id: uuid.UUID,
@@ -196,26 +251,42 @@ async def _persist_simple_case_sources(
     session: SessionDep,
     current_user: User,
 ) -> None:
-    """Replace persisted simplified lab/report records for one patient."""
+    """Append distinct source sets; resaving never deletes a patient's history."""
 
-    await session.execute(
-        delete(LabReport).where(
+    existing_labs = (
+        await session.execute(select(LabReport).where(
             LabReport.patient_id == patient_id,
             LabReport.source_type == "simple_case_pdf",
-        )
-    )
-    await session.execute(
-        delete(RadiologyReport).where(
-            RadiologyReport.patient_id == patient_id,
-            RadiologyReport.source_type == "simple_case_report",
-        )
-    )
-    await session.flush()
+        ))
+    ).scalars().all()
+    existing_lab_fingerprints = {
+        _source_fingerprint((report.raw_payload or {}).get("labs", []))
+        for report in existing_labs
+    }
+    grouped_labs: dict[tuple[str, str | None], list] = {}
+    # A document can contain different clinical dates. Keep each dated set intact
+    # so adding a later report does not relabel or replace its earlier results.
+    for item in normalized.labs:
+        source = str(item.source_metadata.get("source_sha256")
+                     or item.source_metadata.get("source_file_name") or "manual")
+        measured_at = _date_or_none(item.measured_at)
+        key = (source, measured_at.isoformat() if measured_at else None)
+        grouped_labs.setdefault(key, []).append(item)
+    # Recognize pre-upgrade aggregate reports without duplicating their rows.
+    all_labs_fingerprint = _source_fingerprint([
+        item.model_dump(mode="json") for item in normalized.labs
+    ])
+    if all_labs_fingerprint in existing_lab_fingerprints:
+        grouped_labs = {}
 
-    if normalized.labs:
+    for labs in grouped_labs.values():
+        source_rows = [item.model_dump(mode="json") for item in labs]
+        fingerprint = _source_fingerprint(source_rows)
+        if fingerprint in existing_lab_fingerprints:
+            continue
         source_files = [
             str(item.source_metadata.get("source_file_name"))
-            for item in normalized.labs
+            for item in labs
             if item.source_metadata.get("source_file_name")
         ]
         lab_report = LabReport(
@@ -223,14 +294,15 @@ async def _persist_simple_case_sources(
             uploaded_by_user_id=current_user.id,
             source_type="simple_case_pdf",
             file_name=source_files[0] if source_files else "laboratuvar.pdf",
-            report_date=_date_or_none(normalized.labs[0].measured_at),
+            report_date=_date_or_none(labs[0].measured_at),
             raw_payload={
                 "contract_version": normalized.contract_version,
-                "labs": [item.model_dump(mode="json") for item in normalized.labs],
+                "labs": source_rows,
             },
             status="saved",
             metadata_json={
                 "simple_case": True,
+                "source_fingerprint": fingerprint,
                 "source_files": list(dict.fromkeys(source_files)),
                 "classification_disabled": True,
                 "simple_case_results": [
@@ -245,7 +317,7 @@ async def _persist_simple_case_sources(
                             else item.measured_at
                         ),
                     }
-                    for item in normalized.labs
+                    for item in labs
                 ],
             },
         )
@@ -253,7 +325,7 @@ async def _persist_simple_case_sources(
         await session.flush()
 
         lab_rows: list[LabResult] = []
-        for item in normalized.labs:
+        for item in labs:
             lab_rows.append(
                 LabResult(
                     patient_id=patient_id,
@@ -297,12 +369,42 @@ async def _persist_simple_case_sources(
                 )
             )
         session.add_all(lab_rows)
+        existing_lab_fingerprints.add(fingerprint)
+
+    existing_reports = (
+        await session.execute(select(RadiologyReport).where(
+            RadiologyReport.patient_id == patient_id,
+            RadiologyReport.source_type == "simple_case_report",
+        ))
+    ).scalars().all()
+    report_fingerprints = {
+        (report.metadata_json or {}).get("source_fingerprint")
+        for report in existing_reports
+    }
 
     for report in normalized.reports:
-        source_text = (report.raw_text or report.findings or report.impression or "").strip()
-        if not source_text:
+        source_text = report.raw_text or report.findings or report.impression or ""
+        if not source_text.strip():
             continue
         metadata = dict(report.metadata or {})
+        fingerprint = _source_fingerprint(report.model_dump(mode="json"))
+        if fingerprint in report_fingerprints:
+            continue
+        # Older rows have no fingerprint; compare their original source fields.
+        if any(
+            stored.original_text == source_text
+            and stored.report_date == _date_or_none(report.report_date)
+            and stored.file_name == metadata.get("source_file_name")
+            and (stored.metadata_json or {}).get("report_type") == report.report_type
+            and stored.impression == report.impression
+            for stored in existing_reports
+            if not (stored.metadata_json or {}).get("source_fingerprint")
+        ):
+            continue
+        metadata.update(infer_report_type(
+            source_text=source_text, findings=report.findings,
+            impression=report.impression, modality=report.report_type,
+        ).to_metadata())
         file_name = metadata.get("source_file_name")
         session.add(
             RadiologyReport(
@@ -328,11 +430,13 @@ async def _persist_simple_case_sources(
                 metadata_json={
                     **metadata,
                     "simple_case": True,
+                    "source_fingerprint": fingerprint,
                     "report_type": report.report_type,
                     "physician_review_required": True,
                 },
             )
         )
+        report_fingerprints.add(fingerprint)
 
     await session.flush()
 
@@ -345,6 +449,7 @@ async def get_saved_simple_case(
 ) -> dict:
     """Return the persisted simple-case snapshot and saved AI report."""
 
+    _ensure_actual_case_patient(patient_id)
     patient = await session.get(Patient, patient_id)
     if patient is None:
         raise HTTPException(status_code=404, detail="Hasta kaydı bulunamadı.")
@@ -356,6 +461,8 @@ async def get_saved_simple_case(
 
     metadata = dict(patient.metadata_json or {})
     saved_case = metadata.get("simple_case")
+    if isinstance(saved_case, dict):
+        await validate_source_metadata(session, patient_id=patient_id, metadata=saved_case)
     ai_report = metadata.get("simple_case_ai_report")
     if (
         not isinstance(saved_case, dict)
@@ -386,10 +493,15 @@ async def normalize_case(payload: SimpleCaseRequest) -> SimpleCaseResponse:
 @router.post("/ai-interpretation", response_model=CaseAIInterpretationResponse)
 async def ai_interpret_case(
     payload: SimpleCaseRequest,
+    request: Request,
+    session: SessionDep,
     current_user: Annotated[User, Depends(get_current_active_user)],
 ) -> CaseAIInterpretationResponse:
     """Synthesize clinical + lab + reports for clinician review."""
 
+    await _validate_case_patient_sources(
+        payload, session, current_user, raw_payload=await request.json(),
+    )
     try:
         result = await interpret_simple_case(payload)
     except RuntimeError as exc:
@@ -413,11 +525,13 @@ async def ai_interpret_case(
 async def ai_interpret_patient_case(
     patient_id: uuid.UUID,
     payload: SimpleCaseRequest,
+    request: Request,
     session: SessionDep,
     current_user: Annotated[User, Depends(get_current_active_user)],
 ) -> CaseAIInterpretationResponse:
     """Generate and persist the physician-style AI report for a saved patient case."""
 
+    _ensure_actual_case_patient(patient_id)
     patient = await session.get(Patient, patient_id)
     if patient is None:
         raise HTTPException(status_code=404, detail="Hasta kaydı bulunamadı.")
@@ -427,6 +541,9 @@ async def ai_interpret_patient_case(
         if owner_user_id != str(current_user.id):
             raise HTTPException(status_code=404, detail="Hasta kaydı bulunamadı.")
 
+    await _validate_case_patient_sources(
+        payload, session, current_user, patient_id, raw_payload=await request.json(),
+    )
     try:
         result = await interpret_simple_case(payload)
     except RuntimeError as exc:
@@ -840,11 +957,13 @@ async def upload_report_image(
 async def save_case_for_patient(
     patient_id: uuid.UUID,
     payload: SimpleCaseRequest,
+    request: Request,
     session: SessionDep,
     current_user: Annotated[User, Depends(get_current_active_user)],
 ) -> SimpleCaseResponse:
     """Persist the latest simplified case snapshot on the patient record."""
 
+    _ensure_actual_case_patient(patient_id)
     patient = await session.get(Patient, patient_id)
     if patient is None:
         raise HTTPException(status_code=404, detail="Hasta kaydı bulunamadı.")
@@ -854,6 +973,9 @@ async def save_case_for_patient(
         if owner_user_id != str(current_user.id):
             raise HTTPException(status_code=404, detail="Hasta kaydı bulunamadı.")
 
+    await _validate_case_patient_sources(
+        payload, session, current_user, patient_id, raw_payload=await request.json(),
+    )
     previous = patient_clinical_context({**(patient.metadata_json or {}), "sex": str(patient.sex)})
     # Additive fields must survive requests from clients that do not know them.
     preserved = {
@@ -872,6 +994,7 @@ async def save_case_for_patient(
         current_user=current_user,
     )
     metadata = dict(patient.metadata_json or {})
+    metadata = stamp_clinical_record_dates(metadata, previous, normalized.clinical)
     case_snapshot = normalized.model_dump(mode="json")
     ai_report = metadata.get("simple_case_ai_report")
     if (

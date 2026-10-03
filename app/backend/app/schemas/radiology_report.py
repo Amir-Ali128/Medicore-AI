@@ -6,7 +6,9 @@ import uuid
 from datetime import date, datetime
 from typing import Any
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, computed_field, field_validator
+
+from app.domain.report_type_inference import infer_existing_report_type
 
 DEMO_PATIENT_ID = uuid.UUID("3fa85f64-5717-4562-b3fc-2c963f66afa6")
 DEMO_UPLOADED_BY_USER_ID = uuid.UUID("3fa85f64-5717-4562-b3fc-2c963f66afa6")
@@ -98,3 +100,13 @@ class RadiologyReportResponse(BaseModel):
     metadata_json: dict[str, Any]
     created_at: datetime
     updated_at: datetime
+
+    @computed_field
+    @property
+    def inferred_report_type(self) -> str:
+        return infer_existing_report_type(self).report_type
+
+    @computed_field
+    @property
+    def report_type_confidence(self) -> float:
+        return infer_existing_report_type(self).confidence

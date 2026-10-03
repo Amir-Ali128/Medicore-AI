@@ -1,16 +1,11 @@
+import { clearPatientScope, PATIENT_SESSION_KEYS, selectPatientScope } from './patientScope';
+
 export const PATIENT_HISTORY_KEY = 'medicore:patientHistory';
 export const ACTIVE_CLINICAL_INTAKE_KEY = 'medicore:activeClinicalIntake';
 
 const ACTIVE_PATIENT_KEYS = [
   'medicore:activePatientId',
-  'medicore:activePatientProtocol',
-  'medicore:lastAnalysisRunId',
-  'medicore:lastLabReportId',
-  'medicore:lastRadiologyReportId',
-  'medicore:lastPatientAge',
-  'medicore:lastPatientSex',
-  'medicore:lastPatientBirthDate',
-  ACTIVE_CLINICAL_INTAKE_KEY,
+  ...PATIENT_SESSION_KEYS,
 ] as const;
 
 export type PatientHistoryRecord = {
@@ -102,9 +97,7 @@ export function archiveActivePatientSession(): PatientHistoryRecord | null {
 }
 
 export function clearActivePatientSession() {
-  ACTIVE_PATIENT_KEYS.forEach((key) => localStorage.removeItem(key));
-  localStorage.removeItem('medicore:lastPatientDisplayName');
-  localStorage.removeItem('medicore:last_patient_display_name');
+  clearPatientScope();
 }
 
 export function startNewPatientSession() {
@@ -116,9 +109,13 @@ export function startNewPatientSession() {
 export function restorePatientSession(recordId: string) {
   const record = readHistory().find((item) => item.id === recordId);
   if (!record) return false;
+  const patientId = record.snapshot['medicore:activePatientId'];
+  // Unidentified legacy snapshots cannot be attached to an arbitrary patient.
+  if (!patientId) return false;
   clearActivePatientSession();
+  selectPatientScope(patientId, false);
   Object.entries(record.snapshot).forEach(([key, value]) => {
-    localStorage.setItem(key, value);
+    if ((ACTIVE_PATIENT_KEYS as readonly string[]).includes(key)) localStorage.setItem(key, value);
   });
   return true;
 }

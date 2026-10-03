@@ -37,7 +37,11 @@ jobs:
             tests/test_simple_case.py \
             tests/test_patient_clinical_vitals.py \
             tests/test_patient_protocol.py \
-            tests/test_radiology_report_parser.py
+            tests/test_radiology_report_parser.py \
+            tests/test_patient_isolation.py \
+            tests/test_patient_health_timeline.py \
+            tests/test_patient_health_timeline_api.py \
+            tests/test_report_type_inference.py
 
   frontend-build:
     runs-on: ubuntu-latest

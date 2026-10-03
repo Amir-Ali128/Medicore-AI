@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 
 import {
   createPatient,
@@ -18,6 +18,7 @@ import {
   type SimpleCaseResponse,
 } from '../services/simpleCaseClient';
 import { getActivePatientId, setActiveClinicalDraft } from '../services/patientClient';
+import { bindPatientMetadata, capturePatientScope, isCurrentPatientScope, selectPatientScope, type PatientScope } from '../services/patientScope';
 import { simpleCaseInputKey } from '../services/simpleCaseInputKey';
 import { classifyLabForDisplay, type LabDisplayClassification } from '../services/labDisplayClassification';
 import { mergeLabDocuments } from '../services/labDocumentMerge';
@@ -134,6 +135,16 @@ function ReportSection({ heading, body }: { heading: string; body: string }) {
 
 export default function SimpleCaseWorkspacePage() {
   const [searchParams] = useSearchParams();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+  function operationCurrent(scope: PatientScope) {
+    return mounted.current && isCurrentPatientScope(scope);
+  }
   const [step, setStep] = useState<Step>('patient');
 
   const [protocolNo, setProtocolNo] = useState('');
@@ -167,11 +178,25 @@ export default function SimpleCaseWorkspacePage() {
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
 
-  useEffect(() => {
-    const requestedPatientId = searchParams.get('patient');
+  useLayoutEffect(() => {
+    const routeState = location.state as { patientId?: string; step?: Step } | null;
+    const requestedPatientId = searchParams.get('patient') || routeState?.patientId;
     const activePatientId = requestedPatientId || getActivePatientId();
+    if (activePatientId) selectPatientScope(activePatientId);
+    // Clear every case field before the new patient's fetch starts. Failure or
+    // an empty case must never leave the previous patient's screen visible.
+    setPatientId(null); setProtocolNo(''); setAge(''); setSex('unknown');
+    setComplaints(''); setHistory(''); setMedications(''); setNotes('');
+    setVitalValues(vitalDraft()); setLabs([]); setReports([]);
+    setResult(null); setAiResult(null); setAiReportWarning(''); setError('');
+    setSaved(false); setSaving(false); setLabBusy(false); setReportBusy(false); setAiBusy(false);
+    setLabImageRotation(0); setReportType('Tıbbi Rapor'); setBodyRegion(''); setStep('patient');
     if (!activePatientId) return;
     const patientIdToLoad: string = activePatientId;
+    const scope = capturePatientScope();
+    const loadController = new AbortController();
+    const abortLoad = () => loadController.abort();
+    scope.signal.addEventListener('abort', abortLoad, { once: true });
 
     let cancelled = false;
 
@@ -179,8 +204,9 @@ export default function SimpleCaseWorkspacePage() {
       setError('');
       setAiReportWarning('');
       try {
-        const saved = await getSavedSimpleCase(patientIdToLoad);
-        if (cancelled) return;
+        const saved = await getSavedSimpleCase(patientIdToLoad, loadController.signal);
+        if (cancelled || !isCurrentPatientScope(scope)) return;
+        if (saved.patient_id !== patientIdToLoad) throw new Error('Vaka yanıtı seçilen hasta ile eşleşmiyor.');
 
         setPatientId(saved.patient_id);
         setProtocolNo(saved.protocol_no);
@@ -250,13 +276,13 @@ export default function SimpleCaseWorkspacePage() {
           );
         }
 
-        const requestedStep = searchParams.get('step') as Step | null;
+        const requestedStep = (searchParams.get('step') || routeState?.step) as Step | null;
         const validStep = steps.some((item) => item.key === requestedStep)
           ? (requestedStep as Step)
           : null;
         setStep(validStep ?? (saved.ai_report ? 'summary' : simpleCase ? 'clinical' : 'patient'));
       } catch (err) {
-        if (!cancelled) {
+        if (!cancelled && isCurrentPatientScope(scope)) {
           setError(err instanceof Error ? err.message : 'Kayıtlı vaka açılamadı.');
         }
       }
@@ -265,8 +291,10 @@ export default function SimpleCaseWorkspacePage() {
     void hydrateSavedCase();
     return () => {
       cancelled = true;
+      loadController.abort();
+      scope.signal.removeEventListener('abort', abortLoad);
     };
-  }, [searchParams]);
+  }, [searchParams, location.state]);
 
   const payload = useMemo<SimpleCaseRequest>(
     () => ({
@@ -339,21 +367,25 @@ export default function SimpleCaseWorkspacePage() {
     }
     setSaving(true);
     setError('');
+    const scope = capturePatientScope();
     try {
       const patient = await createPatient({
         protocol_no: protocolNo.trim(),
         age: age ? Number(age) : null,
         sex,
         clinical_context: payload.clinical,
-      });
+      }, scope.signal);
+      if (!operationCurrent(scope)) return;
       setPatientId(patient.id);
       setActiveClinicalDraft(patient.id, patient.protocol_no, payload.clinical);
+      navigate(`/case?patient=${encodeURIComponent(patient.id)}&step=clinical`, { replace: true, state: null });
       setSaved(false);
       setStep('clinical');
     } catch (err) {
+      if (!operationCurrent(scope)) return;
       setError(err instanceof Error ? err.message : 'Hasta kaydedilemedi.');
     } finally {
-      setSaving(false);
+      if (operationCurrent(scope)) setSaving(false);
     }
   }
 
@@ -361,14 +393,18 @@ export default function SimpleCaseWorkspacePage() {
     if (!file) return;
     setLabBusy(true);
     setError('');
+    const scope = capturePatientScope();
     try {
-      const rows = await uploadLabPdf(file);
-      setLabs((current) => mergeLabDocuments(current, rows));
+      const rows = await uploadLabPdf(file, scope.signal);
+      if (!operationCurrent(scope)) return;
+      const patientRows = rows.map((row) => ({ ...row, source_metadata: bindPatientMetadata(row.source_metadata, scope.patientId) }));
+      setLabs((current) => mergeLabDocuments(current, patientRows));
       setSaved(false);
     } catch (err) {
+      if (!operationCurrent(scope)) return;
       setError(err instanceof Error ? err.message : 'Kan PDF’i işlenemedi.');
     } finally {
-      setLabBusy(false);
+      if (operationCurrent(scope)) setLabBusy(false);
     }
   }
 
@@ -376,14 +412,18 @@ export default function SimpleCaseWorkspacePage() {
     if (!file) return;
     setLabBusy(true);
     setError('');
+    const scope = capturePatientScope();
     try {
-      const rows = await uploadLabImage(file, labImageRotation);
-      setLabs((current) => mergeLabDocuments(current, rows));
+      const rows = await uploadLabImage(file, labImageRotation, scope.signal);
+      if (!operationCurrent(scope)) return;
+      const patientRows = rows.map((row) => ({ ...row, source_metadata: bindPatientMetadata(row.source_metadata, scope.patientId) }));
+      setLabs((current) => mergeLabDocuments(current, patientRows));
       setSaved(false);
     } catch (err) {
+      if (!operationCurrent(scope)) return;
       setError(err instanceof Error ? err.message : 'Kan fotoğrafı işlenemedi.');
     } finally {
-      setLabBusy(false);
+      if (operationCurrent(scope)) setLabBusy(false);
     }
   }
 
@@ -391,14 +431,18 @@ export default function SimpleCaseWorkspacePage() {
     if (!file) return;
     setReportBusy(true);
     setError('');
+    const scope = capturePatientScope();
     try {
-      const report = await uploadReportPdf(file, reportType, bodyRegion);
-      setReports((current) => [...current, report]);
+      const report = await uploadReportPdf(file, reportType, bodyRegion, scope.signal);
+      if (!operationCurrent(scope)) return;
+      const patientReport = { ...report, metadata: bindPatientMetadata(report.metadata, scope.patientId) };
+      setReports((current) => [...current, patientReport]);
       setSaved(false);
     } catch (err) {
+      if (!operationCurrent(scope)) return;
       setError(err instanceof Error ? err.message : 'Rapor PDF’i işlenemedi.');
     } finally {
-      setReportBusy(false);
+      if (operationCurrent(scope)) setReportBusy(false);
     }
   }
 
@@ -406,14 +450,18 @@ export default function SimpleCaseWorkspacePage() {
     if (!file) return;
     setReportBusy(true);
     setError('');
+    const scope = capturePatientScope();
     try {
-      const report = await uploadReportImage(file, reportType, bodyRegion);
-      setReports((current) => [...current, report]);
+      const report = await uploadReportImage(file, reportType, bodyRegion, scope.signal);
+      if (!operationCurrent(scope)) return;
+      const patientReport = { ...report, metadata: bindPatientMetadata(report.metadata, scope.patientId) };
+      setReports((current) => [...current, patientReport]);
       setSaved(false);
     } catch (err) {
+      if (!operationCurrent(scope)) return;
       setError(err instanceof Error ? err.message : 'Rapor fotoğrafı işlenemedi.');
     } finally {
-      setReportBusy(false);
+      if (operationCurrent(scope)) setReportBusy(false);
     }
   }
 
@@ -431,14 +479,17 @@ export default function SimpleCaseWorkspacePage() {
     setError('');
     setAiReportWarning('');
     const previousInterpretation = aiInterpretation;
+    const scope = capturePatientScope();
     try {
-      const interpretation = await interpretSimpleCase(payload, patientId);
+      const interpretation = await interpretSimpleCase(payload, patientId, scope.signal);
+      if (!operationCurrent(scope)) return;
       if (!isCurrentClinicalReport(interpretation.report_text)) {
         throw new Error('AI klinik raporu güncel bölüm sözleşmesini tamamlamadı.');
       }
       setAiResult({ report: interpretation, inputKey });
       setStep('summary');
     } catch (err) {
+      if (!operationCurrent(scope)) return;
       const message = err instanceof Error ? err.message : 'AI klinik yorum tamamlanamadı.';
       if (previousInterpretation) {
         setAiReportWarning(
@@ -447,7 +498,7 @@ export default function SimpleCaseWorkspacePage() {
       }
       setError(message);
     } finally {
-      setAiBusy(false);
+      if (operationCurrent(scope)) setAiBusy(false);
     }
   }
 
@@ -460,16 +511,19 @@ export default function SimpleCaseWorkspacePage() {
     }
     setSaving(true);
     setError('');
+    const scope = capturePatientScope();
     try {
-      const normalized = await saveSimpleCase(patientId, payload);
+      const normalized = await saveSimpleCase(patientId, payload, scope.signal);
+      if (!operationCurrent(scope)) return;
       setResult(normalized);
       setActiveClinicalDraft(patientId, protocolNo, normalized.clinical);
       setSaved(true);
       setStep(nextStep);
     } catch (err) {
+      if (!operationCurrent(scope)) return;
       setError(err instanceof Error ? err.message : 'Vaka kaydedilemedi.');
     } finally {
-      setSaving(false);
+      if (operationCurrent(scope)) setSaving(false);
     }
   }
 
@@ -996,7 +1050,10 @@ export default function SimpleCaseWorkspacePage() {
               </div>
 
               <section className="rounded-3xl border border-slate-200 p-5">
-                <h3 className="mb-4 font-semibold text-slate-950">Klinik Öykü</h3>
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                  <h3 className="font-semibold text-slate-950">Klinik Öykü</h3>
+                  {patientId ? <Link to={`/patient-timeline?patient=${encodeURIComponent(patientId)}`} className="text-sm font-semibold text-blue-700">Sağlık Geçmişini Gör</Link> : null}
+                </div>
                 <ClinicalHistorySummary clinical={payload.clinical} />
               </section>
 
@@ -1059,7 +1116,7 @@ export default function SimpleCaseWorkspacePage() {
                 <h3 className="font-semibold text-slate-950">Vaka durumu</h3>
                 <p className="mt-2 text-sm leading-6 text-slate-500">
                   {saved
-                    ? 'Vaka hasta kaydına kaydedildi. Klinik bilgi, kan sonuçları ve raporlar aynı snapshot içinde tutuluyor.'
+                    ? 'Vaka kaydı güncellendi. Önceki laboratuvar ve rapor kayıtlarına sağlık geçmişinden ulaşabilirsin.'
                     : 'Değişiklikleri hasta kaydına yazmak için “Vakayı kaydet” düğmesine bas.'}
                 </p>
               </div>

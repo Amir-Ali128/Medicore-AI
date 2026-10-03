@@ -5,6 +5,7 @@ import {
   type ChangeEvent,
   type ReactNode,
 } from 'react';
+import { capturePatientScope, isCurrentPatientScope, type PatientScope } from '../../services/patientScope';
 
 import type { ClinicalIntakeInput } from '../../services/labAnalysisClient';
 
@@ -120,7 +121,8 @@ export function readStoredClinicalIntake(): ClinicalIntakeInput | null {
   }
 }
 
-export function persistClinicalIntake(value: ClinicalIntakeInput): void {
+export function persistClinicalIntake(value: ClinicalIntakeInput, scope = capturePatientScope()): void {
+  if (!isCurrentPatientScope(scope)) return;
   try {
     const sanitizedValue: ClinicalIntakeInput = {
       ...value,
@@ -183,6 +185,7 @@ export default function ClinicalIntakeForm({
   onChange,
 }: ClinicalIntakeFormProps) {
   const hydratedRef = useRef(false);
+  const scope = useRef<PatientScope>(capturePatientScope());
   const [savedAt, setSavedAt] = useState<Date | null>(null);
 
   useEffect(() => {
@@ -197,6 +200,7 @@ export default function ClinicalIntakeForm({
   }, [onChange]);
 
   const emitChange = (nextValue: ClinicalIntakeInput) => {
+    if (!isCurrentPatientScope(scope.current)) return;
     const sanitizedValue: ClinicalIntakeInput = {
       ...nextValue,
       patient_information: {
@@ -204,7 +208,7 @@ export default function ClinicalIntakeForm({
         full_name: null,
       },
     };
-    persistClinicalIntake(sanitizedValue);
+    persistClinicalIntake(sanitizedValue, scope.current);
     setSavedAt(new Date());
     onChange(sanitizedValue);
   };

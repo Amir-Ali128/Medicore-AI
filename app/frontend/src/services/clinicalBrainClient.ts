@@ -7,8 +7,8 @@ import {
 } from './labAnalysisClient';
 import { getPatientRecord } from './patientClient';
 import { legacyClinicalIntake, recordClinical } from './clinicalRecord';
+import { assertCurrentPatientScope, capturePatientScope, type PatientScope } from './patientScope';
 import {
-  ACTIVE_PATIENT_ID_KEY,
   isAnalyzableRadiologyReport,
   type RadiologyReport,
 } from './radiologyClient';
@@ -228,6 +228,7 @@ function sanitizeClinicalContext(
           last_modified_ms: attachment.last_modified_ms ?? null,
         }))
       : [],
+    vital_signs: context.vital_signs,
   };
 }
 
@@ -251,8 +252,8 @@ function hasMeaningfulClinicalContext(context: ClinicalIntakeInput | null): bool
   ].some((value) => value !== null && value !== undefined && value !== '');
 }
 
-async function restoreBackendSources(input: ClinicalBrainInput): Promise<ClinicalBrainInput> {
-  const activePatientId = localStorage.getItem(ACTIVE_PATIENT_ID_KEY);
+async function restoreBackendSources(input: ClinicalBrainInput, scope: PatientScope): Promise<ClinicalBrainInput> {
+  const activePatientId = scope.patientId;
   if (!activePatientId) return input;
 
   let clinicalContext = input.clinical_context;
@@ -260,16 +261,20 @@ async function restoreBackendSources(input: ClinicalBrainInput): Promise<Clinica
 
   if (!hasMeaningfulClinicalContext(clinicalContext)) {
     try {
-      const patient = await getPatientRecord(activePatientId);
+      const patient = await getPatientRecord(activePatientId, scope.signal);
+      assertCurrentPatientScope(scope);
       clinicalContext = legacyClinicalIntake(recordClinical(patient), patient.metadata_json?.clinical_context);
     } catch {
       // Keep the browser draft when the persistent patient record cannot be restored.
     }
   }
 
+  assertCurrentPatientScope(scope);
+
   if (labResults.length === 0) {
     try {
       const reports = await listPatientLabReports(activePatientId);
+      assertCurrentPatientScope(scope);
       const sortedReports = [...reports].sort(
         (left, right) =>
           Date.parse(right.updated_at || right.created_at || '') -
@@ -278,6 +283,7 @@ async function restoreBackendSources(input: ClinicalBrainInput): Promise<Clinica
 
       for (const report of sortedReports) {
         const analysis = await getLatestAnalysisForLabReport(report.id, activePatientId);
+        assertCurrentPatientScope(scope);
         if (analysis?.results?.length) {
           labResults = analysis.results;
           break;
@@ -287,6 +293,8 @@ async function restoreBackendSources(input: ClinicalBrainInput): Promise<Clinica
       // Empty lab input remains valid; Clinical Brain will mark laboratory unavailable.
     }
   }
+
+  assertCurrentPatientScope(scope);
 
   return {
     ...input,
@@ -316,7 +324,12 @@ function reportTimestamp(report: RadiologyReport): number {
 export async function evaluateClinicalBrain(
   input: ClinicalBrainInput,
 ): Promise<ClinicalBrainResult> {
-  const restoredInput = await restoreBackendSources(input);
+  const scope = capturePatientScope();
+  if (scope.patientId && input.radiology_reports.some((report) => report.patient_id !== scope.patientId)) {
+    throw new Error('Klinik değerlendirmedeki tetkik seçilen hasta ile eşleşmiyor.');
+  }
+  const restoredInput = await restoreBackendSources(input, scope);
+  assertCurrentPatientScope(scope);
   const payload: ClinicalBrainInput = {
     ...restoredInput,
     clinical_context: sanitizeClinicalContext(restoredInput.clinical_context),
@@ -325,7 +338,9 @@ export async function evaluateClinicalBrain(
   const result = await apiClient.post<ClinicalBrainResult>(
     '/clinical-brain/evaluate',
     payload,
+    { signal: scope.signal },
   );
+  assertCurrentPatientScope(scope);
 
   const latestRadiology = [...(restoredInput.radiology_reports ?? [])]
     .filter(isAnalyzableRadiologyReport)

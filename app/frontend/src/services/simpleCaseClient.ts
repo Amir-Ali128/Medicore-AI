@@ -114,6 +114,7 @@ export type PatientRecord = {
 type UploadInit = {
   method?: 'POST' | 'PUT';
   body: FormData;
+  signal?: AbortSignal;
 };
 
 async function uploadRequest<T>(path: string, init: UploadInit): Promise<T> {
@@ -121,6 +122,7 @@ async function uploadRequest<T>(path: string, init: UploadInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     method: init.method ?? 'POST',
     body: init.body,
+    signal: init.signal,
     headers: token ? { Authorization: `Bearer ${token}` } : undefined,
   });
 
@@ -144,70 +146,74 @@ export function createPatient(payload: {
   age: number | null;
   sex: SexValue;
   clinical_context: Record<string, unknown>;
-}) {
+}, signal?: AbortSignal) {
   return apiClient.post<PatientRecord>('/patients', {
     ...payload,
     height_cm: null,
     weight_kg: null,
-  });
+  }, { signal });
 }
 
-export function saveSimpleCase(patientId: string, payload: SimpleCaseRequest) {
+export function saveSimpleCase(patientId: string, payload: SimpleCaseRequest, signal?: AbortSignal) {
   return apiClient.put<SimpleCaseResponse>(
     `/simple-case/patients/${patientId}/save`,
     payload,
+    { signal },
   );
 }
 
-export function uploadLabPdf(file: File) {
+export function uploadLabPdf(file: File, signal?: AbortSignal) {
   const body = new FormData();
   body.append('file', file);
-  return uploadRequest<LabInput[]>('/simple-case/labs/pdf', { body });
+  return uploadRequest<LabInput[]>('/simple-case/labs/pdf', { body, signal });
 }
 
-export function uploadLabImage(file: File, rotation = 0) {
+export function uploadLabImage(file: File, rotation = 0, signal?: AbortSignal) {
   const body = new FormData();
   body.append('file', file);
   body.append('rotation', String(rotation));
-  return uploadRequest<LabInput[]>('/simple-case/labs/image', { body });
+  return uploadRequest<LabInput[]>('/simple-case/labs/image', { body, signal });
 }
 
 export function uploadReportPdf(
   file: File,
   reportType: string,
   bodyRegion: string,
+  signal?: AbortSignal,
 ) {
   const body = new FormData();
   body.append('file', file);
   body.append('report_type', reportType || 'Tıbbi Rapor');
   if (bodyRegion.trim()) body.append('body_region', bodyRegion.trim());
-  return uploadRequest<MedicalReportInput>('/simple-case/reports/pdf', { body });
+  return uploadRequest<MedicalReportInput>('/simple-case/reports/pdf', { body, signal });
 }
 
 export function uploadReportImage(
   file: File,
   reportType: string,
   bodyRegion: string,
+  signal?: AbortSignal,
 ) {
   const body = new FormData();
   body.append('file', file);
   body.append('report_type', reportType || 'Tıbbi Rapor');
   if (bodyRegion.trim()) body.append('body_region', bodyRegion.trim());
-  return uploadRequest<MedicalReportInput>('/simple-case/reports/image', { body });
+  return uploadRequest<MedicalReportInput>('/simple-case/reports/image', { body, signal });
 }
 
 
 export function interpretSimpleCase(
   payload: SimpleCaseRequest,
   patientId?: string | null,
+  signal?: AbortSignal,
 ) {
   const path = patientId
     ? `/simple-case/patients/${patientId}/ai-interpretation`
     : '/simple-case/ai-interpretation';
-  return apiClient.post<CaseAIInterpretation>(path, payload);
+  return apiClient.post<CaseAIInterpretation>(path, payload, { signal });
 }
 
 
-export function getSavedSimpleCase(patientId: string) {
-  return apiClient.get<SavedSimpleCase>(`/simple-case/patients/${patientId}`);
+export function getSavedSimpleCase(patientId: string, signal?: AbortSignal) {
+  return apiClient.get<SavedSimpleCase>(`/simple-case/patients/${patientId}`, { signal });
 }

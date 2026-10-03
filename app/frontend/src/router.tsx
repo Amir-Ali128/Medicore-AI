@@ -9,6 +9,7 @@ import AdminLoginPage from './pages/AdminLoginPage';
 import HomePage from './pages/HomePage';
 import LoginPage from './pages/LoginPage';
 import PatientHistoryPage from './pages/PatientHistoryPage';
+import PatientTimelinePage from './pages/PatientTimelinePage';
 import SimpleCaseWorkspacePage from './pages/SimpleCaseWorkspacePage';
 import UserFeedbackPage from './pages/UserFeedbackPage';
 
@@ -25,6 +26,7 @@ export const router = createHashRouter([
           { path: '/', element: <HomePage /> },
           { path: '/case', element: <SimpleCaseWorkspacePage /> },
           { path: '/history', element: <PatientHistoryPage /> },
+          { path: '/patient-timeline', element: <PatientTimelinePage /> },
           { path: '/feedback', element: <UserFeedbackPage /> },
 
           { path: '/admin/analytics', element: <AdminAnalyticsPage /> },

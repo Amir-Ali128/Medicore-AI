@@ -1,4 +1,5 @@
 import { getAccessToken } from './authClient';
+import { assertCurrentPatientScope, capturePatientScope } from './patientScope';
 import {
   LAST_ANALYSIS_RUN_ID_KEY,
   LAST_LAB_REPORT_ID_KEY,
@@ -92,6 +93,7 @@ function rememberCombinedCase(result: CombinedCaseImportResponse): void {
 export async function uploadCombinedCasePdf(
   file: File,
 ): Promise<CombinedCaseImportResponse> {
+  const scope = capturePatientScope();
   const formData = new FormData();
   formData.append('file', file);
 
@@ -99,6 +101,7 @@ export async function uploadCombinedCasePdf(
     method: 'POST',
     headers: authHeaders(),
     body: formData,
+    signal: scope.signal,
   });
 
   if (!response.ok) {
@@ -107,6 +110,10 @@ export async function uploadCombinedCasePdf(
   }
 
   const result = (await response.json()) as CombinedCaseImportResponse;
+  assertCurrentPatientScope(scope);
+  if (scope.patientId && (result.lab_analysis.patient_id !== scope.patientId || result.radiology_report.patient_id !== scope.patientId)) {
+    throw new Error('Birleşik vaka yanıtı seçilen hasta ile eşleşmiyor.');
+  }
   rememberCombinedCase(result);
   return result;
 }
