@@ -13,6 +13,7 @@ from typing import Any
 from app.domain.canonical_lab_model import SourceContext, build_canonical_case, content_sha256
 from app.domain.lab_document_normalizer import DocumentPage, normalize_document
 from app.domain.lab_document_errors import LabDocumentReadError
+from app.domain.lab_result_classification import normalize_lab_unit
 
 CONTRACT = 'medicore-lab-document-ingestion-v2'
 INGESTION_TIMEOUT_SECONDS = 120.0
@@ -71,7 +72,7 @@ def validate_merge(rows: list[RawLabRow], source: SourceContext) -> dict[str, An
             except (ValueError, TypeError):
                 reasons.append('invalid_numeric_value')
                 row['normalized_value'] = None
-        if row.get('reference_unit') and row.get('unit') and _text(row['reference_unit']).casefold() != _text(row['unit']).casefold():
+        if row.get('reference_unit') and row.get('unit') and normalize_lab_unit(row['reference_unit']) != normalize_lab_unit(row['unit']):
             reasons.append('reference_unit_mismatch')
         flag = _text(row.get('source_flag'))
         folded_flag = flag.casefold().translate(str.maketrans('ıüşöçğ', 'iusocg'))
@@ -91,7 +92,9 @@ def validate_merge(rows: list[RawLabRow], source: SourceContext) -> dict[str, An
                    needs_review=bool(reasons) or bool(row.get('needs_review')))
         key = (name.casefold(), _text(value), _text(row.get('unit')).casefold(),
                _text(row.get('reference_text')), _text(row.get('reference_min')), _text(row.get('reference_max')), _text(row.get('reference_unit')),
-               _text(row.get('measured_at')), flag.casefold())
+               _text(row.get('measured_at')), _text(row.get('event_date')),
+               _text(row.get('specimen_date')), _text(row.get('result_date')),
+               _text(row.get('document_date')), flag.casefold())
         location = {'page': raw.source_page, 'row': raw.source_row}
         if key in seen:
             seen[key]['source_locations'].append(location)
@@ -102,7 +105,9 @@ def validate_merge(rows: list[RawLabRow], source: SourceContext) -> dict[str, An
         row['source_locations'] = [location]
         seen[key] = row
         merged.append(row)
-        group = (name.casefold(), _text(row.get('unit')).casefold(), _text(row.get('measured_at')))
+        group = (name.casefold(), _text(row.get('unit')).casefold(),
+                 _text(row.get('measured_at')), _text(row.get('event_date')),
+                 _text(row.get('specimen_date')), _text(row.get('result_date')))
         groups.setdefault(group, []).append(row)
     for group in groups.values():
         if len(group) > 1:

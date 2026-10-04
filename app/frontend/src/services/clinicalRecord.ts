@@ -62,6 +62,8 @@ export function normalizeClinical(source: unknown, metadata: Record<string, unkn
     return [key, value !== null && value >= min && value <= max ? value : null];
   })) as VitalSigns;
   const sex = raw.sex ?? patient.sex ?? metadata.sex;
+  const eventDate = 'event_date' in raw ? raw.event_date : raw.examination_date ?? exam.examination_date;
+  const vitalDate = 'vitals_event_date' in raw ? raw.vitals_event_date : object(raw.vital_signs).measurement_date ?? exam.measurement_date;
   return {
     age: number(raw.age ?? patient.age ?? metadata.age),
     sex: (['male', 'female', 'other'].includes(String(sex)) ? sex : 'unknown') as SexValue,
@@ -70,6 +72,8 @@ export function normalizeClinical(source: unknown, metadata: Record<string, unkn
     medications: lines(modern ? raw.medications : history.medications),
     notes: lines(modern ? raw.notes : exam.examination_findings).join('\n') || null,
     vital_signs: vitals,
+    ...(eventDate === null || (typeof eventDate === 'string' && eventDate.trim()) ? { event_date: eventDate } : {}),
+    ...(vitalDate === null || (typeof vitalDate === 'string' && vitalDate.trim()) ? { vitals_event_date: vitalDate } : {}),
   };
 }
 export function recordClinical(record: RecordLike): ClinicalContext {
@@ -98,7 +102,7 @@ export function formatVitals(vitals?: VitalSigns | null): string[] {
   return parts;
 }
 
-export function legacyClinicalIntake(clinical: ClinicalContext, previous?: unknown): ClinicalIntakeInput {
+export function legacyClinicalIntake(clinical: ClinicalContext, previous?: unknown): ClinicalIntakeInput & Pick<ClinicalContext, 'event_date' | 'vitals_event_date'> {
   const original = object(previous);
   const patient = object(original.patient_information);
   const complaint = object(original.presenting_complaint);
@@ -137,6 +141,8 @@ export function legacyClinicalIntake(clinical: ClinicalContext, previous?: unkno
     },
     physical_exam: {
       ...exam,
+      ...('event_date' in clinical ? { examination_date: clinical.event_date ?? null } : {}),
+      ...('vitals_event_date' in clinical ? { measurement_date: clinical.vitals_event_date ?? null } : {}),
       blood_pressure_systolic: vitals?.systolic_bp ?? null,
       blood_pressure_diastolic: vitals?.diastolic_bp ?? null,
       pulse_bpm: vitals?.heart_rate ?? null, temperature_c: vitals?.temperature ?? null,
@@ -147,5 +153,7 @@ export function legacyClinicalIntake(clinical: ClinicalContext, previous?: unkno
     imaging_results: { xray: null, ultrasound: null, ct: null, mri: null, pet_ct: null, pathology: null, ...imaging },
     attachments: Array.isArray(original.attachments) ? original.attachments as ClinicalIntakeInput['attachments'] : [],
     vital_signs: vitals,
+    ...('event_date' in clinical ? { event_date: clinical.event_date ?? null } : {}),
+    ...('vitals_event_date' in clinical ? { vitals_event_date: clinical.vitals_event_date ?? null } : {}),
   };
 }

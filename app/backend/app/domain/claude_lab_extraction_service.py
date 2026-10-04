@@ -63,6 +63,9 @@ _USER_PROMPT = (
     "- Preserve original raw strings where possible in raw_value.\n"
     "- Set normalized_value only when the value is clearly numeric.\n"
     "- Use ISO format YYYY-MM-DD for measured_at.\n"
+    "- Preserve explicit labeled dates separately in ISO format: specimen_date for sample/numune collection, result_date for result release/onay, document_date for report issue, and event_date only for an explicitly identified clinical event.\n"
+    "- Do not infer specimen_date or result_date from an unlabeled date, measured_at, filename or today's date. Copy a shared labeled header date to a row only when it clearly applies to that row. Leave absent or ambiguous dates null.\n"
+    "- uploaded_at must be null: the server records the real upload time; a printed document date is never an upload date.\n"
     "- If the document explicitly labels a row as high/low/normal (for example Yüksek, Düşük, Normal, H, L, N), copy that label exactly into source_flag. Do not infer source_flag when it is not explicitly printed.\n"
     "- If a field is unclear, use null and set needs_review=true for that item.\n"
     "Return JSON in EXACTLY this schema:\n"
@@ -78,6 +81,11 @@ _USER_PROMPT = (
     '      "extracted_reference_max": number | null,\n'
     '      "extracted_unit": string | null,\n'
     '      "measured_at": string | null,\n'
+    '      "event_date": string | null,\n'
+    '      "specimen_date": string | null,\n'
+    '      "result_date": string | null,\n'
+    '      "document_date": string | null,\n'
+    '      "uploaded_at": null,\n'
     '      "needs_review": boolean,\n'
     '      "extraction_note": string | null,\n'
     '      "source_flag": string | null,\n'
@@ -168,6 +176,10 @@ class ClaudeLabExtractionService:
                     (item.raw_value or "").strip().casefold(),
                     (item.unit or item.extracted_unit or "").strip().casefold(),
                     str(item.measured_at or ""),
+                    str(item.event_date or ""),
+                    str(item.specimen_date or ""),
+                    str(item.result_date or ""),
+                    str(item.document_date or ""),
                     str(item.reference_text or ""),
                     str(item.extracted_reference_min),
                     str(item.extracted_reference_max),

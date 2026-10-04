@@ -14,6 +14,7 @@ import re
 from typing import Any
 
 from app.domain.canonical_lab_model import SourceContext, build_canonical_case, content_sha256
+from app.domain.document_dates import extract_document_dates
 
 FAST_PDF_WARNING = "fast_pdf_local_parser_v1"
 ENABIZ_TABLE_WARNING = "enabiz_native_table_parser_v2"
@@ -23,7 +24,7 @@ _MIN_GENERIC_ROWS = 5
 
 _NUMERIC_VALUE_RE = re.compile(r"^\s*([<>]?)\s*(-?\d+(?:[.,]\d+)?)\s*$")
 _RANGE_RE = re.compile(
-    r"^\s*(-?\d+(?:[.,]\d+)?)\s*[-–]\s*(-?\d+(?:[.,]\d+)?)\s*$"
+    r"^\s*(-?\d+(?:[.,]\d+)?)\s*[-–—]\s*(-?\d+(?:[.,]\d+)?)\s*$"
 )
 _ONE_SIDED_REFERENCE_RE = re.compile(
     r"^\s*([<>]=?)\s*(-?\d+(?:[.,]\d+)?)\s*$"
@@ -237,6 +238,7 @@ def _extract_enabiz_table_rows(content: bytes) -> list[dict[str, Any]]:
         current_measured_at: str | None = None
         with fitz.open(stream=content, filetype="pdf") as document:
             for page_number, page in enumerate(document, start=1):
+                page_dates = extract_document_dates(page.get_text("text") or "")
                 finder = page.find_tables()
                 for table in finder.tables:
                     parsed, current_measured_at = _parse_enabiz_table_data(
@@ -244,6 +246,9 @@ def _extract_enabiz_table_rows(content: bytes) -> list[dict[str, Any]]:
                         page_number=page_number,
                         current_measured_at=current_measured_at,
                     )
+                    for row in parsed:
+                        row.update({key: value.isoformat() for key, value in page_dates.items()
+                                    if key in {"event_date", "specimen_date", "result_date", "document_date"}})
                     rows.extend(parsed)
         return rows
     except Exception:
@@ -263,6 +268,11 @@ def _canonical_rows(parsed_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "reference_max": row.get("reference_max", row.get("extracted_reference_max")),
                 "reference_text": row.get("reference_text"),
                 "measured_at": row.get("measured_at"),
+                "event_date": row.get("event_date"),
+                "specimen_date": row.get("specimen_date"),
+                "result_date": row.get("result_date"),
+                "document_date": row.get("document_date"),
+                "uploaded_at": row.get("uploaded_at"),
                 "source_page": row.get("source_page"),
                 "value_type": row.get("value_type") or "numeric",
                 "confidence": row.get("confidence", 0.99),
@@ -289,6 +299,15 @@ def try_fast_pdf_lab_case(
         return None
 
     enabiz_like = _looks_like_enabiz(text, file_name)
+    document_dates = extract_document_dates(text)
+
+    def preserve_explicit_dates(rows: list[dict[str, Any]]) -> None:
+        # A unique labeled date in the document can apply to its rows. Per-page
+        # explicit dates remain authoritative when a PDF contains several sets.
+        for row in rows:
+            for key in ("event_date", "specimen_date", "result_date", "document_date"):
+                if not row.get(key) and key in document_dates:
+                    row[key] = document_dates[key].isoformat()
 
     source = SourceContext(
         source_type=source_type,
@@ -312,6 +331,7 @@ def try_fast_pdf_lab_case(
                 patient = None
 
             rows = _canonical_rows(table_rows)
+            preserve_explicit_dates(rows)
             return build_canonical_case(
                 source=source,
                 rows=rows,
@@ -344,6 +364,7 @@ def try_fast_pdf_lab_case(
         return None
 
     rows = _canonical_rows(parsed_rows)
+    preserve_explicit_dates(rows)
     if not rows:
         return None
 

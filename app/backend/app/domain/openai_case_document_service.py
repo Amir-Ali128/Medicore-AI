@@ -26,6 +26,7 @@ _LAB_ROW_SCHEMA: dict[str, Any] = {
     "required": [
         "raw_parameter_name", "canonical_name", "raw_value", "normalized_value",
         "unit", "reference_min", "reference_max", "reference_text", "measured_at",
+        "event_date", "specimen_date", "result_date", "document_date", "uploaded_at",
         "needs_review", "confidence", "source_file_name", "source_page",
     ],
     "properties": {
@@ -38,6 +39,11 @@ _LAB_ROW_SCHEMA: dict[str, Any] = {
         "reference_max": {"type": ["number", "null"]},
         "reference_text": {"type": ["string", "null"]},
         "measured_at": {"type": ["string", "null"]},
+        "event_date": {"type": ["string", "null"]},
+        "specimen_date": {"type": ["string", "null"]},
+        "result_date": {"type": ["string", "null"]},
+        "document_date": {"type": ["string", "null"]},
+        "uploaded_at": {"type": "null"},
         "needs_review": {"type": "boolean"},
         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
         "source_file_name": {"type": ["string", "null"]},
@@ -175,6 +181,13 @@ Rules:
   address, phone, email or exact date of birth. Coarse age and sex may be returned.
 - If a category is absent, return an empty array or null fields rather than guessing.
 - Preserve visible laboratory values, units, dates and printed reference ranges.
+- Preserve explicitly labeled laboratory sample collection/numune dates in specimen_date,
+  result release/approval dates in result_date, report issue dates in document_date,
+  and explicitly identified clinical event dates in event_date. Use ISO dates.
+- Do not infer specimen_date or result_date from an unlabeled date or measured_at.
+  Apply shared header dates only when they clearly refer to the row. Absent or
+  ambiguous date roles remain null. uploaded_at must be null because the server
+  records the actual upload time, separately from printed document dates.
 - For laboratory rows use the same strict row semantics as the MediCore lab reader.
 - For radiology, copy only clinically meaningful report/findings/impression text that
   is visibly present; do not infer an imaging diagnosis from a photo of a report.

@@ -3,9 +3,9 @@
 The v1 simplification intentionally models only three inputs:
 clinical context, laboratory results, and medical reports.
 
-Important: this contract does not classify laboratory values as normal/abnormal,
-high/low, or into disease classes. Reference ranges are source data copied from
-the uploaded laboratory report.
+Reference ranges remain source data copied from the laboratory report. Numeric
+LOW/NORMAL/HIGH status is derived by the deterministic backend, without clinical
+interpretation or a generated reference range.
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 
 SexValue = Literal["female", "male", "other", "unknown"]
+LabStatus = Literal["LOW", "NORMAL", "HIGH", "UNKNOWN"]
 
 
 class VitalSigns(BaseModel):
@@ -49,6 +50,8 @@ class ClinicalContext(BaseModel):
     medications: list[str] = Field(default_factory=list)
     notes: str | None = None
     vital_signs: VitalSigns | None = None
+    event_date: date | datetime | None = None
+    vitals_event_date: date | datetime | None = None
 
 
 class LabReferenceRange(BaseModel):
@@ -82,9 +85,26 @@ class LabResultInput(BaseModel):
     value: str | float | int | None = None
     unit: str | None = None
     measured_at: date | datetime | None = None
+    event_date: date | datetime | None = None
+    specimen_date: date | datetime | None = None
+    result_date: date | datetime | None = None
+    document_date: date | datetime | None = None
+    uploaded_at: date | datetime | None = None
     source_reference: str | None = None
     source_references: list[LabReferenceRange] = Field(default_factory=list)
     source_metadata: dict[str, Any] = Field(default_factory=dict)
+    # Accepted for additive round trips; incoming status is never authoritative.
+    status: LabStatus | None = None
+    reference_low: float | None = None
+    reference_high: float | None = None
+    raw_reference: str | None = None
+    classification_reason: str | None = None
+
+    @field_validator("value", mode="before")
+    @classmethod
+    def preserve_boolean_as_non_numeric_text(cls, value):
+        # Pydantic otherwise converts True into 1.0 before deterministic logic.
+        return str(value) if isinstance(value, bool) else value
 
 
 class LabResultOutput(BaseModel):
@@ -92,10 +112,22 @@ class LabResultOutput(BaseModel):
     value: str | float | int | None
     unit: str | None
     measured_at: date | datetime | None
+    event_date: date | datetime | None = None
+    specimen_date: date | datetime | None = None
+    result_date: date | datetime | None = None
+    document_date: date | datetime | None = None
+    uploaded_at: date | datetime | None = None
     reference_text: str | None
     reference_source: Literal["report", "report_age_sex_match", "missing"]
     reference_details: LabReferenceRange | None = None
+    source_reference: str | None = None
+    source_references: list[LabReferenceRange] = Field(default_factory=list)
     source_metadata: dict[str, Any] = Field(default_factory=dict)
+    status: LabStatus = "UNKNOWN"
+    reference_low: float | None = None
+    reference_high: float | None = None
+    raw_reference: str | None = None
+    classification_reason: str | None = None
 
 
 class MedicalReportInput(BaseModel):
@@ -103,6 +135,11 @@ class MedicalReportInput(BaseModel):
 
     report_type: str = Field(min_length=1, max_length=128)
     report_date: date | datetime | None = None
+    event_date: date | datetime | None = None
+    exam_date: date | datetime | None = None
+    consultation_date: date | datetime | None = None
+    document_date: date | datetime | None = None
+    uploaded_at: date | datetime | None = None
     body_region: str | None = None
     findings: str | None = None
     impression: str | None = None

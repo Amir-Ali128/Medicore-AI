@@ -1,15 +1,16 @@
 """Patient-scoped read projection over existing records; never persists copies."""
 from collections import defaultdict
-from collections.abc import Mapping, Sequence
-from datetime import date, datetime
+from collections.abc import Mapping
+from datetime import date
 from decimal import Decimal
 from typing import Any
-from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
 from sqlalchemy import select
 
 from app.domain.patient_clinical_context import normalize_patient_clinical, patient_clinical_context
+from app.domain.document_dates import date_values, extract_document_dates, resolve_timeline_date
+from app.domain.lab_result_classification import classify_lab_result
 from app.domain.report_type_inference import infer_existing_report_type
 from app.domain.patient_scope import validate_source_metadata
 from app.infrastructure.database.models.lab_report import LabReport
@@ -20,40 +21,35 @@ from app.schemas.patient_health_timeline import (
     PatientHealthTimelineResponse, TimelineLabValue,
 )
 
-_CLINIC_TIMEZONE = ZoneInfo("Europe/Istanbul")
-
-
 def _mapping(value: Any) -> dict:
     return dict(value) if isinstance(value, Mapping) else {}
 
 
-def _day(value: Any) -> date | None:
-    if isinstance(value, datetime):
-        return value.astimezone(_CLINIC_TIMEZONE).date() if value.tzinfo else value.date()
-    if isinstance(value, date):
-        return value
-    if isinstance(value, str) and value.strip():
-        text = value.strip()
-        try:
-            return date.fromisoformat(text)
-        except ValueError:
-            try:
-                return _day(datetime.fromisoformat(text.replace("Z", "+00:00")))
-            except ValueError:
-                for fmt in ("%d.%m.%Y", "%d/%m/%Y"):
-                    try:
-                        return datetime.strptime(text, fmt).date()
-                    except ValueError:
-                        continue
-    return None
+def _common_date(values: list[TimelineLabValue], key: str) -> date | None:
+    days = {getattr(value, key) for value in values}
+    return days.pop() if len(days) == 1 else None
 
 
-def _event_date(candidates: Sequence[tuple[str, Any]]) -> tuple[date | None, str]:
-    for name, value in candidates:
-        parsed = _day(value)
-        if parsed is not None:
-            return parsed, name
-    return None, "unknown"
+def _lab_value(*, identifier: str, label: str, value: Any, unit: str | None,
+               metadata: dict, record: dict) -> tuple[TimelineLabValue, Any]:
+    resolved = resolve_timeline_date(record, kind="lab")
+    reference = _mapping(metadata.get("reference_details"))
+    classification = classify_lab_result(
+        value=value, unit=unit,
+        reference_text=metadata.get("reference_text") or metadata.get("raw_reference"),
+        reference_low=reference.get("minimum", metadata.get("reference_min")),
+        reference_high=reference.get("maximum", metadata.get("reference_max")),
+        reference_unit=reference.get("unit") or metadata.get("reference_unit"),
+        ingestion_reasons=metadata.get("ingestion_reasons") or (),
+    )
+    return TimelineLabValue(
+        id=identifier, test_name=label, value=value, unit=unit,
+        reference_text=metadata.get("reference_text"), status=classification.status,
+        reference_low=classification.reference_low, reference_high=classification.reference_high,
+        raw_reference=classification.raw_reference,
+        **{key: resolved.dates[key] for key in ("specimen_date", "result_date", "document_date", "uploaded_at")},
+        event_date=resolved.date,
+    ), resolved
 
 
 def _same_patient(value: Any, patient_id: Any) -> bool:
@@ -93,32 +89,36 @@ def build_patient_health_timeline(patient, lab_reports, lab_results, reports) ->
         clinical = patient_clinical_context(metadata) if current else normalize_patient_clinical(raw, metadata)
         raw = _mapping(raw)
         exam = _mapping(raw.get("physical_exam"))
-        candidates = [
-            ("examination_date", raw.get("examination_date") or exam.get("examination_date")),
-            ("clinical_context_recorded_at", metadata.get("clinical_context_recorded_at")),
-            ("clinical_recorded_at", metadata.get("clinical_recorded_at")),
-            ("report_date", getattr(source, "report_date", None)),
-            ("created_at", getattr(source, "created_at", None)),
-        ]
-        clinical_day, clinical_date_source = _event_date(candidates)
+        record = {
+            **date_values(metadata), **date_values(raw),
+            "examination_date": (None if "event_date" in raw else raw.get("examination_date") or exam.get("examination_date")),
+            "report_date": getattr(source, "report_date", None),
+            "created_at": getattr(source, "created_at", None),
+        }
+        if "event_date" in raw:
+            record["event_date"] = raw["event_date"]
+        clinical_date = resolve_timeline_date(record, kind="clinical")
+        clinical_day, clinical_date_source = clinical_date.date, clinical_date.source
         if any((clinical.complaints, clinical.history, clinical.medications, clinical.notes)):
             by_day[clinical_day].append(PatientHealthTimelineEntry(
                 id=f"{source_type}:{source.id}:clinical", patient_id=patient_id,
                 kind="clinical", source_type=source_type, source_id=source.id, source_path=source_path,
                 title="Klinik Bilgi", date_source=clinical_date_source,
+                event_date=clinical_day, uploaded_at=clinical_date.dates["uploaded_at"],
                 clinical=clinical.model_copy(update={"vital_signs": None}),
             ))
         if clinical.vital_signs and any(value is not None for value in clinical.vital_signs.model_dump().values()):
             vitals = _mapping(raw.get("vital_signs"))
-            vital_day, vital_date_source = _event_date([
-                ("measurement_date", vitals.get("measurement_date") or vitals.get("measured_at") or exam.get("measurement_date")),
-                ("vitals_recorded_at", metadata.get("vitals_recorded_at")),
-                *candidates,
-            ])
+            vital_date = resolve_timeline_date({
+                **record, "event_date": raw.get("vitals_event_date") or raw.get("event_date"),
+                "measurement_date": (None if "vitals_event_date" in raw else vitals.get("measurement_date") or vitals.get("measured_at") or exam.get("measurement_date")),
+            }, kind="vital_signs")
+            vital_day, vital_date_source = vital_date.date, vital_date.source
             by_day[vital_day].append(PatientHealthTimelineEntry(
                 id=f"{source_type}:{source.id}:vitals", patient_id=patient_id,
                 kind="vital_signs", source_type=source_type, source_id=source.id, source_path=source_path,
                 title="Vital Bulgular", date_source=vital_date_source, vital_signs=clinical.vital_signs,
+                event_date=vital_day, uploaded_at=vital_date.dates["uploaded_at"],
             ))
 
     for report in source_labs.values():
@@ -130,12 +130,6 @@ def build_patient_health_timeline(patient, lab_reports, lab_results, reports) ->
         if rows:
             for row in rows:
                 row_metadata = _mapping(getattr(row, "metadata_json", None))
-                row_day, date_source = _event_date([
-                    ("measured_at", getattr(row, "measured_at", None)),
-                    ("test_date", row_metadata.get("test_date")),
-                    ("report_date", getattr(report, "report_date", None)),
-                    ("created_at", getattr(report, "created_at", None)),
-                ])
                 label = getattr(row, "raw_parameter_name", None) or getattr(row, "canonical_name", None) or "Laboratuvar sonucu"
                 kind = "urine_laboratory" if _urine(row_metadata, label) or _urine(metadata) else "laboratory"
                 value = getattr(row, "raw_value", None)
@@ -143,26 +137,33 @@ def build_patient_health_timeline(patient, lab_reports, lab_results, reports) ->
                     value = getattr(row, "normalized_value", None)
                 if isinstance(value, Decimal):
                     value = str(value)
-                grouped_rows[(row_day, kind, date_source)].append(TimelineLabValue(
-                    id=str(row.id), test_name=label, value=value, unit=getattr(row, "unit", None),
-                    reference_text=row_metadata.get("reference_text"),
-                ))
+                row_metadata.setdefault("reference_min", getattr(row, "reference_min", None))
+                row_metadata.setdefault("reference_max", getattr(row, "reference_max", None))
+                lab_value, resolved = _lab_value(
+                    identifier=str(row.id), label=label, value=value, unit=getattr(row, "unit", None),
+                    metadata=row_metadata, record={
+                        **date_values(metadata), **date_values(row_metadata),
+                        "measured_at": getattr(row, "measured_at", None),
+                        "report_date": getattr(report, "report_date", None),
+                        "created_at": getattr(report, "created_at", None),
+                    },
+                )
+                grouped_rows[(resolved.date, kind, resolved.source)].append(lab_value)
         else:
             legacy_rows = metadata.get("simple_case_results")
             for index, item in enumerate(legacy_rows if isinstance(legacy_rows, list) else []):
                 if not isinstance(item, Mapping) or not _context_matches_patient(item, patient_id):
                     continue
-                row_day, date_source = _event_date([
-                    ("measured_at", item.get("measured_at")), ("test_date", item.get("test_date")),
-                    ("report_date", getattr(report, "report_date", None)),
-                    ("created_at", getattr(report, "created_at", None)),
-                ])
                 label = str(item.get("test_name") or "Laboratuvar sonucu")
                 kind = "urine_laboratory" if _urine(metadata, label) else "laboratory"
-                grouped_rows[(row_day, kind, date_source)].append(TimelineLabValue(
-                    id=f"{report.id}:metadata:{index}", test_name=label, value=item.get("value"),
-                    unit=item.get("unit"), reference_text=item.get("reference_text"),
-                ))
+                lab_value, resolved = _lab_value(
+                    identifier=f"{report.id}:metadata:{index}", label=label, value=item.get("value"),
+                    unit=item.get("unit"), metadata={**_mapping(item.get("source_metadata")), **dict(item)},
+                    record={**date_values(metadata), **date_values(item),
+                            "report_date": getattr(report, "report_date", None),
+                            "created_at": getattr(report, "created_at", None)},
+                )
+                grouped_rows[(resolved.date, kind, resolved.source)].append(lab_value)
         for (row_day, kind, date_source), values in grouped_rows.items():
             by_day[row_day].append(PatientHealthTimelineEntry(
                 id=f"lab_report:{report.id}:{row_day}:{kind}:{date_source}", patient_id=patient_id,
@@ -170,8 +171,29 @@ def build_patient_health_timeline(patient, lab_reports, lab_results, reports) ->
                 source_path="results" if rows else "metadata_json.simple_case_results",
                 title="İdrar / Laboratuvar" if kind == "urine_laboratory" else "Laboratuvar",
                 date_source=date_source, results=values, file_name=getattr(report, "file_name", None),
+                event_date=row_day,
+                **{key: _common_date(values, key) for key in ("specimen_date", "result_date", "document_date", "uploaded_at")},
                 original_file_available=metadata.get("original_file_stored") is True,
             ))
+            # A result-release notice references the original rows. No values or
+            # DB records are duplicated, and clinical sample chronology stays put.
+            released = defaultdict(list)
+            for value in values:
+                if row_day and value.result_date and value.result_date > row_day:
+                    released[value.result_date].append(value)
+            for release_day, released_values in released.items():
+                by_day[release_day].append(PatientHealthTimelineEntry(
+                    id=f"lab_report:{report.id}:{row_day}:{kind}:{date_source}:released:{release_day}",
+                    patient_id=patient_id, kind="lab_result_available", source_type="lab_report",
+                    source_id=report.id, source_path="results" if rows else "metadata_json.simple_case_results",
+                    title="Geç Sonuçlanan Laboratuvar", date_source="result_date",
+                    event_date=row_day, specimen_date=_common_date(released_values, "specimen_date"),
+                    result_date=release_day, document_date=_common_date(released_values, "document_date"),
+                    uploaded_at=_common_date(released_values, "uploaded_at"),
+                    result_ids=[value.id for value in released_values],
+                    file_name=getattr(report, "file_name", None),
+                    original_file_available=metadata.get("original_file_stored") is True,
+                ))
         if isinstance(metadata.get("clinical_context"), Mapping):
             add_context(report, metadata["clinical_context"], metadata, "lab_report", "metadata_json.clinical_context")
 
@@ -179,16 +201,19 @@ def build_patient_health_timeline(patient, lab_reports, lab_results, reports) ->
         if not _same_patient(report.patient_id, patient_id):
             continue
         metadata = _mapping(getattr(report, "metadata_json", None))
-        report_day, date_source = _event_date([
-            ("report_date", getattr(report, "report_date", None)),
-            ("examination_date", metadata.get("examination_date")),
-            ("created_at", getattr(report, "created_at", None)),
-        ])
         inference = infer_existing_report_type(report)
+        resolved = resolve_timeline_date({
+            **extract_document_dates(getattr(report, "original_text", None)),
+            **date_values(metadata), "report_date": getattr(report, "report_date", None),
+            "created_at": getattr(report, "created_at", None),
+        }, kind=inference.report_type if inference.report_type in {"ULTRASOUND", "CT", "MRI", "XRAY", "X_RAY", "ECG", "ECHO", "ECHOCARDIOGRAPHY"} else "report")
+        report_day, date_source = resolved.date, resolved.source
         by_day[report_day].append(PatientHealthTimelineEntry(
             id=f"radiology_report:{report.id}", patient_id=patient_id,
             kind="report", source_type="radiology_report", source_id=report.id,
             title="Rapor", date_source=date_source, inferred_report_type=inference.report_type,
+            event_date=report_day,
+            **{key: resolved.dates[key] for key in ("specimen_date", "result_date", "document_date", "uploaded_at", "exam_date", "consultation_date")},
             report_type_confidence=inference.confidence,
             report_text=getattr(report, "original_text", None), summary=getattr(report, "summary", None),
             file_name=getattr(report, "file_name", None), original_file_available=metadata.get("original_file_stored") is True,

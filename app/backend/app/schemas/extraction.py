@@ -7,7 +7,7 @@ interpretation, no treatment advice.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -26,6 +26,11 @@ class ExtractedLabValue(BaseModel):
     extracted_reference_max: Decimal | None = None
     extracted_unit: str | None = None
     measured_at: date | None = None
+    event_date: date | datetime | None = None
+    specimen_date: date | datetime | None = None
+    result_date: date | datetime | None = None
+    document_date: date | datetime | None = None
+    uploaded_at: datetime | None = None
     needs_review: bool = False
     extraction_note: str | None = None
     source_flag: str | None = None

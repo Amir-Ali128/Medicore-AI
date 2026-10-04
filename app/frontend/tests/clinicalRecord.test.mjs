@@ -113,3 +113,37 @@ test('a stale legacy draft cannot overwrite newer canonical complaints or histor
   assert.deepEqual(normalizeClinical(adapted), clinical);
   assert.equal(adapted.imaging_results.ultrasound, 'korunacak rapor');
 });
+
+test('clinical and vital event dates survive the legacy adapter independently', () => {
+  const clinical = { ...clinicalData(), event_date: '2026-10-02', vitals_event_date: '2026-10-02T16:00:00+03:00' };
+  const restored = normalizeClinical(legacyClinicalIntake(clinical));
+  assert.deepEqual(restored, clinical);
+  assert.ok(!('event_date' in restored.vital_signs));
+  assert.equal(restored.vitals_event_date, clinical.vitals_event_date);
+  const payload = { clinical, labs: [], reports: [] };
+  const original = simpleCaseInputKey('case-1', payload);
+  payload.clinical.event_date = '2026-10-03';
+  assert.notEqual(simpleCaseInputKey('case-1', payload), original);
+});
+
+test('legacy explicit measurement dates are preserved without inventing dates', () => {
+  const restored = normalizeClinical({ examination_date: '2026-10-02', physical_exam: { measurement_date: '2026-10-03', pulse_bpm: 108 } });
+  assert.equal(restored.event_date, '2026-10-02');
+  assert.equal(restored.vitals_event_date, '2026-10-03');
+  assert.equal(restored.vital_signs.heart_rate, 108);
+  assert.ok(!('event_date' in normalizeClinical({ notes: 'Tarihsiz not' })));
+});
+
+test('explicitly cleared event dates cannot reappear from old legacy aliases', () => {
+  const previous = { examination_date: '2026-10-01', physical_exam: {
+    examination_date: '2026-10-01', measurement_date: '2026-10-01', pulse_bpm: 108 } };
+  const cleared = normalizeClinical({ ...previous, event_date: null, vitals_event_date: null });
+  assert.equal(cleared.event_date, null);
+  assert.equal(cleared.vitals_event_date, null);
+  const adapted = legacyClinicalIntake(cleared, previous);
+  assert.equal(adapted.event_date, null);
+  assert.equal(adapted.vitals_event_date, null);
+  assert.equal(adapted.physical_exam.examination_date, null);
+  assert.equal(adapted.physical_exam.measurement_date, null);
+  assert.deepEqual(normalizeClinical(adapted), cleared);
+});
