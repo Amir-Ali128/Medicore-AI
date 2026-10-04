@@ -103,7 +103,7 @@ def save(c, clinical=None):
 
 def test_clinical_and_all_vitals_persist_and_reload_in_detail_and_archive(persisted_case):
     c = persisted_case
-    expected = clinical_data()
+    expected = {**clinical_data(), "event_date": None, "vitals_event_date": None}
     saved = save(c)
     with c.factory() as db:
         patient = db.get(Patient, UUID(c.id))
@@ -225,7 +225,9 @@ def test_invalid_vital_api_request_does_not_modify_patient(persisted_case):
     clinical["vital_signs"]["spo2"] = 101
     response = c.client.put(f"/simple-case/patients/{c.id}/save", json={"clinical": clinical})
     assert response.status_code == 422
-    assert c.client.get(f"/patients/{c.id}").json()["clinical"] == clinical_data()
+    assert c.client.get(f"/patients/{c.id}").json()["clinical"] == {
+        **clinical_data(), "event_date": None, "vitals_event_date": None,
+    }
     response = c.client.put(f"/patients/{c.id}", json={"protocol_no": "VAKA01", "clinical_context": clinical})
     assert response.status_code == 422
 

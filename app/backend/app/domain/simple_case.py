@@ -6,6 +6,8 @@ import hashlib
 import json
 from typing import Any
 
+from app.domain.lab_result_classification import classify_lab_result
+from app.domain.document_dates import calendar_day, date_values
 from app.schemas.simple_case import (
     ClinicalContext,
     LabReferenceRange,
@@ -62,19 +64,29 @@ def select_source_reference(
         if matching:
             # Prefer the most specific source row: sex + two age bounds, then
             # one age bound, then generic.
-            matching.sort(
-                key=lambda item: (
+            def specificity(item: LabReferenceRange) -> tuple[int, int, int]:
+                return (
                     1 if item.sex and item.sex != "unknown" else 0,
                     1 if item.age_min is not None else 0,
                     1 if item.age_max is not None else 0,
-                ),
-                reverse=True,
-            )
+                )
+
+            matching.sort(key=specificity, reverse=True)
             selected = matching[0]
+            # Equally applicable but conflicting source rows are not resolved by
+            # list order. Missing clinical context must not create a false label.
+            tied = [item for item in matching if specificity(item) == specificity(selected)]
+            signatures = {
+                (item.minimum, item.maximum, item.unit,
+                 item.text)
+                for item in tied
+            }
+            if len(signatures) > 1:
+                return None, "missing", None
             return selected.text, "report_age_sex_match", selected
 
-    if lab.source_reference:
-        return lab.source_reference, "report", None
+    if not lab.source_references and (lab.source_reference or lab.raw_reference):
+        return lab.source_reference or lab.raw_reference, "report", None
 
     # A generic reference row may still be useful when no demographic-specific
     # row matches and the report explicitly supplied it.
@@ -103,16 +115,36 @@ def normalize_simple_case(payload: SimpleCaseRequest) -> SimpleCaseResponse:
                 f"{lab.test_name}: kaynak raporda kullanılabilir referans aralığı bulunamadı."
             )
 
+        classification = classify_lab_result(
+            value=lab.value,
+            unit=lab.unit,
+            reference_text=reference_text,
+            reference_low=reference_details.minimum if reference_details else None,
+            reference_high=reference_details.maximum if reference_details else None,
+            reference_unit=reference_details.unit if reference_details else None,
+            ingestion_reasons=lab.source_metadata.get("ingestion_reasons", ()),
+        )
+
         labs.append(
             LabResultOutput(
                 test_name=lab.test_name,
                 value=lab.value,
                 unit=lab.unit,
                 measured_at=lab.measured_at,
+                **{key: (getattr(lab, key) if key in lab.model_fields_set else
+                         calendar_day(date_values(lab.model_dump()).get(key)))
+                   for key in ("event_date", "specimen_date", "result_date", "document_date", "uploaded_at")},
                 reference_text=reference_text,
                 reference_source=reference_source,
                 reference_details=reference_details,
+                source_reference=lab.source_reference,
+                source_references=list(lab.source_references),
                 source_metadata=dict(lab.source_metadata),
+                status=classification.status,
+                reference_low=classification.reference_low,
+                reference_high=classification.reference_high,
+                raw_reference=classification.raw_reference,
+                classification_reason=classification.classification_reason,
             )
         )
 

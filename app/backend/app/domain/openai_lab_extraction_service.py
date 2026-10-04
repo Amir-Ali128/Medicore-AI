@@ -56,6 +56,11 @@ _LAB_SCHEMA: dict[str, Any] = {
                     "reference_max",
                     "reference_text",
                     "measured_at",
+                    "event_date",
+                    "specimen_date",
+                    "result_date",
+                    "document_date",
+                    "uploaded_at",
                     "needs_review",
                     "confidence",
                     "source_file_name",
@@ -72,6 +77,11 @@ _LAB_SCHEMA: dict[str, Any] = {
                     "reference_max": {"type": ["number", "null"]},
                     "reference_text": {"type": ["string", "null"]},
                     "measured_at": {"type": ["string", "null"]},
+                    "event_date": {"type": ["string", "null"]},
+                    "specimen_date": {"type": ["string", "null"]},
+                    "result_date": {"type": ["string", "null"]},
+                    "document_date": {"type": ["string", "null"]},
+                    "uploaded_at": {"type": "null"},
                     "needs_review": {"type": "boolean"},
                     "confidence": {"type": "number", "minimum": 0, "maximum": 1},
                     "source_file_name": {"type": ["string", "null"]},
@@ -97,6 +107,14 @@ Safety and provenance rules:
   address, phone, email or exact date of birth. Coarse age and sex may be returned
   only when explicitly visible and useful for physician review.
 - Never invent a test, value, unit, date or reference range.
+- Preserve explicitly labeled specimen collection/sample/numune dates in specimen_date,
+  result release/approval dates in result_date, report issue dates in document_date,
+  and explicitly identified clinical event dates in event_date. Use ISO dates.
+- An unlabeled date or measured_at remains a legacy observed date; do not relabel
+  it as a specimen or result date. Apply a shared labeled header date only to rows
+  it clearly describes. Absent or ambiguous dates must remain null.
+- uploaded_at must always be null; the server records the actual upload time.
+  Never confuse the document's printed dates with the time it is uploaded.
 - Count visible laboratory rows separately before transcribing; return visible_row_count or null if unclear.
 - source_flag copies only explicitly printed high/low/normal or qualitative status text; never infer it.
 - Preserve the laboratory's printed reference interval. One-sided limits are
@@ -265,4 +283,3 @@ async def extract_lab_document_with_openai(
     return await extract_lab_documents_with_openai(
         documents=[(content, media_type, file_name)]
     )
-

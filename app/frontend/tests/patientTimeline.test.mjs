@@ -29,7 +29,7 @@ test('timeline refuses a response for a different selected patient', () => {
 });
 
 test('every entry is checked even when the top-level patient id matches', () => {
-  for (const kind of ['laboratory', 'urine_laboratory', 'report', 'clinical', 'vital_signs']) {
+  for (const kind of ['laboratory', 'urine_laboratory', 'lab_result_available', 'report', 'clinical', 'vital_signs']) {
     const contaminated = response([{ date: '2026-10-02', entries: [entry('A'), entry('B', { kind, patient_id: PATIENT_B })] }]);
     assert.throws(() => groupPatientTimeline(contaminated, PATIENT_A), /eşleşmiyor/, kind);
   }
@@ -62,6 +62,22 @@ test('older Hb values remain distinct and all 50 parameters remain reachable', (
   assert.equal(grouped[0].entries[1].results.length, 50);
   assert.deepEqual(grouped[0].entries[1].results.map((row) => row.id), fifty.map((row) => row.id));
   assert.equal(source.total_lab_results, 53);
+});
+
+test('semantic date fields survive grouping and late result notices do not duplicate result counts', () => {
+  const lab = entry('sample-2', { event_date: '2026-10-02', specimen_date: '2026-10-02', result_date: '2026-10-04', uploaded_at: '2026-10-04', date_source: 'specimen_date', results: [result('ferritin', 'Ferritin', 5)] });
+  const notice = entry('available-4', { kind: 'lab_result_available', source_id: lab.source_id, result_ids: ['ferritin'], event_date: '2026-10-02', specimen_date: '2026-10-02', result_date: '2026-10-04', date_source: 'result_date' });
+  const source = response([
+    { date: '2026-10-02', entries: [lab, entry('ultrasound', { kind: 'report', event_date: '2026-10-02', document_date: '2026-10-03', uploaded_at: '2026-10-04', date_source: 'exam_date' })] },
+    { date: '2026-10-04', entries: [notice] },
+    { date: '2026-10-03', entries: [entry('consultation', { kind: 'report', event_date: '2026-10-03', document_date: '2026-10-03', date_source: 'document_date' })] },
+  ]);
+  const grouped = groupPatientTimeline(source, PATIENT_A);
+  assert.deepEqual(grouped.map((group) => group.date), ['2026-10-04', '2026-10-03', '2026-10-02']);
+  assert.deepEqual(grouped[2].entries[0], lab);
+  assert.deepEqual(grouped[0].entries[0].results, []);
+  assert.deepEqual(grouped[0].entries[0].result_ids, ['ferritin']);
+  assert.equal(source.total_lab_results, 1);
 });
 
 test('derived report types have readable labels and weak or unrecognized types fall back to Rapor', () => {
@@ -132,6 +148,59 @@ test('timeline API selection checks, abort propagation and UI rendering', async 
       assert.ok(html.includes('>12–16</td>'));
     });
 
+    await t.test('Vaka 1 shows October 2 sample, October 3 consultation and October 4 late results distinctly', () => {
+      const dates = { event_date: '2026-10-02', specimen_date: '2026-10-02', result_date: '2026-10-04', uploaded_at: '2026-10-04' };
+      const ironRows = [
+        { ...result('ferritin', 'Ferritin', 5, 'ng/mL'), ...dates, status: 'LOW', reference_text: '15–150' },
+        { ...result('iron', 'Serum demir', 22, 'µg/dL'), ...dates, status: 'LOW', reference_text: '50–170' },
+        { ...result('tibc', 'TIBC', 445, 'µg/dL'), ...dates, status: 'NORMAL', source_flag: 'High', reference_text: '250–450' },
+        { ...result('tsat', 'TSAT', 5, '%'), ...dates, status: 'LOW', reference_text: '15–45' },
+      ];
+      const lab = entry('sample-2', { ...dates, date_source: 'specimen_date', results: ironRows });
+      const notice = entry('late-4', { ...dates, kind: 'lab_result_available', source_id: lab.source_id, title: 'Geciken laboratuvar sonuçları', date_source: 'result_date', result_ids: ironRows.map((row) => row.id) });
+      const source = response([
+        { date: '2026-10-02', entries: [lab, entry('usg-2', { kind: 'report', source_type: 'radiology_report', inferred_report_type: 'ULTRASOUND', event_date: '2026-10-02', document_date: '2026-10-03', uploaded_at: '2026-10-04', date_source: 'exam_date', report_text: 'İntramural miyom' }), entry('clinical-2', { kind: 'clinical', title: 'Klinik Öykü', event_date: '2026-10-02', clinical: normalizeClinical({ complaints: ['Yoğun adet kanaması'] }) }), entry('vital-2', { kind: 'vital_signs', title: 'Vital Bulgular', event_date: '2026-10-02', vital_signs: { heart_rate: 108 } })] },
+        { date: '2026-10-03', entries: [entry('consultation-3', { kind: 'report', source_type: 'radiology_report', document_date: '2026-10-03', uploaded_at: '2026-10-04', date_source: 'document_date', report_text: 'Kadın doğum konsültasyonu: menoraji.' })] },
+        { date: '2026-10-04', entries: [notice] },
+      ]);
+      const html = render({ ...source, groups: groupPatientTimeline(source, PATIENT_A) });
+      assert.equal((html.match(/<section/g) ?? []).length, 3);
+      assert.ok(html.indexOf('>4 Ekim 2026</h2>') < html.indexOf('>3 Ekim 2026</h2>'));
+      assert.ok(html.indexOf('>3 Ekim 2026</h2>') < html.indexOf('>2 Ekim 2026</h2>'));
+      for (const text of ['Örnek: 2 Ekim 2026', 'Sonuç: 4 Ekim 2026', 'Yükleme: 4 Ekim 2026', 'Muayene: 2 Ekim 2026', 'Belge: 3 Ekim 2026', 'Geciken laboratuvar sonuçları', 'Kadın doğum konsültasyonu', 'Vital Bulgular', 'İntramural miyom']) assert.ok(html.includes(text), text);
+      assert.ok(html.includes('aria-controls="timeline-sample-2"'));
+      assert.ok(!html.includes('href="#timeline-'), 'scrolling must preserve the application hash route');
+      assert.equal((html.match(/>Normal<\/span>/g) ?? []).length, 2, 'TIBC is NORMAL in the clinical source and its availability notice');
+      assert.ok(!html.includes('>Yüksek</span>'), 'raw High flags must not override canonical status');
+      assert.equal(source.total_lab_results, 4);
+      assert.deepEqual(notice.results, []);
+    });
+
+    await t.test('late result references cannot resolve rows from another source or duplicate an id', () => {
+      const lab = entry('original', { results: [{ ...result('same-id', 'Ferritin', 5), status: 'LOW' }] });
+      const unknown = entry('notice-unknown', { kind: 'lab_result_available', source_id: 'another-source', result_ids: ['same-id'], title: 'Unresolved notice' });
+      const duplicate = entry('notice-duplicate', { kind: 'lab_result_available', source_id: lab.source_id, result_ids: ['same-id', 'same-id'], title: 'Resolved notice' });
+      const html = render(response([{ date: '2026-10-04', entries: [unknown, duplicate] }, { date: '2026-10-02', entries: [lab] }]));
+      const unresolvedHtml = html.split('id="timeline-notice-unknown"')[1].split('</article>')[0];
+      assert.ok(!unresolvedHtml.includes('Ferritin'));
+      assert.ok(unresolvedHtml.includes('Sonuç ayrıntıları ilgili laboratuvar kaydında bulunur.'));
+      const resolvedHtml = html.split('id="timeline-notice-duplicate"')[1].split('</article>')[0];
+      assert.equal((resolvedHtml.match(/>Ferritin</g) ?? []).length, 1);
+      assert.ok(resolvedHtml.includes('aria-controls="timeline-original"'));
+    });
+
+    await t.test('qualitative and legacy lab rows never invent HIGH or LOW from text', () => {
+      const rows = [
+        { ...result('qualitative', 'Kültür', 'Negatif', null), status: 'UNKNOWN', source_flag: 'High', raw_reference: 'Negatif' },
+        { ...result('legacy', 'Eski kayıt', 445, 'µg/dL'), reference_text: '250–450' },
+      ];
+      const html = render(response([{ date: '2026-10-02', entries: [entry('unknown-status', { results: rows })] }]));
+      assert.equal((html.match(/>Değerlendirilemedi<\/span>/g) ?? []).length, 2);
+      assert.ok(!html.includes('>Yüksek</span>'));
+      assert.ok(!html.includes('>Düşük</span>'));
+      assert.ok(html.includes('>Negatif</td>'));
+    });
+
     await t.test('report view preserves complete original text and UNKNOWN never invents a modality', () => {
       const fullText = 'Bulgular: Her iki böbrek normal.\nSonuç: <kontrol> & takip önerilir.\nRaporun son satırı.';
       const record = entry('report', { kind: 'report', source_type: 'radiology_report', title: 'Belirsiz rapor', inferred_report_type: 'UNKNOWN', report_text: fullText, summary: 'Kısa özet', file_name: 'original.pdf' });
@@ -162,6 +231,20 @@ test('timeline API selection checks, abort propagation and UI rendering', async 
       assert.ok(html.includes('Tarihsiz laboratuvar'));
       assert.ok(html.includes('12.1'));
       assert.ok(render(response([])).includes('Bu hasta için kayıtlı sağlık geçmişi bulunmuyor.'));
+    });
+
+    await t.test('upload and recorded date fallbacks never pretend to be clinical event dates', () => {
+      for (const source of ['created_at', 'clinical_recorded_at', 'vitals_recorded_at', 'clinical_context_recorded_at']) {
+        const html = render(response([{ date: '2026-10-04', entries: [entry(`fallback-${source}`, { event_date: '2026-10-04', date_source: source })] }]));
+        assert.ok(html.includes('Kayıt tarihi'), source);
+        assert.ok(html.includes('Kayıt: 4 Ekim 2026'), source);
+        assert.ok(!html.includes('Klinik olay:'), source);
+      }
+      const uploaded = render(response([{ date: '2026-10-04', entries: [entry('uploaded', { event_date: '2026-10-04', uploaded_at: '2026-10-04', date_source: 'uploaded_at' })] }]));
+      assert.ok(uploaded.includes('Kayıt tarihi'));
+      assert.ok(uploaded.includes('Yükleme: 4 Ekim 2026'));
+      assert.ok(!uploaded.includes('Klinik olay:'));
+      assert.ok(!uploaded.includes('Kayıt: 4 Ekim 2026'), 'the same upload date does not need a duplicate record label');
     });
   } finally {
     globalThis.localStorage = originals.storage;

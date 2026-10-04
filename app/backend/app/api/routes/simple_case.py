@@ -13,13 +13,17 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from pypdf import PdfReader
+from pydantic import ValidationError
 from sqlalchemy import select
 
 from app.api.dependencies import SessionDep
 from app.api.routes.auth import get_current_active_user
 from app.core.config import get_settings
 from app.domain.enums import ResultStatus, Sex, TrendStatus, UserRole
-from app.domain.patient_clinical_context import patient_clinical_context
+from app.domain.document_dates import (
+    SEMANTIC_DATE_FIELDS, calendar_day, date_values, extract_document_dates, resolve_timeline_date,
+)
+from app.domain.patient_clinical_context import normalize_patient_clinical, patient_clinical_context
 from app.domain.clinical_record_dates import stamp_clinical_record_dates
 from app.domain.patient_lab_history import ensure_patient_access
 from app.domain.patient_scope import (
@@ -51,6 +55,7 @@ from app.infrastructure.database.models.radiology_report import RadiologyReport
 from app.infrastructure.database.models.user import User
 from app.schemas.simple_case import (
     CaseAIInterpretationResponse,
+    ClinicalContext,
     LabResultInput,
     MedicalReportInput,
     SimpleCaseRequest,
@@ -128,7 +133,17 @@ def _parse_measured_at(value):
         return None
     if isinstance(value, datetime):
         return value
+    if isinstance(value, date):
+        return value
     text = str(value).strip()
+    try:
+        return date.fromisoformat(text)
+    except ValueError:
+        pass
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        pass
     for fmt in (
         "%d.%m.%Y %H:%M",
         "%d.%m.%Y",
@@ -168,13 +183,41 @@ def _decimal_or_none(value):
 
 
 def _date_or_none(value):
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        return value.date()
-    if isinstance(value, date):
-        return value
-    return None
+    return calendar_day(value)
+
+
+def _restore_case_input(snapshot: dict) -> SimpleCaseRequest:
+    """Read old normalized snapshots through today's additive input contract."""
+    labs = []
+    for raw in snapshot.get("labs") or []:
+        if not isinstance(raw, dict):
+            continue
+        lab = dict(raw)
+        if "source_reference" not in lab:
+            lab["source_reference"] = lab.get("reference_text") or lab.get("raw_reference")
+        if "source_references" not in lab and isinstance(lab.get("reference_details"), dict):
+            lab["source_references"] = [lab["reference_details"]]
+        labs.append(lab)
+    raw_clinical = snapshot.get("clinical") or {}
+    if any(key in raw_clinical for key in ("complaints", "history", "medications", "notes", "vital_signs")):
+        # Preserve valid canonical input exactly, including timestamp precision
+        # and text, so a fresh AI fingerprint still matches the saved case.
+        try:
+            clinical = ClinicalContext.model_validate(raw_clinical).model_dump()
+        except ValidationError:
+            clinical = normalize_patient_clinical(raw_clinical).model_dump()
+    else:
+        clinical = normalize_patient_clinical(raw_clinical).model_dump()
+    return SimpleCaseRequest.model_validate({
+        "clinical": clinical, "labs": labs,
+        "reports": snapshot.get("reports") or [],
+    })
+
+
+def _semantic_date_metadata(item) -> dict:
+    values = date_values(item.model_dump())
+    return {key: (value.isoformat() if hasattr(value, "isoformat") else value)
+            for key in SEMANTIC_DATE_FIELDS if (value := values.get(key)) is not None}
 
 
 def _report_modality(report_type: str) -> str:
@@ -200,7 +243,14 @@ def _report_modality(report_type: str) -> str:
 
 
 def _source_fingerprint(value) -> str:
-    encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    def meaningful_dates(item):
+        if isinstance(item, dict):
+            return {key: meaningful_dates(value) for key, value in item.items()
+                    if key not in SEMANTIC_DATE_FIELDS or value is not None}
+        if isinstance(item, list):
+            return [meaningful_dates(value) for value in item]
+        return item
+    encoded = json.dumps(meaningful_dates(value), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
@@ -259,17 +309,27 @@ async def _persist_simple_case_sources(
             LabReport.source_type == "simple_case_pdf",
         ))
     ).scalars().all()
-    existing_lab_fingerprints = {
-        _source_fingerprint((report.raw_payload or {}).get("labs", []))
-        for report in existing_labs
-    }
+    existing_lab_fingerprints = set()
+    for report in existing_labs:
+        stored_rows = (report.raw_payload or {}).get("labs", [])
+        existing_lab_fingerprints.add(_source_fingerprint(stored_rows))
+        # Additive statuses/dates should not duplicate a pre-upgrade source.
+        try:
+            restored = normalize_simple_case(_restore_case_input({
+                "clinical": normalized.clinical.model_dump(), "labs": stored_rows,
+            }))
+        except ValidationError:
+            continue
+        existing_lab_fingerprints.add(_source_fingerprint([
+            item.model_dump(mode="json") for item in restored.labs
+        ]))
     grouped_labs: dict[tuple[str, str | None], list] = {}
     # A document can contain different clinical dates. Keep each dated set intact
     # so adding a later report does not relabel or replace its earlier results.
     for item in normalized.labs:
         source = str(item.source_metadata.get("source_sha256")
                      or item.source_metadata.get("source_file_name") or "manual")
-        measured_at = _date_or_none(item.measured_at)
+        measured_at = resolve_timeline_date(item.model_dump(), kind="lab").date
         key = (source, measured_at.isoformat() if measured_at else None)
         grouped_labs.setdefault(key, []).append(item)
     # Recognize pre-upgrade aggregate reports without duplicating their rows.
@@ -294,7 +354,7 @@ async def _persist_simple_case_sources(
             uploaded_by_user_id=current_user.id,
             source_type="simple_case_pdf",
             file_name=source_files[0] if source_files else "laboratuvar.pdf",
-            report_date=_date_or_none(labs[0].measured_at),
+            report_date=resolve_timeline_date(labs[0].model_dump(), kind="lab").date,
             raw_payload={
                 "contract_version": normalized.contract_version,
                 "labs": source_rows,
@@ -304,13 +364,19 @@ async def _persist_simple_case_sources(
                 "simple_case": True,
                 "source_fingerprint": fingerprint,
                 "source_files": list(dict.fromkeys(source_files)),
-                "classification_disabled": True,
+                "classification_method": "deterministic_source_reference",
                 "simple_case_results": [
                     {
                         "test_name": item.test_name,
                         "value": item.value,
                         "unit": item.unit,
                         "reference_text": item.reference_text,
+                        "status": item.status,
+                        "reference_low": item.reference_low,
+                        "reference_high": item.reference_high,
+                        "raw_reference": item.raw_reference,
+                        "reference_details": item.reference_details.model_dump(mode="json") if item.reference_details else None,
+                        **_semantic_date_metadata(item),
                         "measured_at": (
                             item.measured_at.isoformat()
                             if hasattr(item.measured_at, "isoformat")
@@ -338,10 +404,10 @@ async def _persist_simple_case_sources(
                     raw_value=None if item.value is None else str(item.value),
                     normalized_value=_decimal_or_none(item.value),
                     unit=item.unit,
-                    reference_min=None,
-                    reference_max=None,
+                    reference_min=_decimal_or_none(item.reference_low),
+                    reference_max=_decimal_or_none(item.reference_high),
                     reference_source=item.reference_source,
-                    result_status=ResultStatus.UNKNOWN,
+                    result_status=ResultStatus(item.status.lower()),
                     trend_status=TrendStatus.NO_PREVIOUS_RESULT,
                     previous_value=None,
                     absolute_difference=None,
@@ -349,22 +415,28 @@ async def _persist_simple_case_sources(
                     time_difference_days=None,
                     alias_confidence=0.0,
                     reference_confidence=1.0 if item.reference_text else 0.0,
-                    classification_confidence=0.0,
+                    classification_confidence=1.0 if item.status != "UNKNOWN" else 0.0,
                     trend_confidence=0.0,
-                    needs_review=True,
-                    reason=None,
-                    rule_applied=None,
-                    measured_at=_date_or_none(item.measured_at),
+                    needs_review=item.status == "UNKNOWN" or bool(item.source_metadata.get("needs_review")),
+                    reason=item.classification_reason,
+                    rule_applied="deterministic_source_reference",
+                    measured_at=resolve_timeline_date(item.model_dump(), kind="lab").date,
                     metadata_json={
                         **dict(item.source_metadata or {}),
                         "simple_case": True,
                         "reference_text": item.reference_text,
+                        "status": item.status,
+                        "reference_low": item.reference_low,
+                        "reference_high": item.reference_high,
+                        "raw_reference": item.raw_reference,
+                        "original_measured_at": item.measured_at.isoformat() if item.measured_at else None,
+                        **_semantic_date_metadata(item),
                         "reference_details": (
                             item.reference_details.model_dump(mode="json")
                             if item.reference_details is not None
                             else None
                         ),
-                        "classification_disabled": True,
+                        "classification_method": "deterministic_source_reference",
                     },
                 )
             )
@@ -387,6 +459,7 @@ async def _persist_simple_case_sources(
         if not source_text.strip():
             continue
         metadata = dict(report.metadata or {})
+        metadata.update({key: value for key, value in _semantic_date_metadata(report).items()})
         fingerprint = _source_fingerprint(report.model_dump(mode="json"))
         if fingerprint in report_fingerprints:
             continue
@@ -463,6 +536,15 @@ async def get_saved_simple_case(
     saved_case = metadata.get("simple_case")
     if isinstance(saved_case, dict):
         await validate_source_metadata(session, patient_id=patient_id, metadata=saved_case)
+        try:
+            saved_case = normalize_simple_case(_restore_case_input(saved_case)).model_dump(mode="json")
+        except ValidationError:
+            # Malformed historic snapshots remain readable; never trust an old
+            # source/AI status when source values cannot be normalized safely.
+            saved_case = {**saved_case, "labs": [
+                {**item, "status": "UNKNOWN", "classification_reason": "legacy_validation_required"}
+                for item in saved_case.get("labs", []) if isinstance(item, dict)
+            ]}
     ai_report = metadata.get("simple_case_ai_report")
     if (
         not isinstance(saved_case, dict)
@@ -478,14 +560,14 @@ async def get_saved_simple_case(
         "clinical": patient_clinical_context({
             **metadata, "sex": str(patient.sex),
         }).model_dump(mode="json"),
-        "simple_case": metadata.get("simple_case"),
+        "simple_case": saved_case,
         "ai_report": ai_report,
     }
 
 
 @router.post("/normalize", response_model=SimpleCaseResponse)
 async def normalize_case(payload: SimpleCaseRequest) -> SimpleCaseResponse:
-    """Normalize clinical + lab + report data without diagnostic classification."""
+    """Normalize source data and numeric ranges without clinical interpretation."""
 
     return normalize_simple_case(payload)
 
@@ -608,6 +690,9 @@ async def _extract_lab_document_with_claude(
             "reference_max": float(ref_max) if ref_max is not None else None,
             "reference_text": reference_text,
             "measured_at": item.measured_at.isoformat() if item.measured_at is not None else None,
+            **{key: (value.isoformat() if hasattr(value, "isoformat") else value)
+               for key in SEMANTIC_DATE_FIELDS
+               if (value := getattr(item, key, None)) is not None},
             "source_file_name": result.source_file_name or file_name,
             "source_page": None,
             "needs_review": item.needs_review or result.overall_needs_review,
@@ -676,6 +761,8 @@ def _lab_inputs_from_extracted(
                 value=value,
                 unit=(str(row.get("unit")).strip() if row.get("unit") else None),
                 measured_at=_parse_measured_at(row.get("measured_at")),
+                **{key: _parse_measured_at(date_values(row).get(key)) for key in
+                   ("event_date", "specimen_date", "result_date", "document_date", "uploaded_at")},
                 source_reference=reference_text or reference_payload_text,
                 source_references=(
                     [
@@ -701,6 +788,7 @@ def _lab_inputs_from_extracted(
                     "extraction_source": extraction_source,
                     "reference_min": row.get("reference_min"),
                     "reference_max": row.get("reference_max"),
+                    "reference_unit": row.get("reference_unit"),
                     "source_flag": row.get("source_flag"),
                     "raw_parameter_name": row.get("raw_parameter_name"),
                     "raw_value": row.get("raw_value"),
@@ -715,7 +803,14 @@ def _lab_inputs_from_extracted(
                 },
             )
         )
-    return rows
+    # Upload endpoints keep their v1 shape while returning the same canonical
+    # status used by save/detail/AI. Demographic selection is refreshed on save.
+    normalized = normalize_simple_case(SimpleCaseRequest(labs=rows))
+    return [row.model_copy(update={
+        "status": lab.status, "reference_low": lab.reference_low,
+        "reference_high": lab.reference_high, "raw_reference": lab.raw_reference,
+        "classification_reason": lab.classification_reason,
+    }) for row, lab in zip(rows, normalized.labs)]
 
 
 async def _ingest_lab_upload(file: UploadFile, media_type: str, *, rotation: int = 0) -> list[LabResultInput]:
@@ -765,6 +860,9 @@ async def _ingest_lab_upload(file: UploadFile, media_type: str, *, rotation: int
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    uploaded_at = datetime.now(UTC).isoformat()
+    for row in extracted.get("labs") or []:
+        row["uploaded_at"] = uploaded_at
     return _lab_inputs_from_extracted(extracted, source_file_name=file_name, extraction_source="lab_document_ingestion_v2")
 
 
@@ -850,8 +948,10 @@ async def upload_report_pdf(
         confidence = extraction.confidence
         model = extraction.model
 
+    dates = extract_document_dates(text)
     return MedicalReportInput(
         report_type=detected_report_type or "Tıbbi Rapor",
+        **dates, uploaded_at=datetime.now(UTC),
         body_region=body_region.strip() if body_region else None,
         findings=text,
         impression=None,
@@ -932,8 +1032,10 @@ async def upload_report_image(
         impression = review.summary
         source_type = "medical_image_vision"
 
+    dates = extract_document_dates(source_text)
     return MedicalReportInput(
         report_type=detected_type or "Tıbbi Rapor",
+        **dates, uploaded_at=datetime.now(UTC),
         body_region=(
             body_region.strip()
             if body_region

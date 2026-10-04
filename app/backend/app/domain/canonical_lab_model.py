@@ -170,6 +170,13 @@ def canonicalize_row(
         "reference_text": _text(_first_present(row, "reference_text", "reference_range"), limit=512),
         "reference_type": _text(row.get("reference_type"), limit=64),
         "measured_at": _text(_first_present(row, "measured_at", "observed_at"), limit=64),
+        # Explicit source dates retain their meaning; measured_at is a separate
+        # legacy fallback and must not be relabeled as a specimen/result date.
+        "event_date": _text(row.get("event_date"), limit=64),
+        "specimen_date": _text(row.get("specimen_date"), limit=64),
+        "result_date": _text(row.get("result_date"), limit=64),
+        "document_date": _text(row.get("document_date"), limit=64),
+        "uploaded_at": _text(row.get("uploaded_at"), limit=64),
         "value_type": _text(row.get("value_type"), limit=32)
         or ("numeric" if normalized_value is not None else "qualitative" if raw_value is not None else "unknown"),
         "needs_review": needs_review,

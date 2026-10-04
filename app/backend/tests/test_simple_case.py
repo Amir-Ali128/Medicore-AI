@@ -17,7 +17,7 @@ from app.schemas.simple_case import SimpleCaseRequest
 
 
 
-def test_age_specific_reference_is_selected_without_classification():
+def test_age_specific_reference_is_selected_before_deterministic_classification():
     payload = SimpleCaseRequest.model_validate(
         {
             "clinical": {"age": 12, "sex": "male"},
@@ -60,7 +60,9 @@ def test_age_specific_reference_is_selected_without_classification():
     assert result.labs[0].reference_source == "report_age_sex_match"
     dumped = result.model_dump()
     assert "classification" not in dumped["labs"][0]
-    assert "status" not in dumped["labs"][0]
+    assert dumped["labs"][0]["status"] == "NORMAL"
+    assert dumped["labs"][0]["reference_low"] == 80
+    assert dumped["labs"][0]["reference_high"] == 350
 
 
 def test_source_reference_is_preserved_as_is():

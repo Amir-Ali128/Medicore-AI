@@ -21,7 +21,7 @@ import { getActivePatientId, setActiveClinicalDraft } from '../services/patientC
 import { bindPatientMetadata, capturePatientScope, isCurrentPatientScope, selectPatientScope, type PatientScope } from '../services/patientScope';
 import { simpleCaseInputKey } from '../services/simpleCaseInputKey';
 import { classifyLabForDisplay, type LabDisplayClassification } from '../services/labDisplayClassification';
-import { mergeLabDocuments } from '../services/labDocumentMerge';
+import { invalidateDemographicClassification, mergeLabDocuments, normalizedLabToInput } from '../services/labDocumentMerge';
 import { normalizeClinical, parseVitalDraft, vitalDraft, type VitalDraft } from '../services/clinicalRecord';
 import ClinicalHistorySummary from '../components/clinical/ClinicalHistorySummary';
 import VitalSignsFields from '../components/clinical/VitalSignsFields';
@@ -46,6 +46,17 @@ function splitLines(value: string) {
 function fileNameFromMetadata(metadata?: Record<string, unknown>) {
   const value = metadata?.source_file_name;
   return typeof value === 'string' ? value : null;
+}
+
+function labReferenceText(lab: LabInput) {
+  return lab.raw_reference ?? lab.source_reference;
+}
+
+function LabSourceFlag({ lab }: { lab: LabInput }) {
+  const flag = lab.source_metadata?.source_flag;
+  return typeof flag === 'string' && flag.trim()
+    ? <p className="mt-1 text-xs text-slate-400">Belgedeki işaret: {flag}</p>
+    : null;
 }
 
 const CURRENT_REPORT_HEADINGS = [
@@ -157,6 +168,8 @@ export default function SimpleCaseWorkspacePage() {
   const [medications, setMedications] = useState('');
   const [notes, setNotes] = useState('');
   const [vitalValues, setVitalValues] = useState<VitalDraft>(() => vitalDraft());
+  const [eventDate, setEventDate] = useState<string | null>(null);
+  const [vitalsEventDate, setVitalsEventDate] = useState<string | null>(null);
 
   const [labs, setLabs] = useState<LabInput[]>([]);
   const [labBusy, setLabBusy] = useState(false);
@@ -188,6 +201,7 @@ export default function SimpleCaseWorkspacePage() {
     setPatientId(null); setProtocolNo(''); setAge(''); setSex('unknown');
     setComplaints(''); setHistory(''); setMedications(''); setNotes('');
     setVitalValues(vitalDraft()); setLabs([]); setReports([]);
+    setEventDate(null); setVitalsEventDate(null);
     setResult(null); setAiResult(null); setAiReportWarning(''); setError('');
     setSaved(false); setSaving(false); setLabBusy(false); setReportBusy(false); setAiBusy(false);
     setLabImageRotation(0); setReportType('Tıbbi Rapor'); setBodyRegion(''); setStep('patient');
@@ -227,17 +241,11 @@ export default function SimpleCaseWorkspacePage() {
         setMedications((clinical?.medications ?? []).join('\n'));
         setNotes(clinical.notes ?? '');
         setVitalValues(vitalDraft(clinical.vital_signs));
+        setEventDate('event_date' in clinical ? clinical.event_date ?? '' : null);
+        setVitalsEventDate('vitals_event_date' in clinical ? clinical.vitals_event_date ?? '' : null);
         setActiveClinicalDraft(saved.patient_id, saved.protocol_no, clinical);
 
-        const restoredLabs: LabInput[] = (simpleCase?.labs ?? []).map((item) => ({
-          test_name: item.test_name,
-          value: item.value,
-          unit: item.unit,
-          measured_at: item.measured_at,
-          source_reference: item.reference_text,
-          source_references: item.reference_details ? [item.reference_details] : [],
-          source_metadata: item.source_metadata ?? {},
-        }));
+        const restoredLabs = (simpleCase?.labs ?? []).map(normalizedLabToInput);
 
         setLabs(restoredLabs);
         setReports(simpleCase?.reports ?? []);
@@ -246,13 +254,7 @@ export default function SimpleCaseWorkspacePage() {
           setResult({
             contract_version: simpleCase.contract_version,
             clinical,
-            labs: simpleCase.labs.map((item) => ({
-              test_name: item.test_name,
-              value: item.value,
-              unit: item.unit,
-              reference_text: item.reference_text,
-              reference_source: item.reference_source,
-            })),
+            labs: simpleCase.labs,
             reports: simpleCase.reports,
             warnings: simpleCase.warnings,
           });
@@ -306,19 +308,22 @@ export default function SimpleCaseWorkspacePage() {
         medications: splitLines(medications),
         notes: notes.trim() || null,
         vital_signs: parseVitalDraft(vitalValues).values,
+        ...(eventDate !== null ? { event_date: eventDate || null } : {}),
+        ...(vitalsEventDate !== null ? { vitals_event_date: vitalsEventDate || null } : {}),
       },
       labs,
       reports,
     }),
-    [age, sex, complaints, history, medications, notes, vitalValues, labs, reports],
+    [age, sex, complaints, history, medications, notes, vitalValues, eventDate, vitalsEventDate, labs, reports],
   );
 
   // Hide responses produced for earlier inputs, including late AI responses.
   const inputKey = simpleCaseInputKey(patientId, payload);
+  const latestInputKey = useRef(inputKey);
+  latestInputKey.current = inputKey;
   const aiInterpretation = aiResult?.inputKey === inputKey ? aiResult.report : null;
 
-  // Keep UI grouping completely separate from the case payload so the existing
-  // clinician-facing AI interpretation receives exactly the same lab inputs.
+  // Every result reaches the AI; grouping only displays the server's status.
   const groupedLabs = useMemo(
     () =>
       labs.reduce(
@@ -515,7 +520,12 @@ export default function SimpleCaseWorkspacePage() {
     try {
       const normalized = await saveSimpleCase(patientId, payload, scope.signal);
       if (!operationCurrent(scope)) return;
+      if (latestInputKey.current !== inputKey) {
+        setSaved(false);
+        return;
+      }
       setResult(normalized);
+      setLabs(normalized.labs.map(normalizedLabToInput));
       setActiveClinicalDraft(patientId, protocolNo, normalized.clinical);
       setSaved(true);
       setStep(nextStep);
@@ -608,7 +618,7 @@ export default function SimpleCaseWorkspacePage() {
                     Yaş
                     <input
                       value={age}
-                      onChange={(e) => setAge(e.target.value)}
+                      onChange={(e) => { setAge(e.target.value); setLabs((current) => current.map(invalidateDemographicClassification)); setSaved(false); }}
                       inputMode="numeric"
                       placeholder="58"
                       className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-normal normal-case tracking-normal text-slate-950 outline-none focus:border-blue-400"
@@ -619,7 +629,7 @@ export default function SimpleCaseWorkspacePage() {
                     Cinsiyet
                     <select
                       value={sex}
-                      onChange={(e) => setSex(e.target.value as SexValue)}
+                      onChange={(e) => { setSex(e.target.value as SexValue); setLabs((current) => current.map(invalidateDemographicClassification)); setSaved(false); }}
                       className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-normal normal-case tracking-normal text-slate-950 outline-none focus:border-blue-400"
                     >
                       <option value="unknown">Belirtilmedi</option>
@@ -658,6 +668,17 @@ export default function SimpleCaseWorkspacePage() {
             <div>
               <h2 className="text-xl font-semibold text-slate-950">Klinik bilgi</h2>
               <p className="mt-1 text-sm text-slate-500">Şikayet ve öykü manuel girilir.</p>
+
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <label className="text-xs font-semibold text-slate-500">
+                  Klinik olay tarihi (isteğe bağlı)
+                  <input type="date" value={(eventDate ?? '').slice(0, 10)} onChange={(e) => { setEventDate(e.target.value); setSaved(false); }} className="mt-2 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-950" />
+                </label>
+                <label className="text-xs font-semibold text-slate-500">
+                  Vital ölçüm tarihi (isteğe bağlı)
+                  <input type="date" value={(vitalsEventDate ?? '').slice(0, 10)} onChange={(e) => { setVitalsEventDate(e.target.value); setSaved(false); }} className="mt-2 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-950" />
+                </label>
+              </div>
 
               <div className="mt-5 grid gap-4 lg:grid-cols-2">
                 <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -828,8 +849,9 @@ export default function SimpleCaseWorkspacePage() {
                                     </div>
                                     <p className="mt-1 text-sm text-slate-500">
                                       {[lab.value, lab.unit].filter((value) => value !== null && value !== undefined && value !== '').join(' ')}
-                                      {lab.source_reference ? ` · Ref: ${lab.source_reference}` : ' · Referans yok'}
+                                      {labReferenceText(lab) ? ` · Ref: ${labReferenceText(lab)}` : ' · Referans yok'}
                                     </p>
+                                    <LabSourceFlag lab={lab} />
                                     {fileNameFromMetadata(lab.source_metadata) ? (
                                       <p className="mt-1 text-xs text-slate-400">
                                         {fileNameFromMetadata(lab.source_metadata)}
@@ -875,8 +897,9 @@ export default function SimpleCaseWorkspacePage() {
                                     </div>
                                     <p className="mt-1 text-sm text-slate-500">
                                       {[lab.value, lab.unit].filter((value) => value !== null && value !== undefined && value !== '').join(' ')}
-                                      {lab.source_reference ? ` · Ref: ${lab.source_reference}` : ' · Referans yok'}
+                                      {labReferenceText(lab) ? ` · Ref: ${labReferenceText(lab)}` : ' · Referans yok'}
                                     </p>
+                                    <LabSourceFlag lab={lab} />
                                     {fileNameFromMetadata(lab.source_metadata) ? (
                                       <p className="mt-1 text-xs text-slate-400">
                                         {fileNameFromMetadata(lab.source_metadata)}
@@ -913,11 +936,12 @@ export default function SimpleCaseWorkspacePage() {
                                     <p className="font-semibold text-slate-950">{lab.test_name}</p>
                                     <p className="mt-1 text-sm text-slate-500">
                                       {[lab.value, lab.unit].filter((value) => value !== null && value !== undefined && value !== '').join(' ')}
-                                      {lab.source_reference ? ` · Ref: ${lab.source_reference}` : ' · Referans yok'}
+                                      {labReferenceText(lab) ? ` · Ref: ${labReferenceText(lab)}` : ' · Referans yok'}
                                     </p>
                                     <p className="mt-1 text-xs text-slate-400">
-                                      Metinsel/eksik referans otomatik etiketlenmedi.
+                                      Sayısal referans veya okuma belirsizliği nedeniyle sınıflandırılamadı.
                                     </p>
+                                    <LabSourceFlag lab={lab} />
                                   </div>
                                   <button
                                     type="button"

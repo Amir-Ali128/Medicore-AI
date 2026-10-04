@@ -41,7 +41,12 @@ jobs:
             tests/test_patient_isolation.py \
             tests/test_patient_health_timeline.py \
             tests/test_patient_health_timeline_api.py \
-            tests/test_report_type_inference.py
+            tests/test_report_type_inference.py \
+            tests/test_lab_result_classification.py \
+            tests/test_lab_document_semantic_dates.py \
+            tests/test_document_dates.py \
+            tests/test_simple_case_ai_vaka1.py \
+            tests/test_vaka1_persistence_regression.py
 
   frontend-build:
     runs-on: ubuntu-latest

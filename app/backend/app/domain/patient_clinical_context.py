@@ -6,6 +6,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from app.domain.document_dates import calendar_day
 from app.schemas.simple_case import ClinicalContext, VitalSigns
 
 
@@ -40,6 +41,8 @@ def normalize_patient_clinical(source: Any, metadata: Mapping | None = None) -> 
         ],
         'medications': _lines(source.get('medications') if modern else history.get('medications')),
         'notes': source.get('notes') if modern else exam.get('examination_findings'),
+        'event_date': calendar_day(source.get('event_date') if 'event_date' in source else source.get('examination_date') or exam.get('examination_date')),
+        'vitals_event_date': calendar_day(source.get('vitals_event_date') if 'vitals_event_date' in source else _mapping(source.get('vital_signs')).get('measurement_date') or exam.get('measurement_date')),
     }
     if not isinstance(data['notes'], str):
         data['notes'] = None

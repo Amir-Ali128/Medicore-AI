@@ -1,11 +1,20 @@
 import type { ClinicalContext, VitalSigns } from './simpleCaseClient';
 
-export type TimelineLabValue = { id: string; test_name: string; value: string | number | null; unit: string | null; reference_text: string | null };
-export type PatientTimelineEntry = {
+export type TimelineDates = {
+  event_date?: string | null; specimen_date?: string | null; result_date?: string | null;
+  document_date?: string | null; uploaded_at?: string | null;
+  exam_date?: string | null; consultation_date?: string | null;
+};
+export type TimelineLabValue = TimelineDates & {
+  id: string; test_name: string; value: string | number | null; unit: string | null; reference_text: string | null;
+  status?: 'LOW' | 'NORMAL' | 'HIGH' | 'UNKNOWN';
+  reference_low?: number | null; reference_high?: number | null; raw_reference?: string | null;
+};
+export type PatientTimelineEntry = TimelineDates & {
   id: string; patient_id: string;
-  kind: 'laboratory' | 'urine_laboratory' | 'report' | 'clinical' | 'vital_signs';
+  kind: 'laboratory' | 'urine_laboratory' | 'lab_result_available' | 'report' | 'clinical' | 'vital_signs';
   source_type: 'lab_report' | 'radiology_report' | 'patient'; source_id: string; source_path: string | null;
-  title: string; date_source: string; results: TimelineLabValue[];
+  title: string; date_source: string; results: TimelineLabValue[]; result_ids?: string[];
   clinical: ClinicalContext | null; vital_signs: VitalSigns | null;
   inferred_report_type: string | null; report_type_confidence: number | null;
   report_text: string | null; summary: string | null; file_name: string | null;

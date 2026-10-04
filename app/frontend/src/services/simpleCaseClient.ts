@@ -22,6 +22,8 @@ export type ClinicalContext = {
   medications: string[];
   notes: string | null;
   vital_signs?: VitalSigns | null;
+  event_date?: string | null;
+  vitals_event_date?: string | null;
 };
 
 export type LabReference = {
@@ -34,7 +36,25 @@ export type LabReference = {
   sex?: SexValue | null;
 };
 
-export type LabInput = {
+export type CanonicalLabStatus = 'LOW' | 'NORMAL' | 'HIGH' | 'UNKNOWN';
+
+export type DocumentDates = {
+  event_date?: string | null;
+  specimen_date?: string | null;
+  result_date?: string | null;
+  document_date?: string | null;
+  uploaded_at?: string | null;
+};
+
+export type CanonicalLabClassification = {
+  status?: CanonicalLabStatus;
+  reference_low?: number | null;
+  reference_high?: number | null;
+  raw_reference?: string | null;
+  classification_reason?: string | null;
+};
+
+export type LabInput = DocumentDates & CanonicalLabClassification & {
   test_name: string;
   value: string | number | null;
   unit: string | null;
@@ -44,9 +64,24 @@ export type LabInput = {
   source_metadata?: Record<string, unknown>;
 };
 
-export type MedicalReportInput = {
+export type LabOutput = DocumentDates & CanonicalLabClassification & {
+  test_name: string;
+  value: string | number | null;
+  unit: string | null;
+  measured_at?: string | null;
+  reference_text: string | null;
+  reference_source: 'report' | 'report_age_sex_match' | 'missing';
+  reference_details?: LabReference | null;
+  source_reference?: string | null;
+  source_references?: LabReference[];
+  source_metadata?: Record<string, unknown>;
+};
+
+export type MedicalReportInput = Omit<DocumentDates, 'specimen_date' | 'result_date'> & {
   report_type: string;
   report_date?: string | null;
+  exam_date?: string | null;
+  consultation_date?: string | null;
   body_region: string | null;
   findings: string | null;
   impression: string | null;
@@ -63,13 +98,7 @@ export type SimpleCaseRequest = {
 export type SimpleCaseResponse = {
   contract_version: 'medicore-simple-case-v1';
   clinical: ClinicalContext;
-  labs: Array<{
-    test_name: string;
-    value: string | number | null;
-    unit: string | null;
-    reference_text: string | null;
-    reference_source: 'report' | 'report_age_sex_match' | 'missing';
-  }>;
+  labs: LabOutput[];
   reports: MedicalReportInput[];
   warnings: string[];
 };
@@ -88,16 +117,7 @@ export type SavedSimpleCase = {
   simple_case: {
     contract_version: 'medicore-simple-case-v1';
     clinical: ClinicalContext;
-    labs: Array<{
-      test_name: string;
-      value: string | number | null;
-      unit: string | null;
-      measured_at?: string | null;
-      reference_text: string | null;
-      reference_source: 'report' | 'report_age_sex_match' | 'missing';
-      reference_details?: LabReference | null;
-      source_metadata?: Record<string, unknown>;
-    }>;
+    labs: LabOutput[];
     reports: MedicalReportInput[];
     warnings: string[];
   } | null;

@@ -15,17 +15,34 @@ class TimelineLabValue(BaseModel):
     value: str | float | int | None = None
     unit: str | None = None
     reference_text: str | None = None
+    status: Literal["LOW", "NORMAL", "HIGH", "UNKNOWN"] = "UNKNOWN"
+    reference_low: float | None = None
+    reference_high: float | None = None
+    raw_reference: str | None = None
+    event_date: date | None = None
+    specimen_date: date | None = None
+    result_date: date | None = None
+    document_date: date | None = None
+    uploaded_at: date | None = None
 
 
 class PatientHealthTimelineEntry(BaseModel):
     id: str
     patient_id: UUID
-    kind: Literal["laboratory", "urine_laboratory", "report", "clinical", "vital_signs"]
+    kind: Literal["laboratory", "urine_laboratory", "lab_result_available", "report", "clinical", "vital_signs"]
     source_type: Literal["lab_report", "radiology_report", "patient"]
     source_id: UUID
     source_path: str | None = None
     title: str
     date_source: str
+    event_date: date | None = None
+    specimen_date: date | None = None
+    result_date: date | None = None
+    document_date: date | None = None
+    exam_date: date | None = None
+    consultation_date: date | None = None
+    uploaded_at: date | None = None
+    result_ids: list[str] = Field(default_factory=list)
     results: list[TimelineLabValue] = Field(default_factory=list)
     clinical: ClinicalContext | None = None
     vital_signs: VitalSigns | None = None

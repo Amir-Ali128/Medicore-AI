@@ -102,6 +102,10 @@ def test_health_history_keeps_all_50_results_and_combines_same_day_kinds(timelin
         patient = db.get(Patient, c.a)
         metadata = dict(patient.metadata_json)
         context = dict(metadata["simple_case"]["clinical"])
+        # This fixture represents pre-canonical-date JSON. Explicit new nulls
+        # instead mean that a clinician cleared the corresponding date.
+        context.pop("event_date", None)
+        context.pop("vitals_event_date", None)
         context["examination_date"] = "2026-10-01"
         context["vital_signs"] = {**context["vital_signs"], "measurement_date": "2026-10-01"}
         metadata["simple_case"] = {**metadata["simple_case"], "clinical": context}
