@@ -25,6 +25,8 @@ import { invalidateDemographicClassification, mergeLabDocuments, normalizedLabTo
 import { normalizeClinical, parseVitalDraft, vitalDraft, type VitalDraft } from '../services/clinicalRecord';
 import ClinicalHistorySummary from '../components/clinical/ClinicalHistorySummary';
 import VitalSignsFields from '../components/clinical/VitalSignsFields';
+import AIReportPdfDownloadButton from '../components/clinical/AIReportPdfDownloadButton';
+import { AI_REPORT_DISCLAIMER } from '../services/aiReportPdf';
 
 type Step = 'patient' | 'clinical' | 'labs' | 'reports' | 'summary';
 
@@ -1089,14 +1091,17 @@ export default function SimpleCaseWorkspacePage() {
                       Klinik bilgi, laboratuvar sonuçları ve tüm tetkik raporları birlikte değerlendirilir.
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={runAIInterpretation}
-                    disabled={aiBusy || (!completed.clinical && labs.length === 0 && reports.length === 0)}
-                    className="rounded-2xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    {aiBusy ? 'AI değerlendiriyor…' : aiInterpretation ? 'Yeniden yorumla' : 'AI Klinik Yorum'}
-                  </button>
+                  <div className="flex flex-wrap items-start gap-3">
+                    <AIReportPdfDownloadButton reportText={aiInterpretation?.report_text} caseId={patientId} protocolNo={protocolNo} reportWarning={aiReportWarning} />
+                    <button
+                      type="button"
+                      onClick={runAIInterpretation}
+                      disabled={aiBusy || (!completed.clinical && labs.length === 0 && reports.length === 0)}
+                      className="rounded-2xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      {aiBusy ? 'AI değerlendiriyor…' : aiInterpretation ? 'Yeniden yorumla' : 'AI Klinik Yorum'}
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -1131,7 +1136,7 @@ export default function SimpleCaseWorkspacePage() {
                   </div>
 
                   <div className="mt-6 border-t border-slate-100 pt-4 text-xs leading-5 text-slate-400">
-                    Bu çıktı klinik karar desteği amacıyla oluşturulmuştur ve hekim değerlendirmesi ile doğrulanmalıdır.
+                    {AI_REPORT_DISCLAIMER}
                   </div>
                 </div>
               ) : null}
