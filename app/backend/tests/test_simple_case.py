@@ -251,6 +251,7 @@ def test_doctor_update_preserves_patient_owner(context, monkeypatch):
     owner = str(uuid4())
     c.patient.metadata_json["owner_user_id"] = owner
     monkeypatch.setattr(patients, "_ensure_protocol_available", AsyncMock())
+    monkeypatch.setattr(patients, "ensure_case_name_available", AsyncMock())
     # This endpoint uses an ORM response schema; test the transaction directly.
     import asyncio
     from app.schemas.patient_record import PatientRecordUpsert

@@ -111,6 +111,7 @@ export type CaseAIInterpretation = {
 export type SavedSimpleCase = {
   patient_id: string;
   protocol_no: string;
+  case_name?: string;
   sex: SexValue;
   age: number | null;
   clinical?: ClinicalContext;

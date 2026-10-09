@@ -20,6 +20,7 @@ from app.api.dependencies import SessionDep
 from app.api.routes.auth import get_current_active_user
 from app.core.config import get_settings
 from app.domain.enums import ResultStatus, Sex, TrendStatus, UserRole
+from app.domain.case_management import case_display_name
 from app.domain.document_dates import (
     SEMANTIC_DATE_FIELDS, calendar_day, date_values, extract_document_dates, resolve_timeline_date,
 )
@@ -555,6 +556,7 @@ async def get_saved_simple_case(
     return {
         "patient_id": str(patient.id),
         "protocol_no": patient.protocol_no,
+        "case_name": case_display_name(patient.protocol_no, metadata),
         "sex": str(patient.sex.value if hasattr(patient.sex, "value") else patient.sex),
         "age": metadata.get("age"),
         "clinical": patient_clinical_context({

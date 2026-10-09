@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import ClinicalHistorySummary from '../components/clinical/ClinicalHistorySummary';
+import CaseHistoryRow from '../components/patient/CaseHistoryRow';
+import { caseDisplayName, caseNameMatches, normalizeCaseName } from '../services/caseManagement';
 import { clinicalRows, formatVitals, legacyClinicalIntake, recordClinical } from '../services/clinicalRecord';
 
 import type { LabReportSummary } from '../services/labAnalysisClient';
@@ -71,13 +73,12 @@ function clip(value: string | null | undefined, max = 145) {
 }
 
 function recordDisplayName(record: PatientRecord) {
-  const name = legacyClinicalIntake(recordClinical(record), record.metadata_json?.clinical_context).patient_information.full_name?.trim();
-  return name || `Hasta ${record.protocol_no}`;
+  return caseDisplayName(record);
 }
 
 function recordSearchText(record: PatientRecord) {
   const clinical = recordClinical(record);
-  return [
+  return normalizeCaseName([
     record.protocol_no,
     record.external_ref,
     recordDisplayName(record),
@@ -89,8 +90,7 @@ function recordSearchText(record: PatientRecord) {
     ...formatVitals(clinical.vital_signs),
   ]
     .filter((value) => value !== null && value !== undefined)
-    .join(' ')
-    .toLocaleLowerCase('tr-TR');
+    .join(' '));
 }
 
 function labTitle(report: LabReportSummary) {
@@ -401,6 +401,7 @@ export default function PatientHistoryPage() {
   const [query, setQuery] = useState('');
   const [sexFilter, setSexFilter] = useState('all');
   const [page, setPage] = useState(1);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -425,10 +426,10 @@ export default function PatientHistoryPage() {
   }, []);
 
   const filteredRecords = useMemo(() => {
-    const normalizedQuery = query.trim().toLocaleLowerCase('tr-TR');
+    const normalizedQuery = normalizeCaseName(query);
     return records.filter((record) => {
       if (sexFilter !== 'all' && record.sex !== sexFilter) return false;
-      return !normalizedQuery || recordSearchText(record).includes(normalizedQuery);
+      return !normalizedQuery || caseNameMatches(record, query) || recordSearchText(record).includes(normalizedQuery);
     });
   }, [query, records, sexFilter]);
 
@@ -480,12 +481,12 @@ export default function PatientHistoryPage() {
 
   function handleNewPatient() {
     clearActivePatientRecord();
-    navigate('/patients/demo?new=1');
+    navigate('/case?new=1');
   }
 
   function openCase(record: PatientRecord, step: 'patient' | 'labs' | 'reports' | 'summary' = 'patient') {
     activatePatientRecord(record);
-    navigate('/case', { state: { patientId: record.id, step } });
+    navigate(`/case?patient=${encodeURIComponent(record.id)}&step=${step}`);
   }
 
   async function handleDelete(record: PatientRecord) {
@@ -577,10 +578,10 @@ export default function PatientHistoryPage() {
     <div className="space-y-6">
       <header className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
         <div>
-          <p className="text-sm font-semibold uppercase tracking-wide text-cyan-700">Hasta Arşivi</p>
-          <h1 className="mt-2 text-3xl font-semibold text-slate-950">Hasta kayıtları</h1>
+          <p className="text-sm font-semibold uppercase tracking-wide text-cyan-700">Vaka Arşivi</p>
+          <h1 className="mt-2 text-3xl font-semibold text-slate-950">Geçmiş Vakalar</h1>
           <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-500">
-            Hasta bilgileri, klinik öykü, laboratuvar sonuçları ve radyoloji/ultrason kayıtları aynı arşiv kartında tarihleriyle birlikte görünür. Yeni tetkikler eski kayıtların üzerine yazılmaz; aynı hastanın geçmişine eklenir.
+            Vakanızı bulun, adını düzenleyin veya kaldığınız yerden açın. Çalışma alanında yalnızca seçtiğiniz vaka gösterilir; tüm kayıtları aynı vaka altında korunur.
           </p>
         </div>
         <button
@@ -588,13 +589,13 @@ export default function PatientHistoryPage() {
           onClick={handleNewPatient}
           className="rounded-lg bg-blue-700 px-5 py-3 text-sm font-semibold text-white shadow-sm hover:bg-blue-800"
         >
-          + Yeni Kayıt
+          + Yeni Vaka
         </button>
       </header>
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Toplam hasta</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Toplam vaka</p>
           <p className="mt-2 text-2xl font-semibold text-slate-950">{records.length}</p>
         </div>
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -614,12 +615,12 @@ export default function PatientHistoryPage() {
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_220px_auto]">
           <label className="text-sm font-medium text-slate-700">
-            Hasta ara
+            Vaka ara
             <input
               type="search"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Protokol no, hasta bilgisi veya klinik içerik ile ara"
+              placeholder="Vaka adı ara..."
               className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-950 placeholder:text-slate-400"
             />
           </label>
@@ -663,7 +664,7 @@ export default function PatientHistoryPage() {
       {!loading && !error && records.length === 0 ? (
         <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-10 text-center">
           <p className="font-semibold text-slate-900">Henüz hasta kaydı yok</p>
-          <p className="mt-2 text-sm text-slate-500">İlk kaydı oluşturmak için Yeni Kayıt düğmesini kullanın.</p>
+          <p className="mt-2 text-sm text-slate-500">İlk kaydı oluşturmak için Yeni Vaka düğmesini kullanın.</p>
           <button
             type="button"
             onClick={handleNewPatient}
@@ -682,21 +683,28 @@ export default function PatientHistoryPage() {
 
       <div className="space-y-4">
         {pageRecords.map((record) => (
-          <RecordCard
-            key={record.id}
-            record={record}
-            attachments={attachments[record.id]}
-            active={getActivePatientId() === record.id}
-            deleting={deletingId === record.id}
-            deletingAttachmentKey={deletingAttachmentKey}
-            onOpen={(item) => openCase(item, 'patient')}
-            onOpenSummary={(item) => openCase(item, 'summary')}
-            onAddLab={(item) => openCase(item, 'labs')}
-            onAddRadiology={(item) => openCase(item, 'reports')}
-            onDelete={(item) => void handleDelete(item)}
-            onDeleteLab={(item, report) => void handleDeleteLab(item, report)}
-            onDeleteRadiology={(item, report) => void handleDeleteRadiology(item, report)}
-          />
+          <div key={record.id} className="space-y-3">
+            <CaseHistoryRow record={record} active={getActivePatientId() === record.id}
+              deleting={deletingId === record.id} expanded={expandedId === record.id}
+              onOpen={(item) => openCase(item, 'summary')}
+              onToggleDetails={() => setExpandedId((id) => id === record.id ? null : record.id)}
+              onDelete={(item) => void handleDelete(item)}
+              onRenamed={(renamed) => setRecords((current) => current.map((item) => item.id === renamed.id ? renamed : item))} />
+            {expandedId === record.id ? <RecordCard
+              record={record}
+              attachments={attachments[record.id]}
+              active={getActivePatientId() === record.id}
+              deleting={deletingId === record.id}
+              deletingAttachmentKey={deletingAttachmentKey}
+              onOpen={(item) => openCase(item, 'patient')}
+              onOpenSummary={(item) => openCase(item, 'summary')}
+              onAddLab={(item) => openCase(item, 'labs')}
+              onAddRadiology={(item) => openCase(item, 'reports')}
+              onDelete={(item) => void handleDelete(item)}
+              onDeleteLab={(item, report) => void handleDeleteLab(item, report)}
+              onDeleteRadiology={(item, report) => void handleDeleteRadiology(item, report)}
+            /> : null}
+          </div>
         ))}
       </div>
 

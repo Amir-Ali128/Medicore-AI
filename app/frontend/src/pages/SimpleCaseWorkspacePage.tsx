@@ -161,6 +161,7 @@ export default function SimpleCaseWorkspacePage() {
   const [step, setStep] = useState<Step>('patient');
 
   const [protocolNo, setProtocolNo] = useState('');
+  const [caseName, setCaseName] = useState('');
   const [age, setAge] = useState('');
   const [sex, setSex] = useState<SexValue>('unknown');
   const [patientId, setPatientId] = useState<string | null>(null);
@@ -195,12 +196,15 @@ export default function SimpleCaseWorkspacePage() {
 
   useLayoutEffect(() => {
     const routeState = location.state as { patientId?: string; step?: Step } | null;
+    const newCaseRequested = searchParams.get('new') === '1';
     const requestedPatientId = searchParams.get('patient') || routeState?.patientId;
-    const activePatientId = requestedPatientId || getActivePatientId();
-    if (activePatientId) selectPatientScope(activePatientId);
+    const activePatientId = newCaseRequested ? null : requestedPatientId || getActivePatientId();
+    if (newCaseRequested) selectPatientScope(null, false);
+    else if (activePatientId) selectPatientScope(activePatientId);
     // Clear every case field before the new patient's fetch starts. Failure or
     // an empty case must never leave the previous patient's screen visible.
     setPatientId(null); setProtocolNo(''); setAge(''); setSex('unknown');
+    setCaseName('');
     setComplaints(''); setHistory(''); setMedications(''); setNotes('');
     setVitalValues(vitalDraft()); setLabs([]); setReports([]);
     setEventDate(null); setVitalsEventDate(null);
@@ -226,6 +230,7 @@ export default function SimpleCaseWorkspacePage() {
 
         setPatientId(saved.patient_id);
         setProtocolNo(saved.protocol_no);
+        setCaseName(saved.case_name || saved.protocol_no);
 
         const simpleCase = saved.simple_case;
         const clinical = normalizeClinical(saved.clinical ?? simpleCase?.clinical, { age: saved.age, sex: saved.sex });
@@ -550,10 +555,10 @@ export default function SimpleCaseWorkspacePage() {
           <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-600">
-                Yeni vaka
+                {patientId ? 'Aktif vaka' : 'Yeni vaka'}
               </p>
               <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">
-                Hastayı kaydet, PDF veya fotoğraf ekle, vakayı oluştur
+                {patientId ? caseName || protocolNo : 'Hastayı kaydet, PDF veya fotoğraf ekle, vakayı oluştur'}
               </h1>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
                 Hasta ve klinik bilgileri manuel girilir. Kan sonuçları ve tetkik raporları PDF veya fotoğraf olarak yüklenir.
