@@ -1,11 +1,11 @@
 import { useLocation } from 'react-router-dom';
 
 import { getStoredUser } from '../services/authClient';
+import CaseHistorySidebar from '../components/patient/CaseHistorySidebar';
 
 const clinicalItems = [
   { label: 'Ana Sayfa', to: '/', href: '#/', icon: '⌂' },
   { label: 'Yeni Vaka', to: '/case', href: '#/case?new=1', icon: '+' },
-  { label: 'Geçmiş Vakalar', to: '/history', href: '#/history', icon: '↺' },
 ];
 
 const adminItems = [
@@ -33,11 +33,11 @@ export default function Sidebar() {
         </a>
       </div>
 
-      <nav className="px-3">
+      <nav className="flex min-h-0 flex-1 flex-col px-3 pb-3">
         <p className="px-3 pb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
           {user?.role === 'admin' ? 'Yönetim' : 'Çalışma Alanı'}
         </p>
-        <div className="space-y-1">
+        <div className="shrink-0 space-y-1">
           {items.map((item) => {
             const isActive =
               item.to === '/'
@@ -63,10 +63,11 @@ export default function Sidebar() {
             );
           })}
         </div>
+        {user?.role !== 'admin' ? <CaseHistorySidebar /> : null}
       </nav>
 
       {user?.role !== 'admin' ? (
-        <div className="mt-auto p-4">
+        <div className="shrink-0 p-4">
           <div className="rounded-3xl bg-blue-50 p-4">
             <p className="text-xs font-semibold text-blue-900">Basit akış</p>
             <p className="mt-1 text-xs leading-5 text-blue-700">

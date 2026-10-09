@@ -17,7 +17,8 @@ import {
   type SimpleCaseRequest,
   type SimpleCaseResponse,
 } from '../services/simpleCaseClient';
-import { getActivePatientId, setActiveClinicalDraft } from '../services/patientClient';
+import { getActivePatientId, setActiveClinicalDraft, type PatientRecord } from '../services/patientClient';
+import { caseDisplayName } from '../services/caseManagement';
 import { bindPatientMetadata, capturePatientScope, isCurrentPatientScope, selectPatientScope, type PatientScope } from '../services/patientScope';
 import { simpleCaseInputKey } from '../services/simpleCaseInputKey';
 import { classifyLabForDisplay, type LabDisplayClassification } from '../services/labDisplayClassification';
@@ -193,6 +194,15 @@ export default function SimpleCaseWorkspacePage() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    const renamed = (event: Event) => {
+      const record = (event as CustomEvent<PatientRecord>).detail;
+      if (record?.id === patientId && getActivePatientId() === patientId) setCaseName(caseDisplayName(record));
+    };
+    window.addEventListener('medicore:case-name-updated', renamed);
+    return () => window.removeEventListener('medicore:case-name-updated', renamed);
+  }, [patientId]);
 
   useLayoutEffect(() => {
     const routeState = location.state as { patientId?: string; step?: Step } | null;

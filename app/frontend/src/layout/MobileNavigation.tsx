@@ -1,6 +1,7 @@
 import { NavLink } from 'react-router-dom';
 
 import { getStoredUser } from '../services/authClient';
+import CaseHistorySidebar from '../components/patient/CaseHistorySidebar';
 
 export default function MobileNavigation() {
   const user = getStoredUser();
@@ -14,7 +15,6 @@ export default function MobileNavigation() {
       : [
           { label: 'Ana', to: '/', icon: '⌂' },
           { label: 'Yeni Vaka', to: '/case?new=1', icon: '+' },
-          { label: 'Geçmiş Vakalar', to: '/history', icon: '↺' },
         ];
 
   return (
@@ -36,6 +36,7 @@ export default function MobileNavigation() {
             <span className="mt-1">{item.label}</span>
           </NavLink>
         ))}
+        {user?.role !== 'admin' ? <CaseHistorySidebar mobile /> : null}
       </div>
     </nav>
   );

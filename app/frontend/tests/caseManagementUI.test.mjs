@@ -10,7 +10,7 @@ test('history searches, renames and opens persisted cases without changing UUIDs
   const previous = { storage: globalThis.localStorage, window: globalThis.window, fetch: globalThis.fetch, act: globalThis.IS_REACT_ACT_ENVIRONMENT };
   const storage = new Map();
   globalThis.localStorage = { getItem: (key) => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, String(value)), removeItem: (key) => storage.delete(key) };
-  globalThis.window = { location: { hash: '#/history' }, dispatchEvent: () => true };
+  globalThis.window = { location: { hash: '#/history' }, dispatchEvent: () => true, addEventListener() {}, removeEventListener() {} };
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   const records = ['23', '21'].map((number) => ({ id: `uuid-${number}`, protocol_no: `VAKA${number}`, sex: 'male', external_ref: null, date_of_birth: null, is_pregnant: null,
     metadata_json: { clinical_context: { complaints: ['Existing complaint'], notes: 'Original notes' } }, created_at: '2026-10-01T10:00:00Z', updated_at: '2026-10-02T10:00:00Z' }));

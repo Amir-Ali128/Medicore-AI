@@ -298,17 +298,21 @@ export async function renamePatientCase(patientId: string, caseName: string, sig
     // Keep the current draft, AI cache and scope generation untouched.
     localStorage.setItem('medicore:lastPatientDisplayName', caseDisplayName(record));
   }
+  if (capturePatientScope().owner === scope.owner) {
+    window.dispatchEvent(new CustomEvent<PatientRecord>('medicore:case-name-updated', { detail: record }));
+  }
   return record;
 }
 
-export async function listPatientRecords(limit = 500): Promise<PatientRecord[]> {
+export async function listPatientRecords(limit = 500, options: { syncDraft?: boolean; signal?: AbortSignal } = {}): Promise<PatientRecord[]> {
   // Make sure the archive reads the newest clinical draft, even if the user
   // navigated away before pressing the explicit update button.
-  await syncActivePatientDraft();
+  if (options.syncDraft !== false) await syncActivePatientDraft();
 
   const safeLimit = Math.max(1, Math.min(limit, 500));
   const response = await fetch(`${API_BASE_URL}/patients?limit=${safeLimit}`, {
     headers: headers(),
+    signal: options.signal,
   });
   if (!response.ok) {
     throw new Error(`Hasta kayıtları alınamadı: ${response.status} ${await readError(response)}`);

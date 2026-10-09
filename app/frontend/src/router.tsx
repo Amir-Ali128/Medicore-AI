@@ -25,7 +25,8 @@ export const router = createHashRouter([
         children: [
           { path: '/', element: <HomePage /> },
           { path: '/case', element: <SimpleCaseWorkspacePage /> },
-          { path: '/history', element: <PatientHistoryPage /> },
+          { path: '/history', element: <Navigate to="/case?history=1" replace /> },
+          { path: '/case-archive', element: <PatientHistoryPage /> },
           { path: '/patient-timeline', element: <PatientTimelinePage /> },
           { path: '/feedback', element: <UserFeedbackPage /> },
 
