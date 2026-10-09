@@ -4,8 +4,8 @@ import { getStoredUser } from '../services/authClient';
 
 const clinicalItems = [
   { label: 'Ana Sayfa', to: '/', href: '#/', icon: '⌂' },
-  { label: 'Yeni Vaka', to: '/case', href: '#/case', icon: '+' },
-  { label: 'Geçmiş', to: '/history', href: '#/history', icon: '↺' },
+  { label: 'Yeni Vaka', to: '/case', href: '#/case?new=1', icon: '+' },
+  { label: 'Geçmiş Vakalar', to: '/history', href: '#/history', icon: '↺' },
 ];
 
 const adminItems = [

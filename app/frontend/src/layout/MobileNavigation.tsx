@@ -13,8 +13,8 @@ export default function MobileNavigation() {
         ]
       : [
           { label: 'Ana', to: '/', icon: '⌂' },
-          { label: 'Yeni Vaka', to: '/case', icon: '+' },
-          { label: 'Geçmiş', to: '/history', icon: '↺' },
+          { label: 'Yeni Vaka', to: '/case?new=1', icon: '+' },
+          { label: 'Geçmiş Vakalar', to: '/history', icon: '↺' },
         ];
 
   return (

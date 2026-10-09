@@ -3,6 +3,7 @@ import type { ClinicalIntakeInput } from './labAnalysisClient';
 import type { ClinicalContext } from './simpleCaseClient';
 import { legacyClinicalIntake, normalizeClinical, recordClinical } from './clinicalRecord';
 import { assertCurrentPatientScope, capturePatientScope, clearPatientScope, forgetPatientScope, isCurrentPatientScope, selectPatientScope, type PatientScope } from './patientScope';
+import { caseDisplayName } from './caseManagement';
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000';
@@ -15,6 +16,7 @@ const SYNCED_CLINICAL_DRAFT_KEY = 'medicore:syncedClinicalDraft';
 export type PatientRecord = {
   id: string;
   protocol_no: string;
+  case_name?: string;
   external_ref: string | null;
   sex: string;
   date_of_birth: string | null;
@@ -124,6 +126,7 @@ export function setActiveClinicalDraft(patientId: string, protocolNo: string, cl
 export function activatePatientRecord(record: PatientRecord): void {
   selectPatientScope(record.id);
   localStorage.setItem(ACTIVE_PATIENT_PROTOCOL_KEY, record.protocol_no);
+  localStorage.setItem('medicore:lastPatientDisplayName', caseDisplayName(record));
 
   const intake = legacyClinicalIntake(recordClinical(record), record.metadata_json?.clinical_context);
   if (intake) {
@@ -279,6 +282,23 @@ export async function deletePatientRecord(patientId: string): Promise<void> {
   }
 
   forgetPatientScope(patientId);
+}
+
+/** A metadata-only update; never submits clinical inputs or changes selection. */
+export async function renamePatientCase(patientId: string, caseName: string, signal?: AbortSignal): Promise<PatientRecord> {
+  const scope = capturePatientScope();
+  const response = await fetch(`${API_BASE_URL}/patients/${encodeURIComponent(patientId)}/case-name`, {
+    method: 'PATCH', headers: headers(), signal,
+    body: JSON.stringify({ case_name: caseName.trim() }),
+  });
+  if (!response.ok) throw new Error(await readError(response));
+  const record = await response.json() as PatientRecord;
+  if (record.id !== patientId) throw new Error('Vaka adı yanıtı beklenen vaka ile eşleşmiyor.');
+  if (isCurrentPatientScope(scope) && getActivePatientId() === patientId) {
+    // Keep the current draft, AI cache and scope generation untouched.
+    localStorage.setItem('medicore:lastPatientDisplayName', caseDisplayName(record));
+  }
+  return record;
 }
 
 export async function listPatientRecords(limit = 500): Promise<PatientRecord[]> {

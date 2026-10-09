@@ -12,13 +12,14 @@ from sqlalchemy.exc import IntegrityError
 from app.api.dependencies import SessionDep
 from app.api.routes.auth import get_current_active_user
 from app.domain.enums import UserRole
+from app.domain.case_management import ensure_case_name_available, lock_case_names
 from app.domain.clinical_record_dates import stamp_clinical_record_dates
 from app.domain.patient_clinical_context import normalize_patient_clinical, patient_clinical_context
 from app.domain.patient_scope import validate_source_metadata
 from app.domain.simple_case import case_fingerprint
 from app.infrastructure.database.models.patient import Patient
 from app.infrastructure.database.models.user import User
-from app.schemas.patient_record import PatientRecordResponse, PatientRecordUpsert
+from app.schemas.patient_record import PatientCaseRename, PatientRecordResponse, PatientRecordUpsert
 from app.schemas.simple_case import VitalSigns
 from app.schemas.radiology_report import DEMO_PATIENT_ID
 
@@ -62,6 +63,7 @@ async def _ensure_protocol_available(
     *,
     exclude_patient_id: uuid.UUID | None = None,
 ) -> None:
+    await lock_case_names(session)
     stmt = select(Patient.id).where(Patient.protocol_no == protocol_no)
     if exclude_patient_id is not None:
         stmt = stmt.where(Patient.id != exclude_patient_id)
@@ -81,6 +83,7 @@ async def create_patient_record(
     current_user: Annotated[User, Depends(get_current_active_user)],
 ) -> Patient:
     await _ensure_protocol_available(session, payload.protocol_no)
+    await ensure_case_name_available(session, payload.protocol_no)
     patient_id = uuid.uuid4()
     await validate_source_metadata(session, patient_id=patient_id, metadata=payload.clinical_context)
     patient = Patient(
@@ -106,6 +109,29 @@ async def create_patient_record(
             detail="Bu protokol numarası başka bir hasta kaydında kullanılıyor.",
         ) from exc
 
+    await session.refresh(patient)
+    return patient
+
+
+@router.patch("/{patient_id}/case-name", response_model=PatientRecordResponse)
+async def rename_case(
+    patient_id: uuid.UUID,
+    payload: PatientCaseRename,
+    session: SessionDep,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+) -> Patient:
+    await lock_case_names(session)
+    patient = (await session.execute(
+        select(Patient).where(Patient.id == patient_id).with_for_update()
+    )).scalar_one_or_none()
+    if patient is None:
+        raise HTTPException(status_code=404, detail="Hasta kaydı bulunamadı.")
+    _ensure_patient_access(patient, current_user)
+    await ensure_case_name_available(session, payload.case_name, exclude_id=patient_id)
+    # Assign a fresh JSON object so SQLAlchemy persists just this metadata edit.
+    # Never use the clinical save API, DELETE+CREATE, or rewrite linked sources.
+    patient.metadata_json = {**(patient.metadata_json or {}), "case_name": payload.case_name}
+    await session.commit()
     await session.refresh(patient)
     return patient
 
@@ -186,6 +212,7 @@ async def update_patient_record(
     session: SessionDep,
     current_user: Annotated[User, Depends(get_current_active_user)],
 ) -> Patient:
+    await lock_case_names(session)
     patient = await session.get(Patient, patient_id)
     if patient is None:
         raise HTTPException(status_code=404, detail="Hasta kaydı bulunamadı.")
@@ -198,6 +225,11 @@ async def update_patient_record(
         payload.protocol_no,
         exclude_patient_id=patient_id,
     )
+
+    # Legacy clients may still edit the protocol. A renamed display label stays
+    # intact; only records without a custom label use the protocol as their name.
+    if not (patient.metadata_json or {}).get("case_name"):
+        await ensure_case_name_available(session, payload.protocol_no, exclude_id=patient_id)
 
     patient.protocol_no = payload.protocol_no
     if "sex" in payload.model_fields_set:

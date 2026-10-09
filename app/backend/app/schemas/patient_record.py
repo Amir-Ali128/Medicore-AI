@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import uuid
+import unicodedata
 from datetime import datetime
 from typing import Any
 
@@ -11,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validat
 
 from app.domain.enums import Sex
 from app.domain.patient_clinical_context import patient_clinical_context
+from app.domain.case_management import case_display_name
 from app.schemas.simple_case import ClinicalContext, VitalSigns
 
 
@@ -50,6 +52,20 @@ class PatientRecordUpsert(BaseModel):
         return normalized
 
 
+class PatientCaseRename(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    case_name: str = Field(min_length=1, max_length=80)
+
+    @field_validator("case_name")
+    @classmethod
+    def valid_case_name(cls, value: str) -> str:
+        value = value.strip()
+        if not value or any(unicodedata.category(char).startswith("C") for char in value):
+            raise ValueError("Vaka adı boş olamaz veya kontrol karakteri içeremez.")
+        return value
+
+
 class PatientRecordResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -62,6 +78,11 @@ class PatientRecordResponse(BaseModel):
     metadata_json: dict[str, Any]
     created_at: datetime
     updated_at: datetime
+
+    @computed_field
+    @property
+    def case_name(self) -> str:
+        return case_display_name(self.protocol_no, self.metadata_json)
 
     @computed_field
     @property

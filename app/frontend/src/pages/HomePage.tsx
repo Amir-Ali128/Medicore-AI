@@ -1,4 +1,5 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import LastCaseResume from '../components/patient/LastCaseResume';
 
 const LEGAL_ACK_KEY = 'medicore:legalWarningsAcknowledged:v1';
 
@@ -62,7 +63,7 @@ export default function HomePage() {
             </p>
             <div className="mt-7 flex flex-wrap gap-3">
               <Link
-                to="/case"
+                to="/case?new=1"
                 className="rounded-2xl bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-slate-100"
               >
                 Yeni vaka oluştur
@@ -71,7 +72,7 @@ export default function HomePage() {
                 to="/history"
                 className="rounded-2xl border border-white/15 px-5 py-3 text-sm font-semibold text-white transition hover:bg-white/10"
               >
-                Geçmişi aç
+                Geçmiş Vakalar
               </Link>
             </div>
           </div>
@@ -93,6 +94,8 @@ export default function HomePage() {
           </div>
         </div>
       </section>
+
+      {!needsAcknowledgement ? <LastCaseResume /> : null}
 
       <section className="grid gap-4 md:grid-cols-3">
         {[
