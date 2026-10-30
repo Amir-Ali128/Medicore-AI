@@ -16,7 +16,7 @@ from app.domain.lab_document_errors import LabDocumentReadError
 from app.domain.lab_result_classification import normalize_lab_unit
 
 CONTRACT = 'medicore-lab-document-ingestion-v2'
-INGESTION_TIMEOUT_SECONDS = 120.0
+INGESTION_TIMEOUT_SECONDS = 300.0
 
 
 @dataclass(frozen=True)
