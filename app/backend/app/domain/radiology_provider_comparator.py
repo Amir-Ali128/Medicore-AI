@@ -7,69 +7,10 @@ see where independent readers converged or where they require reconciliation.
 
 from __future__ import annotations
 
-import unicodedata
+from app.domain.report_concepts import fold_text as _fold, concept_polarities_text
+from app.domain.consistency_config import RADIOLOGY_HIGH_ATTENTION_CONCEPTS as _HIGH_ATTENTION_CONCEPTS
 
 from app.domain.report_document_image_ai import RadiologyMediaReview
-
-
-_CONCEPT_MARKERS: dict[str, tuple[str, ...]] = {
-    "pneumothorax": ("pnömotoraks", "pnomotoraks", "pneumothorax"),
-    "pleural_effusion": ("plevral efüzyon", "plevral sivi", "pleural effusion"),
-    "airspace_opacity": ("opasite", "airspace opacity", "hava sahasi opasitesi"),
-    "consolidation": ("konsolidasyon", "consolidation"),
-    "atelectasis": ("atelektazi", "atelectasis"),
-    "cardiomegaly": ("kardiyomegali", "kalp silueti genis", "cardiomegaly"),
-    "pulmonary_edema": ("pulmoner ödem", "pulmoner odem", "pulmonary edema"),
-    "free_air": (
-        "serbest hava",
-        "subdiyafragmatik hava",
-        "subdiafragmatik hava",
-        "free intraperitoneal air",
-        "pneumoperitoneum",
-    ),
-    "bowel_dilatation": (
-        "barsak dilat",
-        "bağırsak dilat",
-        "bagirsak dilat",
-        "bowel dilat",
-        "dilated bowel",
-    ),
-    "air_fluid_levels": ("hava-sıvı", "hava sivi", "air-fluid", "air fluid"),
-    "fecal_burden": ("fekal yük", "fekal yuk", "dışkı yük", "diski yuk", "stool burden"),
-    "fracture": ("kırık", "kirik", "fracture"),
-    "dislocation": ("çıkık", "cikik", "dislocation"),
-    "foreign_body": ("yabancı cisim", "yabanci cisim", "foreign body"),
-    "calcification": ("kalsifik", "calcific", "calcification"),
-    "hydronephrosis": ("hidronefroz", "hydronephrosis"),
-}
-
-_NEGATION_MARKERS = (
-    " yok",
-    " izlenmiyor",
-    " gorulmuyor",
-    " secilmiyor",
-    " saptanmadi",
-    " mevcut degil",
-    " lehine bulgu yok",
-    " no evidence",
-    " not seen",
-    " absent",
-    " without evidence",
-    " negative for",
-)
-
-_HIGH_ATTENTION_CONCEPTS = {
-    "pneumothorax",
-    "free_air",
-    "fracture",
-    "dislocation",
-}
-
-
-def _fold(text: str) -> str:
-    value = unicodedata.normalize("NFKD", str(text or "")).lower()
-    value = "".join(ch for ch in value if not unicodedata.combining(ch))
-    return " ".join(value.split())
 
 
 def _reader_text(review: RadiologyMediaReview) -> str:
@@ -79,34 +20,7 @@ def _reader_text(review: RadiologyMediaReview) -> str:
 
 
 def _concept_polarities(review: RadiologyMediaReview) -> dict[str, set[str]]:
-    """Return positive/uncertain vs negative mentions using a local text window.
-
-    This is deliberately conservative. A concept can appear in both sets when the
-    generated prose itself is internally inconsistent; that is surfaced rather than
-    silently collapsed.
-    """
-
-    text = _reader_text(review)
-    polarities: dict[str, set[str]] = {}
-    for concept, markers in _CONCEPT_MARKERS.items():
-        for raw_marker in markers:
-            marker = _fold(raw_marker)
-            start = 0
-            while True:
-                index = text.find(marker, start)
-                if index < 0:
-                    break
-                window_start = max(0, index - 70)
-                window_end = min(len(text), index + len(marker) + 70)
-                window = " " + text[window_start:window_end] + " "
-                polarity = (
-                    "negative"
-                    if any(negation in window for negation in _NEGATION_MARKERS)
-                    else "positive_or_uncertain"
-                )
-                polarities.setdefault(concept, set()).add(polarity)
-                start = index + max(1, len(marker))
-    return polarities
+    return concept_polarities_text(_reader_text(review))
 
 
 def extract_review_concepts(review: RadiologyMediaReview) -> set[str]:

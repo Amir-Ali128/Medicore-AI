@@ -41,3 +41,13 @@ demografi veya birim uyumu yoksa karşılaştırma atlanır. Basılı referans a
 referansıyla değiştirilmez. Kurallar tekrar çalıştırıldığında kod çoğaltmaz.
 Her kuralın pozitif/negatif/eksik veri, kapalı bayrak, tarih/birim/türetilmiş
 korumaları ve resolver kontratı test edilir.
+
+## PR 3 — Rapor içi tanımsal kontroller
+
+`report_consistency_enabled=True` bulgu/sonuç kavram polaritesini, aynı organın tarafını, kayıtlı cinsiyete özgü organ terimlerini, gelecekteki rapor tarihini ve tetkik → rapor → yükleme tarih sırasını kontrol eder. Eksik alanlar atlanır. Tarihler İstanbul takvim gününe çevrilir. İki bölümde de aynı organın tarafı açıkça belirtilmedikçe taraf kuralı çalışmaz; iki tarafı da içeren bulgular tek taraflı sonuçla otomatik çelişki sayılmaz.
+
+Kavram yardımcı işlevi mevcut radyoloji okuyucu karşılaştırıcısından çıkarılmıştır. Eski karşılaştırıcı aynı 70 karakterlik pencere/olumsuzluk davranışını korur. Yeni rapor kuralı cümle sınırlarıyla çalışır. Bu sınırlı, küratörlü sözcük taraması klinik doğruluk veya bütün çelişkileri bulma garantisi değildir; teşhis, düzeltme veya tedavi üretmez.
+
+Kaydetme, normalizasyon, vaka detayını yeniden açma ve AI hazırlama yolları aynı anotasyonu kullanır. `consistency_section_enabled=True` olduğunda PR 1 listesi ve sunucunun ürettiği rapor bölümü bu kodları da içerir. Kapanınca yeni rapor anotasyonu eklenmez.
+
+Doğrulama: yeni 20 test; CI kapsamındaki tüm 419 backend testi geçti. Her beş gerekçe kodu için pozitif/negatif/eksik veri; kapalı bayrak; tekrar çalıştırma; kaynak metinlerin değişmemesi; cümle izolasyonu; saat dilimi; AI'ya tek çağrı ve garanti bölüm test edildi. PR 1 frontend testi/build sonucu da geçerlidir (bu PR frontend değiştirmez).

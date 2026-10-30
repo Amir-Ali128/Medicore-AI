@@ -132,6 +132,9 @@ def annotate_lab_case(case):
 
 def annotate_request(payload, database_ranges=None):
     from app.core.config import get_settings
+    if getattr(get_settings(), 'report_consistency_enabled', False):
+        from app.domain.report_consistency import apply_report_consistency
+        payload = apply_report_consistency(payload)
     if not getattr(get_settings(), 'lab_consistency_rules_enabled', False): return payload
     from app.domain.simple_case import normalize_simple_case
     from app.domain.consistency_flags import collect_consistency_flags
@@ -157,6 +160,9 @@ def annotate_request(payload, database_ranges=None):
 
 async def annotate_request_with_database(payload, session):
     from app.core.config import get_settings
+    if getattr(get_settings(), 'report_consistency_enabled', False):
+        from app.domain.report_consistency import apply_report_consistency
+        payload = apply_report_consistency(payload)
     if not getattr(get_settings(), 'lab_consistency_rules_enabled', False): return payload
     ranges = {}
     if any(lab.source_reference or lab.source_references for lab in payload.labs) and payload.clinical.age is not None and payload.clinical.sex in ('male','female'):

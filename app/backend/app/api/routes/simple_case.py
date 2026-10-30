@@ -539,7 +539,7 @@ async def get_saved_simple_case(
         await validate_source_metadata(session, patient_id=patient_id, metadata=saved_case)
         try:
             restored = _restore_case_input(saved_case)
-            if getattr(get_settings(), 'lab_consistency_rules_enabled', False):
+            if getattr(get_settings(), 'lab_consistency_rules_enabled', False) or getattr(get_settings(), 'report_consistency_enabled', False):
                 from app.domain.lab_consistency_rules import annotate_request_with_database
                 restored = await annotate_request_with_database(restored, session)
             saved_case = normalize_simple_case(restored).model_dump(mode="json")
@@ -575,7 +575,7 @@ async def get_saved_simple_case(
 async def normalize_case(payload: SimpleCaseRequest) -> SimpleCaseResponse:
     """Normalize source data and numeric ranges without clinical interpretation."""
 
-    if getattr(get_settings(), 'lab_consistency_rules_enabled', False):
+    if getattr(get_settings(), 'lab_consistency_rules_enabled', False) or getattr(get_settings(), 'report_consistency_enabled', False):
         from app.domain.lab_consistency_rules import annotate_request
         payload = annotate_request(payload)
     return normalize_simple_case(payload)
@@ -594,7 +594,7 @@ async def ai_interpret_case(
         payload, session, current_user, raw_payload=await request.json(),
     )
     try:
-        if getattr(get_settings(), 'lab_consistency_rules_enabled', False):
+        if getattr(get_settings(), 'lab_consistency_rules_enabled', False) or getattr(get_settings(), 'report_consistency_enabled', False):
             from app.domain.lab_consistency_rules import annotate_request_with_database
             payload = await annotate_request_with_database(payload, session)
         result = await interpret_simple_case(payload)
@@ -640,7 +640,7 @@ async def ai_interpret_patient_case(
         payload, session, current_user, patient_id, raw_payload=await request.json(),
     )
     try:
-        if getattr(get_settings(), 'lab_consistency_rules_enabled', False):
+        if getattr(get_settings(), 'lab_consistency_rules_enabled', False) or getattr(get_settings(), 'report_consistency_enabled', False):
             from app.domain.lab_consistency_rules import annotate_request_with_database
             payload = await annotate_request_with_database(payload, session)
         result = await interpret_simple_case(payload)
@@ -1113,7 +1113,7 @@ async def save_case_for_patient(
         payload = payload.model_copy(update={
             "clinical": payload.clinical.model_copy(update=preserved),
         })
-    if getattr(get_settings(), 'lab_consistency_rules_enabled', False):
+    if getattr(get_settings(), 'lab_consistency_rules_enabled', False) or getattr(get_settings(), 'report_consistency_enabled', False):
         from app.domain.lab_consistency_rules import annotate_request_with_database
         payload = await annotate_request_with_database(payload, session)
     normalized = normalize_simple_case(payload)
