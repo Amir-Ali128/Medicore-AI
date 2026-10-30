@@ -626,7 +626,7 @@ export default function SimpleCaseWorkspacePage() {
         </div>
 
         <div className="p-5 sm:p-7">
-          {step === 'patient' || step === 'clinical' ? <VoiceClinicalIntake key={patientId ?? 'new'}
+          {step === 'clinical' ? <VoiceClinicalIntake key={patientId ?? 'new'}
             values={{ age, sex, complaints, history, medications, notes, ...vitalValues }} onApply={applyVoiceDraft} /> : null}
           {step === 'patient' ? (
             <div className="grid gap-6 lg:grid-cols-[1fr_0.8fr]">
