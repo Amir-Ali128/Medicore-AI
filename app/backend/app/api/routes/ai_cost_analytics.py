@@ -6,7 +6,10 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import text
+from sqlalchemy import text, select
+from app.core.config import get_settings
+from app.infrastructure.database.models.lab_reader_event import LabReaderEvent
+from app.domain.lab_reader_analytics import summarize_reader_events
 
 from app.api.routes.auth import require_roles
 from app.domain.enums import UserRole
@@ -79,6 +82,13 @@ async def ai_costs(
             )
         ).mappings().all()
 
+        reader_summary = None
+        if getattr(get_settings(), 'lab_cross_read_enabled', False):
+            event_rows = (await session.execute(select(LabReaderEvent.payload).where(
+                LabReaderEvent.recorded_at >= cutoff,
+            ))).scalars().all()
+            reader_summary = summarize_reader_events([{'lab_reader_usage': event_rows}], cutoff=cutoff, limit=limit)
+
     events: list[dict[str, Any]] = []
     for row in rows:
         item = dict(row)
@@ -106,4 +116,5 @@ async def ai_costs(
             "source": "Anthropic Sonnet 5 public API pricing",
         },
         "events": events,
+        **({"lab_readers": reader_summary} if reader_summary is not None else {}),
     }

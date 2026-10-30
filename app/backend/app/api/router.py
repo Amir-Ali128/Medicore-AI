@@ -33,3 +33,9 @@ api_router.include_router(patients.router)
 api_router.include_router(patient_timeline.router)
 api_router.include_router(radiology_reports.router)
 api_router.include_router(simple_case.router)
+
+# The existing admin cost endpoint is exposed only for the opt-in reader telemetry.
+from app.core.config import get_settings
+if getattr(get_settings(), 'lab_cross_read_enabled', False):
+    from app.api.routes import ai_cost_analytics
+    api_router.include_router(ai_cost_analytics.router)

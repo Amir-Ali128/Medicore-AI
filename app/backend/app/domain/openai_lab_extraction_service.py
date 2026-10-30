@@ -259,6 +259,8 @@ async def extract_lab_documents_with_openai(
             f"OpenAI laboratuvar analizi {_EXTRACTION_TIMEOUT_SECONDS:.0f} sn bütçesinde tamamlanamadı: {exc}"
         ) from exc
 
+    from app.domain.lab_reader_usage import record_response_usage
+    record_response_usage('OpenAI', model, response)
     output_text = str(getattr(response, "output_text", "") or "").strip()
     if not output_text:
         raise OpenAILabExtractionError("OpenAI laboratuvar modeli boş yanıt döndürdü.")

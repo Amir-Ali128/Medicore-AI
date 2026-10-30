@@ -114,3 +114,18 @@ RADIOLOGY_HIGH_ATTENTION_CONCEPTS = {
     "fracture",
     "dislocation",
 }
+
+CROSS_READ_DATE_FIELDS = ('event_date', 'specimen_date', 'measured_at', 'result_date', 'document_date')
+CROSS_READ_VALUE_FIELDS = ('raw_parameter_name','canonical_name','raw_value','normalized_value','unit','reference_text','reference_min','reference_max','reference_unit','source_flag') + CROSS_READ_DATE_FIELDS
+CROSS_READ_COMPLETENESS_RETRY_LIMIT = 1
+CROSS_READ_SMALL_TABLE_ROWS = 8
+CROSS_READ_TIMEOUT_SECONDS = 95.0
+# Existing cost analytics' published rates only. Unknown model/cache pricing stays null.
+READER_PRICES_PER_MILLION_USD = {'claude-sonnet-5': (2.0, 10.0)}
+TOKEN_PRICE_DIVISOR = 1_000_000
+
+CROSS_READ_MIN_REMAINING_SECONDS = 0.001
+READER_ANALYTICS_FIELDS = ('event_id','reader','page','recorded_at','elapsed_ms','extracted_rows','visible_rows','row_count_check','available','input_tokens','output_tokens','estimated_cost_usd','cost_status','calls')
+READER_MIGRATION_LOCK = 4382030
+READER_ANALYTICS_WRITE_TIMEOUT_SECONDS = 3.0
+READER_CALL_FIELDS = ('provider','model','input_tokens','output_tokens','estimated_cost_usd','cost_status')

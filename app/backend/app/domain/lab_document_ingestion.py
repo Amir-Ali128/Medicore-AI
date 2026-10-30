@@ -173,11 +173,17 @@ async def ingest_lab_document(
                              'row_count_check':'unknown' if expected is None else 'matched' if expected == len(values) else 'mismatch',
                              'operations':page.operations, 'warnings':page_warnings,
                              'extraction_errors':(result or {}).get('extraction_errors', [])})
+        from app.core.config import get_settings
+        if getattr(get_settings(), 'lab_cross_read_enabled', False) and (result or {}).get('reader_reports'):
+            page_reports[-1]['reader_reports'] = result['reader_reports']
     if not raw_rows:
         raise LabDocumentReadError(page_reports)
     source = SourceContext('file_upload' if media_type == 'application/pdf' else 'photo', file_name=file_name, source_sha256=content_sha256(content))
     case = validate_merge(raw_rows, source)
     from app.core.config import get_settings
+    if getattr(get_settings(), 'lab_cross_read_enabled', False):
+        from app.domain.lab_cross_read import restore_cross_read_metadata
+        case = restore_cross_read_metadata(case, raw_rows)
     if getattr(get_settings(), 'lab_consistency_rules_enabled', False):
         from app.domain.consistency_config import DERIVED_FIELDS
         original = {(raw.source_page, raw.source_row): raw.data for raw in raw_rows}

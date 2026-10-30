@@ -811,6 +811,7 @@ def _lab_inputs_from_extracted(
                     "reference_unit": row.get("reference_unit"),
                     "source_flag": row.get("source_flag"),
                     **({key: row[key] for key in ('is_derived', 'derived', 'derived_from') if key in row} if getattr(get_settings(), 'lab_consistency_rules_enabled', False) else {}),
+                    **({"reader_values": row.get("reader_values")} if getattr(get_settings(), "lab_cross_read_enabled", False) and "reader_values" in row else {}),
                     "raw_parameter_name": row.get("raw_parameter_name"),
                     "raw_value": row.get("raw_value"),
                     "source_sha256": row.get("source_sha256"),
@@ -847,6 +848,20 @@ async def _ingest_lab_upload(file: UploadFile, media_type: str, *, rotation: int
     file_name = file.filename or ("lab.pdf" if media_type == "application/pdf" else "lab-image.png")
 
     async def extract_page(page: DocumentPage) -> dict | None:
+        if getattr(get_settings(), 'lab_cross_read_enabled', False):
+            import asyncio
+            from app.domain.lab_cross_read import cross_read_page
+            from app.infrastructure.database.lab_reader_telemetry import persist_reader_event
+            async def local_reader():
+                return await asyncio.to_thread(
+                    try_fast_pdf_lab_case, content=page.native_pdf, media_type='application/pdf',
+                    file_name=file_name, source_type=SOURCE_FILE_UPLOAD,
+                )
+            return await cross_read_page(
+                page, local_reader=local_reader, usage_sink=persist_reader_event,
+                claude_reader=lambda: _extract_lab_document_with_claude(content=page.image,file_name=file_name,media_type='image/png'),
+                openai_reader=lambda: extract_lab_document_with_openai(content=page.image,file_name=file_name,media_type='image/png'),
+            )
         # A PDF page may have selectable text while the next page is a scan.
         if page.native_pdf is not None:
             import asyncio

@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from app.api.router import api_router
 from app.infrastructure.admin_bootstrap import ensure_bootstrap_admin
 from app.infrastructure.database.feedback_migrations import ensure_user_feedback
+from app.infrastructure.database.lab_reader_telemetry import ensure_lab_reader_events
 from app.infrastructure.database.session import AsyncSessionFactory, engine
 from app.infrastructure.database.startup_migrations import (
     ensure_analytics_presence,
@@ -42,6 +43,7 @@ async def lifespan(_: FastAPI):
 
     await ensure_analytics_presence(engine)
     await ensure_user_feedback(engine)
+    await ensure_lab_reader_events(engine)
 
     async with AsyncSessionFactory() as session:
         await session.commit()

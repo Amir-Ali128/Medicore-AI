@@ -145,6 +145,8 @@ class ClaudeLabExtractionService:
                 )
             )
             response = await request if timeout is None else await asyncio.wait_for(request, timeout=timeout)
+            from app.domain.lab_reader_usage import record_response_usage
+            record_response_usage('Claude', self._model, response)
             text = self._collect_text(response)
             return self._parse_result(text, file_name)
 
