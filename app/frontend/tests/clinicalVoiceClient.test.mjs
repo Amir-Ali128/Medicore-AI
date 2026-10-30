@@ -31,6 +31,7 @@ test('microphone sessions are transient, bounded and patient scoped', async (t) 
   let session;
   try {
     const { ClinicalVoiceSession } = await server.ssrLoadModule('/src/services/clinicalVoiceClient.ts');
+    const { API_BASE_URL } = await server.ssrLoadModule('/src/services/apiClient.ts');
     const scope = await server.ssrLoadModule('/src/services/patientScope.ts');
     const fresh = () => {
       session?.cancel(); scope.selectPatientScope('patient-A');
@@ -59,7 +60,7 @@ test('microphone sessions are transient, bounded and patient scoped', async (t) 
       assert.equal(recorderInstances.length, 2);
       const post = fetchCalls.find((call) => call.method === 'POST');
       assert.ok(post.url.endsWith('/clinical-voice/transcribe')); assert.ok(post.body instanceof Blob); assert.ok(post.headers['Content-Type'].startsWith('audio/webm')); assert.equal(post.cache, 'no-store');
-      assert.ok(fetchCalls.every((call) => call.url.startsWith('http://127.0.0.1:8000/clinical-voice/')));
+      assert.ok(fetchCalls.every((call) => call.url.startsWith(`${API_BASE_URL}/clinical-voice/`)));
     });
     await t.test('stop waits for final recorder data and recognition before idle/approval', async () => {
       const events = fresh(); response = deferred(); await session.start(); session.stop();
