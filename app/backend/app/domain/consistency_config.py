@@ -43,3 +43,15 @@ MESSAGES_TR = {
 }
 HIGH_SEVERITY = frozenset({"magnitude_suspect", "report_patient_sex_mismatch"})
 INFO_CODES = frozenset({"cross_read_agreed", "claude_lab_document_extraction", "openai_lab_document_extraction"})
+EPSILON = 1e-9
+SOURCE_DIRECTIONS = {"h": "HIGH", "high": "HIGH", "yuksek": "HIGH", "↑": "HIGH", "l": "LOW", "low": "LOW", "dusuk": "LOW", "↓": "LOW"}
+DIFFERENTIAL_NAMES = ("Nötrofil", "Lenfosit", "Monosit", "Eozinofil", "Bazofil")
+PROTEIN_NAMES = ("Total Protein", "Albümin", "Globülin")
+CONSISTENCY_CURATED_ALIASES = {"Total Protein": ("Total protein", "Protein total", "Total protein (serum)"), "Albümin": ("Albumin", "Albümin"), "Globülin": ("Globulin", "Globülin")}
+CELL_UNIT_FACTORS = {"10^3/ul": 1.0, "10³/ul": 1.0, "10*3/ul": 1.0, "x10^3/ul": 1.0, "k/ul": 1.0, "10^9/l": 1.0, "10⁹/l": 1.0, "x10^9/l": 1.0, "/ul": 0.001, "cells/ul": 0.001, "hucre/ul": 0.001, "/mm3": 0.001, "cells/mm3": 0.001}
+PROTEIN_UNIT_FACTORS = {"g/dl": 1.0, "g/l": 0.1}
+PERCENT_UNITS = frozenset({"%", "percent", "yuzde"})
+KNOWN_UNITS = frozenset({"mg/dl", "mg/l", "g/dl", "g/l", "mmol/l", "umol/l", "u/l", "iu/l", "ng/ml", "ng/dl", "pg/ml", "ug/l", "ug/dl", "fl", "pg", "mm/h", "mm/hr", "miu/l", "uiu/ml", "iu/ml", "ng/l"}) | CELL_UNIT_FACTORS.keys() | PERCENT_UNITS
+DERIVED_FIELDS = ("is_derived", "derived", "derived_from")
+ANNOTATION_ONLY_CODES = frozenset(code for code in MESSAGES_TR if code.startswith(('source_flag_', 'differential_', 'absolute_percent_', 'protein_sum_', 'value_outside_', 'flag_without_', 'magnitude_', 'printed_reference_', 'consistency_unit_', 'report_', 'cross_read_')))
+ANNOTATION_FEATURES = ('lab_consistency_rules_enabled', 'report_consistency_enabled', 'lab_cross_read_enabled')

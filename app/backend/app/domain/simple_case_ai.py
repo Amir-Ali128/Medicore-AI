@@ -172,6 +172,10 @@ async def interpret_simple_case(payload: SimpleCaseRequest) -> CaseAIInterpretat
         raise RuntimeError("Anthropic klinik rapor modeli yapılandırılmamış.")
 
     case_payload = _build_case_payload(payload)
+    if getattr(settings, 'lab_consistency_rules_enabled', False):
+        from app.domain.lab_consistency_rules import annotate_request
+        payload = annotate_request(payload)
+        case_payload = _build_case_payload(payload)
     flags = collect_consistency_flags(payload) if getattr(settings, "consistency_section_enabled", False) else None
     if flags is not None:
         case_payload["consistency_flags"] = flags

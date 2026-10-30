@@ -125,6 +125,14 @@ def validate_merge(rows: list[RawLabRow], source: SourceContext) -> dict[str, An
     return case
 
 
+def apply_consistency_rules(case: dict[str, Any]) -> dict[str, Any]:
+    from app.core.config import get_settings
+    if not getattr(get_settings(), 'lab_consistency_rules_enabled', False):
+        return case
+    from app.domain.lab_consistency_rules import annotate_lab_case
+    return annotate_lab_case(case)
+
+
 async def ingest_lab_document(
     *, content: bytes, media_type: str, file_name: str,
     extract_page: Callable[[DocumentPage], Awaitable[dict[str, Any] | None]],
@@ -169,6 +177,15 @@ async def ingest_lab_document(
         raise LabDocumentReadError(page_reports)
     source = SourceContext('file_upload' if media_type == 'application/pdf' else 'photo', file_name=file_name, source_sha256=content_sha256(content))
     case = validate_merge(raw_rows, source)
+    from app.core.config import get_settings
+    if getattr(get_settings(), 'lab_consistency_rules_enabled', False):
+        from app.domain.consistency_config import DERIVED_FIELDS
+        original = {(raw.source_page, raw.source_row): raw.data for raw in raw_rows}
+        for row in case['labs']:
+            for field in DERIVED_FIELDS:
+                values = [original.get((loc['page'], loc['row']), {}).get(field) for loc in row['source_locations']]
+                if any(values): row[field] = next(value for value in values if value)
+        case = apply_consistency_rules(case)
     review_codes = {'low_resolution', 'blurred_image', 'low_contrast', 'visible_row_count_mismatch', 'no_lab_rows_on_page_review', 'page_extraction_failed', 'image_completeness_audit_failed'}
     review_pages = {p['page'] for p in page_reports if any(w in review_codes for w in p['warnings'])}
     for row in case['labs']:

@@ -87,6 +87,21 @@ _CURATED_ALIAS_TARGETS = {
 }
 
 
+def curated_consistency_name(raw: str | None, unit: str | None = None) -> str | None:
+    """Exact curated aliases only; no fuzzy match or database name guessing."""
+    from app.domain.consistency_config import CONSISTENCY_CURATED_ALIASES, DIFFERENTIAL_NAMES
+    text = str(raw or '')
+    percent = '%' in text or str(unit or '').strip() == '%'
+    key = normalize_alias(text)
+    matches = []
+    for name, aliases in {**_CURATED_ALIAS_TARGETS_RAW, **CONSISTENCY_CURATED_ALIASES}.items():
+        if ('%' in name) != percent and name.rstrip(' %') in DIFFERENTIAL_NAMES:
+            continue
+        if any(normalize_alias(alias) == key for alias in (name, *aliases)):
+            matches.append(name)
+    return matches[0] if len(set(matches)) == 1 else None
+
+
 def _similarity(left: str, right: str) -> float:
     try:
         from app.domain.native_lab_engine import (

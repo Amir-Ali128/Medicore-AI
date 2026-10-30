@@ -538,7 +538,11 @@ async def get_saved_simple_case(
     if isinstance(saved_case, dict):
         await validate_source_metadata(session, patient_id=patient_id, metadata=saved_case)
         try:
-            saved_case = normalize_simple_case(_restore_case_input(saved_case)).model_dump(mode="json")
+            restored = _restore_case_input(saved_case)
+            if getattr(get_settings(), 'lab_consistency_rules_enabled', False):
+                from app.domain.lab_consistency_rules import annotate_request_with_database
+                restored = await annotate_request_with_database(restored, session)
+            saved_case = normalize_simple_case(restored).model_dump(mode="json")
         except ValidationError:
             # Malformed historic snapshots remain readable; never trust an old
             # source/AI status when source values cannot be normalized safely.
@@ -571,6 +575,9 @@ async def get_saved_simple_case(
 async def normalize_case(payload: SimpleCaseRequest) -> SimpleCaseResponse:
     """Normalize source data and numeric ranges without clinical interpretation."""
 
+    if getattr(get_settings(), 'lab_consistency_rules_enabled', False):
+        from app.domain.lab_consistency_rules import annotate_request
+        payload = annotate_request(payload)
     return normalize_simple_case(payload)
 
 
@@ -587,6 +594,9 @@ async def ai_interpret_case(
         payload, session, current_user, raw_payload=await request.json(),
     )
     try:
+        if getattr(get_settings(), 'lab_consistency_rules_enabled', False):
+            from app.domain.lab_consistency_rules import annotate_request_with_database
+            payload = await annotate_request_with_database(payload, session)
         result = await interpret_simple_case(payload)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -630,6 +640,9 @@ async def ai_interpret_patient_case(
         payload, session, current_user, patient_id, raw_payload=await request.json(),
     )
     try:
+        if getattr(get_settings(), 'lab_consistency_rules_enabled', False):
+            from app.domain.lab_consistency_rules import annotate_request_with_database
+            payload = await annotate_request_with_database(payload, session)
         result = await interpret_simple_case(payload)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -797,6 +810,7 @@ def _lab_inputs_from_extracted(
                     "reference_max": row.get("reference_max"),
                     "reference_unit": row.get("reference_unit"),
                     "source_flag": row.get("source_flag"),
+                    **({key: row[key] for key in ('is_derived', 'derived', 'derived_from') if key in row} if getattr(get_settings(), 'lab_consistency_rules_enabled', False) else {}),
                     "raw_parameter_name": row.get("raw_parameter_name"),
                     "raw_value": row.get("raw_value"),
                     "source_sha256": row.get("source_sha256"),
@@ -1099,6 +1113,9 @@ async def save_case_for_patient(
         payload = payload.model_copy(update={
             "clinical": payload.clinical.model_copy(update=preserved),
         })
+    if getattr(get_settings(), 'lab_consistency_rules_enabled', False):
+        from app.domain.lab_consistency_rules import annotate_request_with_database
+        payload = await annotate_request_with_database(payload, session)
     normalized = normalize_simple_case(payload)
     await _persist_simple_case_sources(
         patient_id=patient_id,
