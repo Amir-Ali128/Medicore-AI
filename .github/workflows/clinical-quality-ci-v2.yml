@@ -8,6 +8,7 @@ on:
   pull_request:
     branches:
       - main
+      - 'feat/**'
 
 permissions:
   contents: read
@@ -40,6 +41,7 @@ jobs:
             tests/test_patient_clinical_vitals.py \
             tests/test_patient_protocol.py \
             tests/test_case_management.py \
+            tests/test_consistency_section.py \
             tests/test_clinical_voice.py \
             tests/test_radiology_report_parser.py \
             tests/test_patient_isolation.py \

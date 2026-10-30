@@ -599,6 +599,7 @@ async def ai_interpret_case(
     return CaseAIInterpretationResponse(
         report_text=result.report_text,
         model=result.model,
+        consistency_flags=getattr(result, "consistency_flags", None),
     )
 
 
@@ -647,6 +648,8 @@ async def ai_interpret_patient_case(
             normalize_simple_case(payload).model_dump(mode="json")
         ),
     }
+    if getattr(result, "consistency_flags", None) is not None:
+        metadata["simple_case_ai_report"]["consistency_flags"] = result.consistency_flags
     patient.metadata_json = metadata
     await session.commit()
     await session.refresh(patient)
@@ -654,6 +657,7 @@ async def ai_interpret_patient_case(
     return CaseAIInterpretationResponse(
         report_text=result.report_text,
         model=result.model,
+        consistency_flags=getattr(result, "consistency_flags", None),
     )
 
 
@@ -785,6 +789,7 @@ def _lab_inputs_from_extracted(
                 source_metadata={
                     "source_file_name": row.get("source_file_name") or source_file_name,
                     "source_page": row.get("source_page"),
+                    **({"source_row": row.get("source_row")} if getattr(get_settings(), "consistency_section_enabled", False) else {}),
                     "extraction_confidence": row.get("confidence"),
                     "needs_review": row.get("needs_review"),
                     "extraction_source": extraction_source,
@@ -808,6 +813,10 @@ def _lab_inputs_from_extracted(
     # Upload endpoints keep their v1 shape while returning the same canonical
     # status used by save/detail/AI. Demographic selection is refreshed on save.
     normalized = normalize_simple_case(SimpleCaseRequest(labs=rows))
+    if getattr(get_settings(), "consistency_section_enabled", False):
+        from app.domain.consistency_flags import collect_consistency_flags
+        for row in rows:
+            row.source_metadata["consistency_flags"] = collect_consistency_flags(SimpleCaseRequest(labs=[row]))
     return [row.model_copy(update={
         "status": lab.status, "reference_low": lab.reference_low,
         "reference_high": lab.reference_high, "raw_reference": lab.raw_reference,

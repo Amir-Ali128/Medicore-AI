@@ -1,0 +1,45 @@
+"""Single registry of consistency thresholds, vocabularies and Turkish messages."""
+DIFF_SUM_TOLERANCE = 5.0
+ABS_PCT_TOLERANCE = 0.10
+PROTEIN_TOLERANCE = 0.3
+MAGNITUDE_FACTOR = 10.0
+REFERENCE_DIVERGENCE_FACTOR = 5.0
+CONSISTENCY_HEADING = "VERİ TUTARLILIK UYARILARI"
+NO_INCONSISTENCY = "Tespit edilen veri tutarsızlığı yok."
+DATE_FIELDS = ("event_date", "specimen_date", "measured_at", "result_date", "document_date", "report_date")
+MESSAGES_TR = {
+    "missing_parameter_name": "Parametre adı okunamadı.", "missing_observed_value": "Basılı sonuç değeri okunamadı.",
+    "missing_unit": "Birim bulunamadı.", "low_input_confidence": "Satırın okunma güveni düşük; kaynakla karşılaştırılmalı.",
+    "invalid_input_confidence": "Okunma güveni geçersiz.", "numeric_value_conflict": "Ham değer ile sayısal okuma uyuşmuyor.",
+    "invalid_numeric_value": "Sayısal değer geçersiz.", "reference_unit_mismatch": "Sonuç ve basılı referans birimleri uyuşmuyor.",
+    "unrecognized_source_status": "Kaynak durum işareti tanınamadı.", "invalid_reference_bounds": "Basılı referans sınırları geçersiz.",
+    "conflicting_or_repeated_observation": "Aynı parametre için birden çok farklı gözlem var.",
+    "visible_row_count_unverified": "Kaynak tablodaki toplam satır sayısı doğrulanamadı.",
+    "visible_row_count_mismatch": "Görünen satır sayısı ile çıkarılan satır sayısı uyuşmuyor.",
+    "no_lab_rows_on_page_review": "Sayfada laboratuvar satırı okunamadı.", "page_extraction_failed": "Sayfa okuması tamamlanamadı.",
+    "image_completeness_audit_failed": "Görüntü tamamlık kontrolü tamamlanamadı.",
+    "extraction_invalid_cells_review": "Okumada geçersiz hücreler var; kaynak satırlar kontrol edilmeli.",
+    "low_resolution": "Sayfa çözünürlüğü düşük.", "blurred_image": "Sayfa görüntüsü bulanık.", "low_contrast": "Sayfa kontrastı düşük.",
+    "claude_extraction_failed": "Claude okuyucusu tamamlanamadı.",
+    "claude_lab_document_extraction": "Sayfa Claude okuyucusuyla okundu.", "openai_lab_document_extraction": "Sayfa OpenAI okuyucusuyla okundu.",
+    "source_flag_status_conflict": "Basılı yüksek/düşük işareti ile kanonik durum çelişiyor.",
+    "differential_sum_mismatch": "Beş lökosit yüzdesinin toplamı beklenen 100 sınırının dışında.",
+    "absolute_percent_mismatch": "Mutlak hücre sayısı ile yüzde × WBC / 100 hesabı uyuşmuyor.",
+    "protein_sum_mismatch": "Total protein ile albümin + globülin toplamı uyuşmuyor.",
+    "value_outside_reference_no_flag": "Değer basılı referans dışında, ancak kaynak durum işareti yok.",
+    "flag_without_reference_breach": "Değer basılı referans içinde, ancak yüksek/düşük işareti var.",
+    "magnitude_suspect": "Değer referansa göre büyüklük açısından şüpheli; ondalık, virgül veya birim kontrol edilmeli.",
+    "printed_reference_divergence": "Basılı referans ile aynı yaş/cinsiyet için veritabanı referansı belirgin farklı.",
+    "consistency_unit_unresolved": "Birim güvenle normalize edilemedi; ilgili sayısal kural atlandı.",
+    "report_findings_impression_conflict": "Bulgular ve sonuç bölümlerinde aynı kavram için karşıt ifadeler var.",
+    "report_laterality_conflict": "Bulgular ve sonuç bölümlerinde aynı organın tarafı farklı.",
+    "report_patient_sex_mismatch": "Rapordaki cinsiyete özgü organ terimi ile kayıtlı cinsiyet uyuşmuyor.",
+    "report_date_in_future": "Rapor tarihi gelecekte.", "report_date_order_conflict": "Rapordaki tarih alanlarının sırası tutarsız.",
+    "cross_read_unavailable": "Bağımsız okuyuculardan biri tamamlanamadı; tek okuma kullanıldı.",
+    "cross_read_agreed": "İki bağımsız okuma değer, birim ve referansta aynı; bu, doğruluk garantisi değildir.",
+    "cross_read_value_conflict": "İki bağımsız okuyucu farklı değer okudu; her iki okuma saklandı.",
+    "cross_read_unit_or_reference_conflict": "İki okuyucunun birim veya referans okuması farklı.",
+    "cross_read_single_reader_only": "Satır yalnızca bir okuyucuda bulundu; diğer okuyucunun görmemesi yokluk kanıtı değildir.",
+}
+HIGH_SEVERITY = frozenset({"magnitude_suspect", "report_patient_sex_mismatch"})
+INFO_CODES = frozenset({"cross_read_agreed", "claude_lab_document_extraction", "openai_lab_document_extraction"})

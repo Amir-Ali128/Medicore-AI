@@ -103,9 +103,15 @@ export type SimpleCaseResponse = {
   warnings: string[];
 };
 
+export type ConsistencyFlag = {
+  code: string; severity: 'info' | 'warning' | 'high'; parameter_or_report: string;
+  date: string | null; source_page: number | null; source_row: number | null; message_tr: string;
+};
+
 export type CaseAIInterpretation = {
   report_text: string;
   model: string;
+  consistency_flags?: ConsistencyFlag[];
 };
 
 export type SavedSimpleCase = {

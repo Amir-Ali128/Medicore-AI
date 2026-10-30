@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     # Optional, operator-provisioned offline ASR assets. No runtime downloads.
     clinical_voice_model_path: str | None = None
 
+    consistency_section_enabled: bool = False
+    lab_consistency_rules_enabled: bool = False
+    report_consistency_enabled: bool = False
+    lab_cross_read_enabled: bool = False
+
     # --- Render / direct database URL -----------------------------------
     # Render provides DATABASE_URL. Prefer this when present.
     database_url: str | None = None

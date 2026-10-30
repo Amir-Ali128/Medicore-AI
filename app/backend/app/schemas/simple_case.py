@@ -13,7 +13,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator, model_serializer
 
 
 SexValue = Literal["female", "male", "other", "unknown"]
@@ -164,3 +164,11 @@ class SimpleCaseResponse(BaseModel):
 class CaseAIInterpretationResponse(BaseModel):
     report_text: str
     model: str
+    consistency_flags: list[dict[str, Any]] | None = None
+
+    @model_serializer(mode="wrap")
+    def omit_disabled_consistency(self, handler):
+        data = handler(self)
+        if self.consistency_flags is None:
+            data.pop("consistency_flags", None)
+        return data

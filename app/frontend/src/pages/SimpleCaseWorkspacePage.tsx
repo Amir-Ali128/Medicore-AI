@@ -27,6 +27,8 @@ import { normalizeClinical, parseVitalDraft, vitalDraft, VITAL_FIELDS, type Vita
 import VoiceClinicalIntake from '../components/clinical/VoiceClinicalIntake';
 import type { VoiceForm } from '../services/voiceClinicalDraft';
 import ClinicalHistorySummary from '../components/clinical/ClinicalHistorySummary';
+import ConsistencyWarnings from '../components/clinical/ConsistencyWarnings';
+import type { ConsistencyFlag } from '../services/simpleCaseClient';
 import VitalSignsFields from '../components/clinical/VitalSignsFields';
 import AIReportPdfDownloadButton from '../components/clinical/AIReportPdfDownloadButton';
 import { AI_REPORT_DISCLAIMER } from '../services/aiReportPdf';
@@ -76,6 +78,7 @@ const CURRENT_REPORT_HEADINGS = [
 ] as const;
 
 const REPORT_HEADINGS = [
+  'VERİ TUTARLILIK UYARILARI',
   ...CURRENT_REPORT_HEADINGS,
   // Older saved reports remain readable, but are marked as legacy in the UI.
   'KLİNİK BİLGİ',
@@ -846,7 +849,7 @@ export default function SimpleCaseWorkspacePage() {
                 {labs.some((lab) => (lab.source_metadata?.document_warnings as string[] | undefined)?.some((warning) => warning.includes('visible_row_count_unverified'))) ? (
                   <p className="mb-3 rounded-xl bg-slate-50 p-3 text-xs text-slate-600">Kaynak tablonun toplam satır sayısı doğrulanamadı. Eksik sonuç olmadığını belgeyle karşılaştırarak kontrol edin.</p>
                 ) : null}
-                {labs.some((lab) => lab.source_metadata?.needs_review || (lab.source_metadata?.document_warnings as string[] | undefined)?.some((warning) => /mismatch|failed|no_lab_rows|blurred|low_resolution|low_contrast/.test(warning))) ? (
+                {labs.some((lab) => Array.isArray(lab.source_metadata?.consistency_flags)) ? <ConsistencyWarnings flags={labs.flatMap((lab) => Array.isArray(lab.source_metadata?.consistency_flags) ? lab.source_metadata.consistency_flags as ConsistencyFlag[] : [])} /> : labs.some((lab) => lab.source_metadata?.needs_review || (lab.source_metadata?.document_warnings as string[] | undefined)?.some((warning) => /mismatch|failed|no_lab_rows|blurred|low_resolution|low_contrast/.test(warning))) ? (
                   <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900" role="alert">
                     Bazı satır veya sayfalar doğrulama gerektiriyor. Ad, değer, birim ve kaynak durumunu belgeyle karşılaştırın; eksik veya bulanık sayfayı yeniden yükleyin. Klinik yorum tüm sonuçları ve bu belirsizlikleri alır.
                   </div>
@@ -1137,6 +1140,7 @@ export default function SimpleCaseWorkspacePage() {
                 </div>
               </div>
 
+              {aiInterpretation?.consistency_flags ? <ConsistencyWarnings flags={aiInterpretation.consistency_flags} /> : null}
               {aiReportWarning ? (
                 <div className="rounded-3xl border border-amber-300 bg-amber-50 px-5 py-4 text-sm leading-6 text-amber-950">
                   <strong>AI rapor durumu:</strong> {aiReportWarning}
