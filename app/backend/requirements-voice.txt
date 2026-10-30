@@ -1,0 +1,2 @@
+# Optional offline ASR; not added to the live application's default install.
+faster-whisper==1.2.1

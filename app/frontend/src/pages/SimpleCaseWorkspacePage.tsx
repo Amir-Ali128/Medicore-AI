@@ -23,7 +23,9 @@ import { bindPatientMetadata, capturePatientScope, isCurrentPatientScope, select
 import { simpleCaseInputKey } from '../services/simpleCaseInputKey';
 import { classifyLabForDisplay, type LabDisplayClassification } from '../services/labDisplayClassification';
 import { invalidateDemographicClassification, mergeLabDocuments, normalizedLabToInput } from '../services/labDocumentMerge';
-import { normalizeClinical, parseVitalDraft, vitalDraft, type VitalDraft } from '../services/clinicalRecord';
+import { normalizeClinical, parseVitalDraft, vitalDraft, VITAL_FIELDS, type VitalDraft } from '../services/clinicalRecord';
+import VoiceClinicalIntake from '../components/clinical/VoiceClinicalIntake';
+import type { VoiceForm } from '../services/voiceClinicalDraft';
 import ClinicalHistorySummary from '../components/clinical/ClinicalHistorySummary';
 import VitalSignsFields from '../components/clinical/VitalSignsFields';
 import AIReportPdfDownloadButton from '../components/clinical/AIReportPdfDownloadButton';
@@ -194,6 +196,19 @@ export default function SimpleCaseWorkspacePage() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
+
+  function applyVoiceDraft(patch: Partial<VoiceForm>) {
+    if (patch.age !== undefined) setAge(patch.age);
+    if (patch.sex !== undefined) setSex(patch.sex as SexValue);
+    if (patch.complaints !== undefined) setComplaints(patch.complaints);
+    if (patch.history !== undefined) setHistory(patch.history);
+    if (patch.medications !== undefined) setMedications(patch.medications);
+    if (patch.notes !== undefined) setNotes(patch.notes);
+    const vitals = Object.fromEntries(VITAL_FIELDS.filter(({ key }) => patch[key] !== undefined).map(({ key }) => [key, patch[key]]));
+    if (Object.keys(vitals).length) setVitalValues((current) => ({ ...current, ...vitals }));
+    if (patch.age !== undefined || patch.sex !== undefined) setLabs((current) => current.map(invalidateDemographicClassification));
+    setSaved(false);
+  }
 
   useEffect(() => {
     const renamed = (event: Event) => {
@@ -611,6 +626,8 @@ export default function SimpleCaseWorkspacePage() {
         </div>
 
         <div className="p-5 sm:p-7">
+          {step === 'patient' || step === 'clinical' ? <VoiceClinicalIntake key={patientId ?? 'new'}
+            values={{ age, sex, complaints, history, medications, notes, ...vitalValues }} onApply={applyVoiceDraft} /> : null}
           {step === 'patient' ? (
             <div className="grid gap-6 lg:grid-cols-[1fr_0.8fr]">
               <div>

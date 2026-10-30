@@ -26,11 +26,13 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
-          cache-dependency-path: app/backend/requirements.txt
+          cache-dependency-path: |
+            app/backend/requirements.txt
+            app/backend/requirements-voice.txt
       - name: Install backend dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt pytest
+          pip install -r requirements.txt -r requirements-voice.txt pytest
       - name: Run simplified backend tests
         run: |
           PYTHONPATH=. python -m pytest -q \
@@ -38,6 +40,7 @@ jobs:
             tests/test_patient_clinical_vitals.py \
             tests/test_patient_protocol.py \
             tests/test_case_management.py \
+            tests/test_clinical_voice.py \
             tests/test_radiology_report_parser.py \
             tests/test_patient_isolation.py \
             tests/test_patient_health_timeline.py \

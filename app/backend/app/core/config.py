@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     debug: bool = False
     api_v1_prefix: str = "/api/v1"
 
+    # Optional, operator-provisioned offline ASR assets. No runtime downloads.
+    clinical_voice_model_path: str | None = None
+
     # --- Render / direct database URL -----------------------------------
     # Render provides DATABASE_URL. Prefer this when present.
     database_url: str | None = None
