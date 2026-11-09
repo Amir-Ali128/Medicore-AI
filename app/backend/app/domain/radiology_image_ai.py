@@ -7,8 +7,9 @@ the result explicitly marked for physician review.
 
 from __future__ import annotations
 
+from app.infrastructure.ai_privacy_client import privacy_call, private_media
+
 import ast
-import base64
 import json
 from dataclasses import dataclass
 from typing import Any
@@ -254,7 +255,7 @@ Yalnızca aşağıdaki JSON biçimini döndür:
 """.strip()
 
     client = AsyncAnthropic(api_key=settings.anthropic_api_key)
-    message = await client.messages.create(
+    message = await privacy_call(client.messages.create, provider='Anthropic', call_site=__name__,
         model=model,
         max_tokens=1200,
         system=(
@@ -270,7 +271,7 @@ Yalnızca aşağıdaki JSON biçimini döndür:
                         "source": {
                             "type": "base64",
                             "media_type": normalized_media_type,
-                            "data": base64.b64encode(content).decode("ascii"),
+                            "data": private_media(content, normalized_media_type),
                         },
                     },
                     {"type": "text", "text": prompt},

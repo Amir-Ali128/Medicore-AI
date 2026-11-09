@@ -8,6 +8,8 @@ by the source report.
 
 from __future__ import annotations
 
+from app.infrastructure.ai_privacy_client import privacy_call
+
 import json
 from dataclasses import dataclass
 from typing import Any
@@ -256,7 +258,7 @@ async def summarize_medical_report_text(report_text: str) -> MedicalReportReview
 
     bounded_text = text[:120_000]
     client = AsyncOpenAI(api_key=settings.openai_api_key)
-    response = await client.responses.create(
+    response = await privacy_call(client.responses.create, provider='OpenAI', call_site=__name__,
         model=model,
         store=False,
         max_output_tokens=8000,

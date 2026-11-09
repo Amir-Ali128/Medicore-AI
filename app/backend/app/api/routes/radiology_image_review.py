@@ -8,6 +8,8 @@ are retained. True medical images remain assistive and non-diagnostic.
 
 from __future__ import annotations
 
+from app.domain.privacy_gateway import PrivacyViolation
+
 import asyncio
 import uuid
 from datetime import date
@@ -159,6 +161,8 @@ async def _try_openai_review(
                 body_part=body_part,
             )
         )
+    except PrivacyViolation:
+        raise
     except Exception as exc:
         return None, exc.__class__.__name__
     return review, None if review is not None else "not_configured"
@@ -188,6 +192,8 @@ async def _try_gemini_review(
                 body_part=body_part,
             )
         )
+    except PrivacyViolation:
+        raise
     except Exception as exc:
         return None, exc.__class__.__name__
     return review, None if review is not None else "not_configured"
@@ -308,6 +314,8 @@ async def create_radiology_image_review(
                 body_part=requested_body_part,
             )
         )
+    except PrivacyViolation:
+        raise
     except Exception as exc:
         anthropic_error = exc.__class__.__name__
 

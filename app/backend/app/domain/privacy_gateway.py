@@ -27,6 +27,16 @@ class PrivacyViolation(Exception):
         super().__init__(PRIVACY_MESSAGE)
 
 
+class KnownIdentifier(str):
+    """A DB field supplies a category without ever putting its value in logs."""
+    category: str
+
+    def __new__(cls, value: str, category: str):
+        instance=super().__new__(cls,value)
+        instance.category=category
+        return instance
+
+
 @dataclass(frozen=True)
 class SanitizedText:
     text: str
@@ -41,7 +51,7 @@ class _Span:
 
 
 LABELS = {
-    'HASTA_ADI': r'hastanin\s+adi(?:\s+soyadi)?|hasta\s+adi(?:\s+soyadi)?|adi\s+soyadi|ad\s+soyad|patient\s+name|full[_ ]name|first[_ ]name|last[_ ]name|surname',
+    'HASTA_ADI': r'hastanin\s+adi(?:\s+soyadi)?|hasta\s+adi(?:\s+soyadi)?|adi\s+soyadi|ad\s+soyad|patient[_ ]name|full[_ ]name|first[_ ]name|last[_ ]name|surname',
     'TCKN': r't\.?\s*c\.?\s*(?:kimlik(?:\s+no)?|no)|tckn|kimlik\s+no|national[_ ]id',
     'TELEFON': r'telefon|cep\s+telefonu|phone',
     'EPOSTA': r'e[ -]?posta|e[ -]?mail',
@@ -51,8 +61,9 @@ LABELS = {
 }
 _LABEL = re.compile(r'(?<!\w)(?P<label>' + '|'.join(f'(?:{p})' for p in LABELS.values()) + r')(?!\w)(?:["\']?\s*[:=]\s*["\']?|[ \t]{2,}|[ \t]*\r?\n)',re.I)
 _TCKN = re.compile(r'(?<!\d)[1-9]\d{10}(?!\d)')
-_PHONE = re.compile(r'(?<!\d)(?:\+90[ .-]*|0090[ .-]*|0)[ (]*5\d{2}[ ) .-]*\d{3}[ .-]*\d{2}[ .-]*\d{2}(?!\d)')
+_PHONE = re.compile(r'(?<!\d)(?:(?:\+90|0090)[ (.-]*[2-5]\d{2}|0[ (]*5\d{2})[ ) .-]*\d{3}[ .-]*\d{2}[ .-]*\d{2}(?!\d)')
 _EMAIL = re.compile(r'(?<![\w.+-])[\w.+-]+@[\w.-]+\.[a-z]{2,}',re.I)
+_CLINICAL_VALUE = re.compile(r'\d+(?:[.,]\d+)?\s*(?:mg/dl|g/dl|mmol/l|mmhg|bpm|g/l|ng/ml|cm|kg)\b',re.I)
 _IBAN = re.compile(r'(?<!\w)TR(?:\s*\d){24}(?!\d)',re.I)
 
 
@@ -95,7 +106,7 @@ def _spans(text: str, known_identifiers: Sequence[str]) -> list[_Span]:
     for identifier in known_identifiers:
         value = str(identifier or '').strip()
         if not value: continue
-        category = _identifier_category(value)
+        category = getattr(identifier,'category',None) or _identifier_category(value)
         identifiers[value] = category
         if category == 'HASTA_ADI':
             for token in value.split():
@@ -117,8 +128,21 @@ def _spans(text: str, known_identifiers: Sequence[str]) -> list[_Span]:
         end = start
         while end < len(folded) and folded[end] not in '\r\n"\'': end += 1
         if index+1 < len(labels): end = min(end,labels[index+1].start())
+        # Structured identifiers have an exact end even when a prompt flattens
+        # source newlines; never absorb the following clinical observation.
+        bounded={'EPOSTA':_EMAIL,'TELEFON':_PHONE,'TCKN':_TCKN}.get(category)
+        typed=re.match(r'\[(?:HASTA_ADI|TCKN|TELEFON|EPOSTA|ADRES|DOGUM_TARIHI|KAYIT_NO)\]',text[positions[start]:]) if start<len(positions) else None
+        if typed:
+            end=min(end,start+typed.end())
+        elif bounded:
+            exact=bounded.match(text,positions[start]) if start<len(positions) else None
+            if exact:
+                # ASCII phone/e-mail/TCKN match positions are mapped back safely.
+                end=min(end,next((i for i in range(start,len(positions)) if positions[i]>=exact.end()),len(positions)))
         while end > start and folded[end-1] in ' \t,;': end -= 1
-        if end > start: spans.append(_Span(positions[start],positions[end-1]+1,category))
+        if end > start:
+            if _CLINICAL_VALUE.search(folded[start:end]): raise PrivacyViolation()
+            spans.append(_Span(positions[start],positions[end-1]+1,category))
     # Prefer the complete labelled value/full identifier, avoiding overlapping replacements.
     selected: list[_Span] = []
     for span in sorted(spans,key=lambda value:(value.start,-(value.end-value.start))):
@@ -152,7 +176,7 @@ def final_leak_check(payload_text_or_bytes: str | bytes, known_identifiers: Sequ
     for identifier in known_identifiers:
         value=str(identifier or '').strip()
         if not value: continue
-        variants=value.split() if _identifier_category(value)=='HASTA_ADI' else []
+        variants=value.split() if (getattr(identifier,'category',None) or _identifier_category(value))=='HASTA_ADI' else []
         for variant in [value,*variants]:
             key,_=_fold_map(variant)
             if key and re.search(r'(?<!\w)'+r'\s+'.join(map(re.escape,key.split()))+r'(?!\w)',folded): raise PrivacyViolation()
@@ -160,14 +184,15 @@ def final_leak_check(payload_text_or_bytes: str | bytes, known_identifiers: Sequ
         raise PrivacyViolation()
 
 
-def _ocr_tokens(image):
+def _ocr_tokens(image, *, allow_empty: bool = False):
     """Call the existing local engine directly; its legacy helper swallows errors."""
     import numpy as np
-    from app.domain.local_ocr_lab_parser import _ocr_engine, _tokens_from_result
+    from app.domain.local_ocr_lab_parser import _ocr_engine, _tokens_from_result, _ocr_engine_lock
     try:
-        tokens = _tokens_from_result(_ocr_engine()(np.array(image)))
+        with _ocr_engine_lock:
+            tokens = _tokens_from_result(_ocr_engine()(np.array(image)))
     except Exception: raise PrivacyViolation() from None
-    if not tokens or any(token.score < MIN_OCR_CONFIDENCE for token in tokens): raise PrivacyViolation()
+    if (not tokens and not allow_empty) or any(token.score < MIN_OCR_CONFIDENCE for token in tokens): raise PrivacyViolation()
     return tokens
 
 
@@ -181,26 +206,24 @@ def _mask_image(image, known_identifiers: Sequence[str]):
         start=len(text);text+=token.text+'\n';locations.append((start,len(text)-1,token))
     spans=_spans(text,known_identifiers)
     draw=ImageDraw.Draw(image)
-    counts=Counter()
+    counts=Counter();masked=set()
     for span in spans:
         counts[span.category]+=1
-        for start,end,token in locations:
+        for index,(start,end,token) in enumerate(locations):
             if span.start < end and span.end > start:
+                # An OCR line box may combine identity and clinical values.
+                # Never black out a lab value just to remove the adjacent name.
+                local_start=max(0,span.start-start);local_end=min(len(token.text),span.end-start)
+                remainder=token.text[:local_start]+token.text[local_end:]
+                if _CLINICAL_VALUE.search(remainder): raise PrivacyViolation()
+                masked.add(index)
                 box=(max(0,token.x-token.width/2-3),max(0,token.y-token.height/2-3),
                      min(image.width,token.x+token.width/2+3),min(image.height,token.y+token.height/2+3))
                 draw.rectangle(box,fill='black')
     # A second local OCR pass must not expose surviving identifiers. Empty OCR on
     # an all-redacted page is valid only after the successful initial OCR pass.
     if spans:
-        try:
-            remaining=_ocr_tokens(image)
-        except PrivacyViolation:
-            # Only genuinely blank OCR is safe here; engine failures remain fatal.
-            import numpy as np
-            from app.domain.local_ocr_lab_parser import _ocr_engine, _tokens_from_result
-            try: remaining=_tokens_from_result(_ocr_engine()(np.array(image)))
-            except Exception: raise PrivacyViolation() from None
-            if remaining: raise PrivacyViolation()
+        remaining=_ocr_tokens(image,allow_empty=len(masked)==len(tokens))
         final_leak_check('\n'.join(token.text for token in remaining),known_identifiers)
     else: final_leak_check(text,known_identifiers)
     return image,dict(counts)

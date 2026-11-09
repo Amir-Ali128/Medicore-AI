@@ -8,7 +8,10 @@ in native C++, and clinical synthesis happens only after native validation.
 
 from __future__ import annotations
 
-import base64
+from app.domain.privacy_gateway import PrivacyViolation
+
+from app.infrastructure.ai_privacy_client import privacy_call, private_media
+
 from functools import lru_cache
 import json
 from typing import Any
@@ -151,16 +154,15 @@ def _client_for_key(api_key: str) -> AsyncOpenAI:
 
 
 def _media_block(*, content: bytes, media_type: str, file_name: str) -> dict[str, Any]:
-    encoded = base64.b64encode(content).decode("ascii")
     if media_type == "application/pdf":
         return {
             "type": "input_file",
             "filename": file_name or "lab-report.pdf",
-            "file_data": f"data:application/pdf;base64,{encoded}",
+            "file_data": private_media(content, 'application/pdf', data_url=True),
         }
     return {
         "type": "input_image",
-        "image_url": f"data:{media_type};base64,{encoded}",
+        "image_url": private_media(content, media_type, data_url=True),
         "detail": "high",
     }
 
@@ -233,7 +235,7 @@ async def extract_lab_documents_with_openai(
 
     client = _client_for_key(api_key)
     try:
-        response = await client.responses.create(
+        response = await privacy_call(client.responses.create, provider='OpenAI', call_site=__name__,
             model=model,
             store=False,
             max_output_tokens=12000,
@@ -248,6 +250,8 @@ async def extract_lab_documents_with_openai(
             },
             input=[{"role": "user", "content": content_parts}],
         )
+    except PrivacyViolation:
+        raise
     except Exception as exc:  # provider errors are translated at the API boundary
         message = str(exc)
         if "invalid_api_key" in message or "Incorrect API key" in message:

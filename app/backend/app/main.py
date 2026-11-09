@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.router import api_router
+from app.infrastructure.ai_privacy_context import privacy_request_context
+from app.domain.privacy_gateway import PrivacyViolation, PRIVACY_ERROR_CODE, PRIVACY_MESSAGE
 from app.infrastructure.admin_bootstrap import ensure_bootstrap_admin
 from app.infrastructure.database.feedback_migrations import ensure_user_feedback
 from app.infrastructure.database.lab_reader_telemetry import ensure_lab_reader_events
@@ -68,7 +70,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="MediCore AI API", version="1.0.0-simple", lifespan=lifespan)
+app = FastAPI(title="MediCore AI API", version="1.0.0-simple", lifespan=lifespan, dependencies=[Depends(privacy_request_context)])
 
 app.add_middleware(
     CORSMiddleware,
@@ -108,3 +110,8 @@ async def readiness() -> JSONResponse:
         status_code=200 if snapshot["ready"] else 503,
         content=snapshot,
     )
+
+
+@app.exception_handler(PrivacyViolation)
+async def privacy_failure(_request, _exc):
+    return JSONResponse(status_code=422,content={"code":PRIVACY_ERROR_CODE,"detail":PRIVACY_MESSAGE})

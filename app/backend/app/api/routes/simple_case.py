@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.domain.privacy_gateway import PrivacyViolation
+
 import io
 import hashlib
 import json
@@ -162,6 +164,8 @@ def _parse_measured_at(value):
 def _extract_pdf_text(content: bytes) -> str:
     try:
         reader = PdfReader(io.BytesIO(content))
+    except PrivacyViolation:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=400, detail="PDF dosyası okunamadı.") from exc
 
@@ -600,6 +604,8 @@ async def ai_interpret_case(
         result = await interpret_simple_case(payload)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except PrivacyViolation:
+        raise
     except Exception as exc:
         raise HTTPException(
             status_code=503,
@@ -646,6 +652,8 @@ async def ai_interpret_patient_case(
         result = await interpret_simple_case(payload)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except PrivacyViolation:
+        raise
     except Exception as exc:
         raise HTTPException(
             status_code=503,
@@ -683,6 +691,8 @@ async def _extract_lab_document_with_claude(
     try:
         service = ClaudeLabExtractionService(api_key=settings.anthropic_api_key, model=model)
         result = await service.extract_from_bytes(content, file_name, media_type)
+    except PrivacyViolation:
+        raise
     except Exception as exc:
         failure = reader_failure("Claude", exc)
         logger.warning("lab_reader_failed reader=Claude code=%s status=%s", failure['code'], failure['status'])
@@ -909,8 +919,12 @@ async def _ingest_lab_upload(file: UploadFile, media_type: str, *, rotation: int
 @router.post("/labs/pdf", response_model=list[LabResultInput])
 async def upload_lab_pdf(
     current_user: Annotated[User, Depends(get_current_active_user)],
+    session: SessionDep,
+    patient_id: uuid.UUID | None = None,
     file: UploadFile = File(...),
 ) -> list[LabResultInput]:
+    if patient_id is not None:
+        await ensure_patient_access(session, patient_id=patient_id, current_user=current_user)
     media_type = (file.content_type or "").split(";", 1)[0].lower()
     if media_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Laboratuvar dosyası PDF olmalıdır.")
@@ -920,9 +934,13 @@ async def upload_lab_pdf(
 @router.post("/labs/image", response_model=list[LabResultInput])
 async def upload_lab_image(
     current_user: Annotated[User, Depends(get_current_active_user)],
+    session: SessionDep,
+    patient_id: uuid.UUID | None = None,
     file: UploadFile = File(...),
     rotation: int = Form(0),
 ) -> list[LabResultInput]:
+    if patient_id is not None:
+        await ensure_patient_access(session, patient_id=patient_id, current_user=current_user)
     media_type = (file.content_type or "").split(";", 1)[0].lower()
     if media_type not in {"image/jpeg", "image/png", "image/webp"}:
         raise HTTPException(status_code=400, detail="Laboratuvar fotoğrafı JPG, PNG veya WEBP olmalıdır.")
@@ -932,11 +950,15 @@ async def upload_lab_image(
 @router.post("/reports/pdf", response_model=MedicalReportInput)
 async def upload_report_pdf(
     current_user: Annotated[User, Depends(get_current_active_user)],
+    session: SessionDep,
+    patient_id: uuid.UUID | None = None,
     file: UploadFile = File(...),
     report_type: str = Form("Tıbbi Rapor"),
     body_region: str | None = Form(None),
 ) -> MedicalReportInput:
     """Extract text from a generic medical report PDF and add it to the case."""
+    if patient_id is not None:
+        await ensure_patient_access(session, patient_id=patient_id, current_user=current_user)
 
     if (file.content_type or "").split(";", 1)[0].lower() != "application/pdf":
         raise HTTPException(status_code=400, detail="Tetkik raporu PDF olmalıdır.")
@@ -1010,11 +1032,15 @@ async def upload_report_pdf(
 @router.post("/reports/image", response_model=MedicalReportInput)
 async def upload_report_image(
     current_user: Annotated[User, Depends(get_current_active_user)],
+    session: SessionDep,
+    patient_id: uuid.UUID | None = None,
     file: UploadFile = File(...),
     report_type: str = Form("Tıbbi Rapor"),
     body_region: str | None = Form(None),
 ) -> MedicalReportInput:
     """Extract a photographed written medical report or review a medical image."""
+    if patient_id is not None:
+        await ensure_patient_access(session, patient_id=patient_id, current_user=current_user)
 
     media_type = (file.content_type or "").split(";", 1)[0].lower()
     if media_type not in {"image/jpeg", "image/png", "image/webp"}:
@@ -1036,6 +1062,8 @@ async def upload_report_image(
             modality="AUTO",
             body_part=body_region,
         )
+    except PrivacyViolation:
+        raise
     except Exception as exc:
         raise HTTPException(
             status_code=422,

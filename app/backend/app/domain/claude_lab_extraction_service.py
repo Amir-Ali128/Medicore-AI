@@ -11,7 +11,10 @@ the `anthropic` package installed until extraction is actually used.
 
 from __future__ import annotations
 
-import base64
+from app.domain.privacy_gateway import PrivacyViolation
+
+from app.infrastructure.ai_privacy_client import privacy_call, private_media, PrivateMedia
+
 import asyncio
 import json
 from typing import Any
@@ -127,12 +130,12 @@ class ClaudeLabExtractionService:
         if content_type not in SUPPORTED_CONTENT_TYPES:
             raise ValueError(f"Unsupported file type: {content_type}")
 
-        encoded = base64.standard_b64encode(file_bytes).decode("ascii")
+        encoded = private_media(file_bytes, content_type)
         file_block = self._build_file_block(content_type, encoded)
 
         async def run(prompt: str, *, timeout: float | None = None) -> LabExtractionResult:
             request = self._guard.call(
-                lambda: self._client.messages.create(
+                lambda: privacy_call(self._client.messages.create, provider='Anthropic', call_site=__name__,
                     model=self._model,
                     max_tokens=_MAX_TOKENS,
                     system=_SYSTEM_PROMPT,
@@ -167,6 +170,8 @@ class ClaudeLabExtractionService:
                 "\nThe previous extraction may have been incomplete. Perform a fresh full-table pass. "
                 "Return every visible row exactly once."
                 ), timeout=_AUDIT_TIMEOUT_SECONDS)
+            except PrivacyViolation:
+                raise
             except Exception:
                 return first.model_copy(update={"overall_needs_review": True, "warnings": [*first.warnings, "image_completeness_audit_failed"]})
 
@@ -213,7 +218,7 @@ class ClaudeLabExtractionService:
 
     # -- helpers ---------------------------------------------------------
     @staticmethod
-    def _build_file_block(content_type: str, encoded: str) -> dict[str, Any]:
+    def _build_file_block(content_type: str, encoded: PrivateMedia) -> dict[str, Any]:
         if content_type == "application/pdf":
             return {
                 "type": "document",

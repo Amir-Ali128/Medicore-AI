@@ -1,4 +1,6 @@
 """Independent page readers. A is display provenance, never a correctness vote."""
+
+from app.domain.privacy_gateway import PrivacyViolation
 import asyncio
 from copy import deepcopy
 from decimal import Decimal, InvalidOperation
@@ -112,11 +114,15 @@ async def cross_read_page(page, *, local_reader, claude_reader, openai_reader, u
                     result={**result,'labs':existing,'visible_row_count':max(counts) if counts else None,
                             'warnings':[*result.get('warnings',[]),*audit.get('warnings',[])],
                             'extraction_errors':[*result.get('extraction_errors',[]),*audit.get('extraction_errors',[])]}
+                except PrivacyViolation:
+                    raise
                 except Exception as exc:
                     errors.append(reader_failure(name,exc)); result={**result,'warnings':[*result.get('warnings',[]),'image_completeness_audit_failed']}
         except asyncio.CancelledError as exc:
             cancelled=exc
             errors.append(reader_failure(name,TimeoutError()))
+        except PrivacyViolation:
+            raise
         except Exception as exc: errors.append(reader_failure(name,exc))
         finally: reader_calls.reset(token)
         values=[row for row in (result.get('labs') or []) if isinstance(row,dict)]
@@ -132,6 +138,8 @@ async def cross_read_page(page, *, local_reader, claude_reader, openai_reader, u
         if usage_sink is not None:
             try:
                 await asyncio.wait_for(usage_sink(report),timeout=cfg.READER_ANALYTICS_WRITE_TIMEOUT_SECONDS)
+            except PrivacyViolation:
+                raise
             except Exception:
                 logger.warning('lab_reader_analytics_write_failed event_id=%s reader=%s page=%s',report['event_id'],name,page.number)
         if cancelled is not None: raise cancelled
