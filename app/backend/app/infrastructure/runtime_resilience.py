@@ -8,6 +8,8 @@ success into clinical confidence.
 
 from __future__ import annotations
 
+from app.domain.privacy_gateway import PrivacyViolation
+
 import asyncio
 import threading
 import time
@@ -265,6 +267,9 @@ class AsyncDependencyGuard:
                     f"{self.name} exceeded {self.timeout_seconds:.2f}s timeout."
                 ) from exc
             except asyncio.CancelledError:
+                self.breaker.cancel_probe(probe)
+                raise
+            except PrivacyViolation:
                 self.breaker.cancel_probe(probe)
                 raise
             except Exception as exc:

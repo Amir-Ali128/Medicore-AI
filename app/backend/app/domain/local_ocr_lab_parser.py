@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 import os
 import re
+import threading
 from typing import Any
 
 # Keep native OCR libraries from spawning large thread pools on small Render instances.
@@ -22,6 +23,8 @@ os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 os.environ.setdefault("MKL_NUM_THREADS", "1")
 
 import numpy as np
+
+_ocr_engine_lock = threading.RLock()
 
 _MIN_ACCEPTED_ROWS = 3
 _HEADER_HINTS = ("TETKIK", "TAHLIL", "SONUC", "BIRIM", "REFERANS")
@@ -149,7 +152,8 @@ def _ocr_engine():
 
 def _ocr_once(image: np.ndarray) -> list[OcrToken]:
     try:
-        result = _ocr_engine()(image)
+        with _ocr_engine_lock:
+            result = _ocr_engine()(image)
     except Exception:
         return []
     return _tokens_from_result(result)

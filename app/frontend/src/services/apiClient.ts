@@ -1,3 +1,4 @@
+import { privacyErrorMessage } from './privacyError';
 import { getAccessToken } from './authClient';
 
 export const API_BASE_URL = (
@@ -12,7 +13,7 @@ export class ApiClientError extends Error {
   body: unknown;
 
   constructor(status: number, statusText: string, body: unknown) {
-    super(`API request failed with ${status} ${statusText}`);
+    super(privacyErrorMessage(body) || `API request failed with ${status} ${statusText}`);
     this.name = 'ApiClientError';
     this.status = status;
     this.statusText = statusText;

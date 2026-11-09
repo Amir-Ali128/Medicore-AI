@@ -8,6 +8,8 @@ source/trust/trend/AI snapshot is persisted atomically to the patient's history.
 
 from __future__ import annotations
 
+from app.domain.privacy_gateway import PrivacyViolation
+
 import uuid
 from typing import Annotated, Any
 
@@ -237,6 +239,8 @@ async def ingest_enabiz_pdf(
             session=session,
             current_user=current_user,
         )
+    except PrivacyViolation:
+        raise
     except Exception as exc:
         _raise_ingestion_error(exc)
         raise
@@ -268,6 +272,8 @@ async def ingest_file_upload(
             session=session,
             current_user=current_user,
         )
+    except PrivacyViolation:
+        raise
     except Exception as exc:
         _raise_ingestion_error(exc)
         raise
@@ -298,6 +304,8 @@ async def ingest_photo(
             session=session,
             current_user=current_user,
         )
+    except PrivacyViolation:
+        raise
     except Exception as exc:
         _raise_ingestion_error(exc)
         raise
@@ -328,6 +336,8 @@ async def ingest_screenshot(
             session=session,
             current_user=current_user,
         )
+    except PrivacyViolation:
+        raise
     except Exception as exc:
         _raise_ingestion_error(exc)
         raise
@@ -356,6 +366,8 @@ async def ingest_manual(
             session=session,
             current_user=current_user,
         )
+    except PrivacyViolation:
+        raise
     except Exception as exc:
         _raise_ingestion_error(exc)
         raise
@@ -388,6 +400,8 @@ async def ingest_email_attachment(
             session=session,
             current_user=current_user,
         )
+    except PrivacyViolation:
+        raise
     except Exception as exc:
         _raise_ingestion_error(exc)
         raise
@@ -415,6 +429,8 @@ async def ingest_integration(
             session=session,
             current_user=current_user,
         )
+    except PrivacyViolation:
+        raise
     except Exception as exc:
         _raise_ingestion_error(exc)
         raise
@@ -482,6 +498,8 @@ async def evaluate_saved_lab_report(
         }
         result["history_contract_version"] = PATIENT_LAB_HISTORY_CONTRACT
         return result
+    except PrivacyViolation:
+        raise
     except Exception as exc:
         await session.rollback()
         _raise_ingestion_error(exc)

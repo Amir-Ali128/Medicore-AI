@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import pytest
+from tests.test_privacy_gateway import synthetic_image, synthetic_pdf
+pytestmark = pytest.mark.usefixtures("synthetic_privacy_ocr")
+
 import asyncio
 import json
 from types import SimpleNamespace
@@ -69,8 +73,8 @@ def test_batch_images_are_sent_in_one_stateless_structured_request(monkeypatch) 
     result = asyncio.run(
         lab_reader.extract_lab_documents_with_openai(
             documents=[
-                (b"image-one", "image/jpeg", "page-1.jpg"),
-                (b"image-two", "image/png", "page-2.png"),
+                (synthetic_image(), "image/jpeg", "page-1.jpg"),
+                (synthetic_image(), "image/png", "page-2.png"),
             ]
         )
     )
@@ -121,7 +125,7 @@ def test_pdf_is_sent_directly_as_input_file(monkeypatch) -> None:
 
     asyncio.run(
         lab_reader.extract_lab_document_with_openai(
-            content=b"%PDF-test",
+            content=synthetic_pdf(),
             media_type="application/pdf",
             file_name="labs.pdf",
         )
@@ -129,7 +133,7 @@ def test_pdf_is_sent_directly_as_input_file(monkeypatch) -> None:
 
     parts = captured["input"][0]["content"]
     file_part = next(part for part in parts if part["type"] == "input_file")
-    assert file_part["filename"] == "labs.pdf"
+    assert file_part["filename"] == "document.pdf"
     assert file_part["file_data"].startswith("data:application/pdf;base64,")
     assert captured["client_timeout"] == lab_reader._EXTRACTION_TIMEOUT_SECONDS
     assert captured["client_max_retries"] == 0
@@ -149,7 +153,7 @@ def test_missing_api_key_fails_before_provider_call(monkeypatch) -> None:
     with pytest.raises(lab_reader.OpenAILabExtractionError, match="OPENAI_API_KEY"):
         asyncio.run(
             lab_reader.extract_lab_document_with_openai(
-                content=b"image",
+                content=synthetic_image(),
                 media_type="image/jpeg",
                 file_name="lab.jpg",
             )

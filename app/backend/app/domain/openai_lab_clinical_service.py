@@ -8,6 +8,10 @@ AI-eligible facts and are presented only as review items.
 
 from __future__ import annotations
 
+from app.domain.privacy_gateway import PrivacyViolation
+
+from app.infrastructure.ai_privacy_client import privacy_call
+
 import json
 from decimal import Decimal
 from functools import lru_cache
@@ -338,7 +342,7 @@ async def synthesize_lab_clinical_assessment(
         float(settings.ai_call_timeout_seconds),
     )
     try:
-        response = await client.responses.create(
+        response = await privacy_call(client.responses.create, provider='OpenAI', call_site=__name__,
             model=model,
             store=False,
             max_output_tokens=_CLINICAL_MAX_OUTPUT_TOKENS,
@@ -363,6 +367,8 @@ async def synthesize_lab_clinical_assessment(
                 }
             ],
         )
+    except PrivacyViolation:
+        raise
     except Exception as exc:
         raise OpenAILabClinicalError(f"OpenAI klinik laboratuvar sentezi başarısız: {exc}") from exc
 

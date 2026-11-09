@@ -7,7 +7,8 @@ comparison. Output is assistive, non-diagnostic and physician-review-only.
 
 from __future__ import annotations
 
-import base64
+from app.infrastructure.ai_privacy_client import privacy_call, private_media
+
 
 from google import genai
 
@@ -122,10 +123,10 @@ Yalnızca şu JSON nesnesini döndür:
 }}
 """.strip()
 
-    image_b64 = base64.b64encode(content).decode("ascii")
+    image_b64 = private_media(content, normalized_media_type)
     client = genai.Client(api_key=settings.gemini_api_key)
     async with client.aio as aclient:
-        interaction = await aclient.interactions.create(
+        interaction = await privacy_call(aclient.interactions.create, provider='Gemini', call_site=__name__,
             model=model,
             store=False,
             input=[

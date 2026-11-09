@@ -7,7 +7,10 @@ clinical summary layer can process it exactly like a text PDF or pasted report.
 
 from __future__ import annotations
 
-import base64
+from app.domain.privacy_gateway import PrivacyViolation
+
+from app.infrastructure.ai_privacy_client import privacy_call, private_media
+
 import json
 from dataclasses import dataclass
 from typing import Any
@@ -88,6 +91,8 @@ async def _extract_with_anthropic_pages(
 
     try:
         import fitz
+    except PrivacyViolation:
+        raise
     except Exception:
         return None
 
@@ -130,6 +135,8 @@ async def _extract_with_anthropic_pages(
                     document_types.append(review.report_type)
                 warnings.extend(review.limitations)
 
+    except PrivacyViolation:
+        raise
     except Exception as exc:
         raise ScannedMedicalReportExtractionError(
             f"Taranmış PDF sayfa görüntü çıkarımı başarısız: {exc}"
@@ -163,10 +170,9 @@ async def extract_scanned_medical_report_pdf(
     if not model:
         return None
 
-    encoded = base64.b64encode(content).decode("ascii")
     client = AsyncOpenAI(api_key=settings.openai_api_key)
     try:
-        response = await client.responses.create(
+        response = await privacy_call(client.responses.create, provider='OpenAI', call_site=__name__,
             model=model,
             store=False,
             max_output_tokens=14000,
@@ -193,12 +199,14 @@ async def extract_scanned_medical_report_pdf(
                         {
                             "type": "input_file",
                             "filename": (file_name or "report.pdf")[:512],
-                            "file_data": f"data:application/pdf;base64,{encoded}",
+                            "file_data": private_media(content, 'application/pdf', data_url=True),
                         },
                     ],
                 }
             ],
         )
+    except PrivacyViolation:
+        raise
     except Exception as exc:
         fallback = await _extract_with_anthropic_pages(
             content=content,

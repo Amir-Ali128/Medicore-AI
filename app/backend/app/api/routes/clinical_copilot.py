@@ -9,6 +9,8 @@ produced by these endpoints.
 
 from __future__ import annotations
 
+from app.domain.privacy_gateway import PrivacyViolation
+
 import uuid
 
 from fastapi import APIRouter, HTTPException, status
@@ -50,6 +52,8 @@ async def generate_clinical_hypotheses(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=message
         ) from None
+    except PrivacyViolation:
+        raise
     except Exception:
         await session.rollback()
         raise
@@ -85,6 +89,8 @@ async def generate_source_only_clinical_evaluation(
     try:
         result = await generate_source_only_case(service, payload.patient_id, payload)
         await session.commit()
+    except PrivacyViolation:
+        raise
     except Exception:
         await session.rollback()
         raise

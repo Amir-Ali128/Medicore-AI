@@ -435,7 +435,7 @@ export default function SimpleCaseWorkspacePage() {
     setError('');
     const scope = capturePatientScope();
     try {
-      const rows = await uploadLabPdf(file, scope.signal);
+      const rows = await uploadLabPdf(file, scope.signal, scope.patientId);
       if (!operationCurrent(scope)) return;
       const patientRows = rows.map((row) => ({ ...row, source_metadata: bindPatientMetadata(row.source_metadata, scope.patientId) }));
       setLabs((current) => mergeLabDocuments(current, patientRows));
@@ -454,7 +454,7 @@ export default function SimpleCaseWorkspacePage() {
     setError('');
     const scope = capturePatientScope();
     try {
-      const rows = await uploadLabImage(file, labImageRotation, scope.signal);
+      const rows = await uploadLabImage(file, labImageRotation, scope.signal, scope.patientId);
       if (!operationCurrent(scope)) return;
       const patientRows = rows.map((row) => ({ ...row, source_metadata: bindPatientMetadata(row.source_metadata, scope.patientId) }));
       setLabs((current) => mergeLabDocuments(current, patientRows));
@@ -473,7 +473,7 @@ export default function SimpleCaseWorkspacePage() {
     setError('');
     const scope = capturePatientScope();
     try {
-      const report = await uploadReportPdf(file, reportType, bodyRegion, scope.signal);
+      const report = await uploadReportPdf(file, reportType, bodyRegion, scope.signal, scope.patientId);
       if (!operationCurrent(scope)) return;
       const patientReport = { ...report, metadata: bindPatientMetadata(report.metadata, scope.patientId) };
       setReports((current) => [...current, patientReport]);
@@ -492,7 +492,7 @@ export default function SimpleCaseWorkspacePage() {
     setError('');
     const scope = capturePatientScope();
     try {
-      const report = await uploadReportImage(file, reportType, bodyRegion, scope.signal);
+      const report = await uploadReportImage(file, reportType, bodyRegion, scope.signal, scope.patientId);
       if (!operationCurrent(scope)) return;
       const patientReport = { ...report, metadata: bindPatientMetadata(report.metadata, scope.patientId) };
       setReports((current) => [...current, patientReport]);
