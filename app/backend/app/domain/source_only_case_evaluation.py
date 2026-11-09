@@ -12,6 +12,10 @@ a diagnosis, treatment recommendation, medication order or automatic test order.
 
 from __future__ import annotations
 
+from app.domain.privacy_gateway import PrivacyViolation
+
+from app.infrastructure.ai_privacy_client import privacy_call
+
 import uuid
 from typing import Any
 
@@ -166,7 +170,7 @@ async def generate_source_only_case(
     try:
         guard = get_anthropic_guard("clinical-hypothesis")
         response = await guard.call(
-            lambda: service._client.messages.create(
+            lambda: privacy_call(service._client.messages.create, provider='Anthropic', call_site=__name__,
                 model=service._model,
                 max_tokens=service_module._MAX_OUTPUT_TOKENS,
                 temperature=0,
@@ -198,6 +202,8 @@ async def generate_source_only_case(
                 flags=flags,
                 language=request.language,
             )
+    except PrivacyViolation:
+        raise
     except Exception:
         risk, summary = _source_only_fallback(flags, request.language)
         warnings.append("AI call failed; deterministic fallback used.")
@@ -223,6 +229,8 @@ async def generate_source_only_case(
                 if isinstance(item, dict) and item.get("id")
             ),
         }
+    except PrivacyViolation:
+        raise
     except Exception:
         # Routing metadata is additive. Failure to attach it must not turn a bounded
         # source-only evaluation into a server error.

@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import pytest
+from tests.test_privacy_gateway import synthetic_image, synthetic_pdf
+pytestmark = pytest.mark.usefixtures("synthetic_privacy_ocr")
+
 import asyncio
 import json
 from types import SimpleNamespace
@@ -84,7 +88,7 @@ def test_gemini_reader_uses_independent_stateless_multimodal_input(monkeypatch) 
 
     result = asyncio.run(
         gemini_reader.review_radiology_media_gemini(
-            content=b"fake-image",
+            content=synthetic_image(),
             media_type="image/png",
             modality="XRAY",
             body_part="CHEST",
@@ -121,7 +125,7 @@ def test_gemini_reader_is_optional_when_key_is_missing(monkeypatch) -> None:
 
     result = asyncio.run(
         gemini_reader.review_radiology_media_gemini(
-            content=b"fake-image",
+            content=synthetic_image(),
             media_type="image/jpeg",
             modality="XRAY",
             body_part="CHEST",

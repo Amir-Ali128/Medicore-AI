@@ -1,3 +1,4 @@
+import { privacyErrorMessage } from './privacyError';
 import { API_BASE_URL, apiClient } from './apiClient';
 import { getAccessToken } from './authClient';
 
@@ -103,9 +104,15 @@ export type SimpleCaseResponse = {
   warnings: string[];
 };
 
+export type ConsistencyFlag = {
+  code: string; severity: 'info' | 'warning' | 'high'; parameter_or_report: string;
+  date: string | null; source_page: number | null; source_row: number | null; message_tr: string;
+};
+
 export type CaseAIInterpretation = {
   report_text: string;
   model: string;
+  consistency_flags?: ConsistencyFlag[];
 };
 
 export type SavedSimpleCase = {
@@ -153,7 +160,7 @@ async function uploadRequest<T>(path: string, init: UploadInit): Promise<T> {
       body && typeof body === 'object' && 'detail' in body
         ? String((body as { detail?: unknown }).detail ?? '')
         : '';
-    throw new Error(detail || `İstek başarısız: ${response.status}`);
+    throw new Error(privacyErrorMessage(body) || detail || `İstek başarısız: ${response.status}`);
   }
   return body as T;
 }
@@ -183,17 +190,17 @@ export function saveSimpleCase(patientId: string, payload: SimpleCaseRequest, si
   );
 }
 
-export function uploadLabPdf(file: File, signal?: AbortSignal) {
+export function uploadLabPdf(file: File, signal?: AbortSignal, patientId?: string | null) {
   const body = new FormData();
   body.append('file', file);
-  return uploadRequest<LabInput[]>('/simple-case/labs/pdf', { body, signal });
+  return uploadRequest<LabInput[]>(patientId ? '/simple-case/labs/pdf?patient_id=' + encodeURIComponent(patientId) : '/simple-case/labs/pdf', { body, signal });
 }
 
-export function uploadLabImage(file: File, rotation = 0, signal?: AbortSignal) {
+export function uploadLabImage(file: File, rotation = 0, signal?: AbortSignal, patientId?: string | null) {
   const body = new FormData();
   body.append('file', file);
   body.append('rotation', String(rotation));
-  return uploadRequest<LabInput[]>('/simple-case/labs/image', { body, signal });
+  return uploadRequest<LabInput[]>(patientId ? '/simple-case/labs/image?patient_id=' + encodeURIComponent(patientId) : '/simple-case/labs/image', { body, signal });
 }
 
 export function uploadReportPdf(
@@ -201,12 +208,13 @@ export function uploadReportPdf(
   reportType: string,
   bodyRegion: string,
   signal?: AbortSignal,
+  patientId?: string | null,
 ) {
   const body = new FormData();
   body.append('file', file);
   body.append('report_type', reportType || 'Tıbbi Rapor');
   if (bodyRegion.trim()) body.append('body_region', bodyRegion.trim());
-  return uploadRequest<MedicalReportInput>('/simple-case/reports/pdf', { body, signal });
+  return uploadRequest<MedicalReportInput>(patientId ? '/simple-case/reports/pdf?patient_id=' + encodeURIComponent(patientId) : '/simple-case/reports/pdf', { body, signal });
 }
 
 export function uploadReportImage(
@@ -214,12 +222,13 @@ export function uploadReportImage(
   reportType: string,
   bodyRegion: string,
   signal?: AbortSignal,
+  patientId?: string | null,
 ) {
   const body = new FormData();
   body.append('file', file);
   body.append('report_type', reportType || 'Tıbbi Rapor');
   if (bodyRegion.trim()) body.append('body_region', bodyRegion.trim());
-  return uploadRequest<MedicalReportInput>('/simple-case/reports/image', { body, signal });
+  return uploadRequest<MedicalReportInput>(patientId ? '/simple-case/reports/image?patient_id=' + encodeURIComponent(patientId) : '/simple-case/reports/image', { body, signal });
 }
 
 

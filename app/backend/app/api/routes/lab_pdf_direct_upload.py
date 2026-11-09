@@ -9,6 +9,8 @@ Python PDF parser is intentionally not part of this route anymore.
 
 from __future__ import annotations
 
+from app.domain.privacy_gateway import PrivacyViolation
+
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -64,6 +66,8 @@ def _decimal(value: Any) -> Decimal | None:
         return None
     try:
         return Decimal(str(value))
+    except PrivacyViolation:
+        raise
     except Exception:
         return None
 

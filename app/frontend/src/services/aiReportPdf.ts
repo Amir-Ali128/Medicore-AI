@@ -13,6 +13,7 @@ export type AIReportPdfInput = {
 };
 
 const clinicalHeadings = new Set([
+  'VERİ TUTARLILIK UYARILARI',
   'KLİNİK ÖZET', 'ÖNE ÇIKAN LABORATUVAR BULGULARI', 'TETKİK / RAPOR BULGULARI',
   'ENTEGRE KLİNİK DEĞERLENDİRME', 'OLASI KLİNİK DURUMLAR / AYIRICI TANI',
   'ÖNERİLEN İLERİ TETKİK / İZLEM', 'SONUÇ / KANAAT', 'HEKİM NOTU',

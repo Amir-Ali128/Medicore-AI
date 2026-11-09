@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from app.domain.privacy_gateway import PrivacyViolation
+
+from app.infrastructure.ai_privacy_client import privacy_call
+
 import json
 from dataclasses import dataclass
 from typing import Any
@@ -14,6 +18,7 @@ from anthropic import AsyncAnthropic
 
 from app.core.config import get_settings
 from app.domain.simple_case import normalize_simple_case
+from app.domain.consistency_flags import collect_consistency_flags, render_consistency_section
 from app.schemas.simple_case import SimpleCaseRequest
 
 
@@ -21,6 +26,7 @@ from app.schemas.simple_case import SimpleCaseRequest
 class CaseAIInterpretation:
     report_text: str
     model: str
+    consistency_flags: list[dict] | None = None
 
 
 _SYSTEM_PROMPT = """
@@ -169,7 +175,17 @@ async def interpret_simple_case(payload: SimpleCaseRequest) -> CaseAIInterpretat
     if not settings.anthropic_api_key or not model:
         raise RuntimeError("Anthropic klinik rapor modeli yapılandırılmamış.")
 
+    if getattr(settings, 'report_consistency_enabled', False):
+        from app.domain.report_consistency import apply_report_consistency
+        payload = apply_report_consistency(payload)
     case_payload = _build_case_payload(payload)
+    if getattr(settings, 'lab_consistency_rules_enabled', False):
+        from app.domain.lab_consistency_rules import annotate_request
+        payload = annotate_request(payload)
+        case_payload = _build_case_payload(payload)
+    flags = collect_consistency_flags(payload) if getattr(settings, "consistency_section_enabled", False) else None
+    if flags is not None:
+        case_payload["consistency_flags"] = flags
     prompt = json.dumps(case_payload, ensure_ascii=False, separators=(",", ":"))
     if len(prompt) > 160_000:
         raise RuntimeError("Vaka tek AI çağrısı sınırını aşıyor; sonuçlar sessizce kırpılmadı.")
@@ -191,10 +207,10 @@ async def interpret_simple_case(payload: SimpleCaseRequest) -> CaseAIInterpretat
         if extra_instruction:
             user_text += "\n\n" + extra_instruction
 
-        response = await client.messages.create(
+        response = await privacy_call(client.messages.create, provider='Anthropic', call_site=__name__,
             model=model,
             max_tokens=5200,
-            system=_SYSTEM_PROMPT,
+            system=_SYSTEM_PROMPT + ("\nconsistency_flags bayraklarını yorumunda dikkate al; işaretli değerleri kesin kabul etme. VERİ TUTARLILIK UYARILARI bölümünü yazma; bu bölüm sunucu tarafından eklenecek." if flags is not None else ""),
             messages=[
                 {
                     "role": "user",
@@ -215,6 +231,8 @@ async def interpret_simple_case(payload: SimpleCaseRequest) -> CaseAIInterpretat
 
     try:
         text = await generate()
+    except PrivacyViolation:
+        raise
     except Exception as exc:
         raise RuntimeError(f"AI klinik rapor üretimi başarısız: {exc}") from exc
 
@@ -233,6 +251,8 @@ async def interpret_simple_case(payload: SimpleCaseRequest) -> CaseAIInterpretat
             retried = await generate(retry_instruction)
             if retried:
                 text = retried
+        except PrivacyViolation:
+            raise
         except Exception:
             pass
 
@@ -242,7 +262,22 @@ async def interpret_simple_case(payload: SimpleCaseRequest) -> CaseAIInterpretat
             "AI klinik raporu eksik üretildi. Eksik bölümler: " + ", ".join(missing)
         )
 
+    if flags is not None:
+        # Only the backend owns this section, even if a model ignores its prompt.
+        from app.domain.consistency_config import CONSISTENCY_HEADING
+        lines, kept, suppress = text.splitlines(), [], False
+        for line in lines:
+            heading = line.strip().strip('# *:').strip().upper()
+            if heading == CONSISTENCY_HEADING:
+                suppress = True
+                continue
+            if heading in required_headings:
+                suppress = False
+            if not suppress:
+                kept.append(line)
+        text = '\n'.join(kept)
     return CaseAIInterpretation(
-        report_text=text[:24_000],
+        report_text=(render_consistency_section(flags) if flags is not None else "") + text[:24_000],
         model=model,
+        consistency_flags=flags,
     )

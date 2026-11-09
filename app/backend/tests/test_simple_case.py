@@ -1,3 +1,5 @@
+
+from tests.test_privacy_gateway import synthetic_image
 """Simple case normalization, access control and report freshness regressions."""
 
 from datetime import UTC, datetime
@@ -473,6 +475,7 @@ def test_validation_disagreement_between_raw_and_numeric_values_is_not_hidden():
     assert 'numeric_value_conflict' in case['labs'][0]['ingestion_reasons']
 
 
+@pytest.mark.usefixtures("synthetic_privacy_ocr")
 def test_claude_completeness_retry_failure_keeps_first_reading():
     import json
     from app.domain.claude_lab_extraction_service import ClaudeLabExtractionService
@@ -486,11 +489,12 @@ def test_claude_completeness_retry_failure_keeps_first_reading():
     class Guard:
         async def call(self, operation): return await operation()
     service._guard = Guard()
-    result = asyncio.run(service.extract_from_bytes(b'image', 'lab.png', 'image/png'))
+    result = asyncio.run(service.extract_from_bytes(synthetic_image(), 'lab.png', 'image/png'))
     assert len(result.values) == 1
     assert result.values[0].reference_text == '0.27 - 4.20'
     assert 'image_completeness_audit_failed' in result.warnings
     assert result.overall_needs_review
+
 
 
 def test_perspective_processor_only_rectifies_a_clear_document_boundary():
@@ -621,6 +625,7 @@ def test_claude_invalid_metadata_keeps_readable_rows_and_requires_review():
     assert result.overall_needs_review
 
 
+@pytest.mark.usefixtures("synthetic_privacy_ocr")
 def test_lab_reading_uses_its_own_budget_when_generic_ai_timeout_is_short(monkeypatch):
     import json
     import anthropic
@@ -647,7 +652,7 @@ def test_lab_reading_uses_its_own_budget_when_generic_ai_timeout_is_short(monkey
     try:
         service = reader.ClaudeLabExtractionService(api_key='mock-only', model='existing-model')
         async def scenario():
-            result = await service.extract_from_bytes(b'image', 'lab.png', 'image/png')
+            result = await service.extract_from_bytes(synthetic_image(), 'lab.png', 'image/png')
             other = resilience.get_anthropic_guard('other-purpose')
             with pytest.raises(resilience.DependencyTimeoutError):
                 await other.call(lambda: asyncio.sleep(0.03))
@@ -662,6 +667,8 @@ def test_lab_reading_uses_its_own_budget_when_generic_ai_timeout_is_short(monkey
         resilience.reset_dependency_guards_for_tests()
 
 
+
+@pytest.mark.usefixtures("synthetic_privacy_ocr")
 def test_known_small_table_count_skips_unnecessary_second_provider_call():
     import json
     from app.domain.claude_lab_extraction_service import ClaudeLabExtractionService
@@ -675,12 +682,14 @@ def test_known_small_table_count_skips_unnecessary_second_provider_call():
     class Guard:
         async def call(self, operation): return await operation()
     service._guard = Guard()
-    result = asyncio.run(service.extract_from_bytes(b'image', 'lab.png', 'image/png'))
+    result = asyncio.run(service.extract_from_bytes(synthetic_image(), 'lab.png', 'image/png'))
     assert len(result.values) == 1
     create.assert_awaited_once()
     assert 'image_full_table_audit_retry' not in result.warnings
 
 
+
+@pytest.mark.usefixtures("synthetic_privacy_ocr")
 def test_missing_row_count_still_triggers_completeness_audit():
     import json
     from app.domain.claude_lab_extraction_service import ClaudeLabExtractionService
@@ -697,17 +706,20 @@ def test_missing_row_count_still_triggers_completeness_audit():
     class Guard:
         async def call(self, operation): return await operation()
     service._guard = Guard()
-    result = asyncio.run(service.extract_from_bytes(b'image', 'lab.png', 'image/png'))
+    result = asyncio.run(service.extract_from_bytes(synthetic_image(), 'lab.png', 'image/png'))
     assert [row.raw_parameter_name for row in result.values] == ['TSH', 'CRP']
     assert create.await_count == 2
     assert 'image_full_table_audit_retry' in result.warnings
 
 
+
+@pytest.mark.usefixtures("synthetic_privacy_ocr")
 def test_slow_audit_is_cancelled_without_discarding_first_rows(monkeypatch):
     import json
     import app.domain.claude_lab_extraction_service as reader
     from app.infrastructure.runtime_resilience import AsyncDependencyGuard
-    monkeypatch.setattr(reader, '_AUDIT_TIMEOUT_SECONDS', 0.01)
+    # The timeout now includes local privacy redaction before the SDK call.
+    monkeypatch.setattr(reader, '_AUDIT_TIMEOUT_SECONDS', 0.2)
     service = object.__new__(reader.ClaudeLabExtractionService)
     service._model = 'existing-model'
     cancelled = []
@@ -725,13 +737,14 @@ def test_slow_audit_is_cancelled_without_discarding_first_rows(monkeypatch):
     service._client = SimpleNamespace(messages=SimpleNamespace(create=create))
     service._guard = AsyncDependencyGuard('audit-test', timeout_seconds=0.5, queue_timeout_seconds=0.01,
                                           max_concurrency=1, failure_threshold=3, recovery_seconds=30)
-    result = asyncio.run(service.extract_from_bytes(b'image', 'lab.png', 'image/png'))
+    result = asyncio.run(service.extract_from_bytes(synthetic_image(), 'lab.png', 'image/png'))
     assert len(result.values) == 1
     assert result.values[0].raw_value == '2.1'
     assert result.overall_needs_review
     assert 'image_completeness_audit_failed' in result.warnings
     assert cancelled == [True]
     assert service._guard.snapshot()['in_flight'] == 0
+
 
 
 @pytest.mark.parametrize('timeout', [0, 29, 81, 180])

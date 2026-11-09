@@ -7,6 +7,8 @@ also upgrades photographed written reports after multimodal extraction.
 
 from __future__ import annotations
 
+from app.domain.privacy_gateway import PrivacyViolation
+
 import io
 import zipfile
 from dataclasses import replace
@@ -140,6 +142,8 @@ async def _persist_report_with_universal_reader(*args: Any, **kwargs: Any):
 
     try:
         review = await summarize_medical_report_text(payload.report_text)
+    except PrivacyViolation:
+        raise
     except Exception as exc:
         metadata = dict(report.metadata_json or {})
         metadata["universal_report_summary_status"] = "unavailable"
@@ -212,6 +216,8 @@ async def _enhance_report_document(review: RadiologyMediaReview | None) -> Radio
 
     try:
         clinical = await summarize_medical_report_text(visible_text)
+    except PrivacyViolation:
+        raise
     except Exception:
         return review
     if clinical is None:
