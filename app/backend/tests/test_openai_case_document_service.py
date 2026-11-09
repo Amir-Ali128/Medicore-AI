@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import pytest
+from tests.test_privacy_gateway import synthetic_image, synthetic_pdf
+pytestmark = pytest.mark.usefixtures("synthetic_privacy_ocr")
+
 import asyncio
 import json
 from types import SimpleNamespace
@@ -98,7 +102,7 @@ def test_pdf_page_is_read_without_fixed_section_requirements(monkeypatch) -> Non
 
     result = asyncio.run(
         case_reader.extract_case_documents_with_openai(
-            documents=[(b"%PDF-test", "application/pdf", "case.pdf")]
+            documents=[(synthetic_pdf(), "application/pdf", "case.pdf")]
         )
     )
 
@@ -112,7 +116,7 @@ def test_pdf_page_is_read_without_fixed_section_requirements(monkeypatch) -> Non
 
     parts = captured["input"][0]["content"]
     pdf = next(part for part in parts if part["type"] == "input_file")
-    assert pdf["filename"] == "case.pdf"
+    assert pdf["filename"] == "document.pdf"
     assert pdf["file_data"].startswith("data:application/pdf;base64,")
 
 
@@ -141,7 +145,7 @@ def test_image_page_is_supported(monkeypatch) -> None:
 
     asyncio.run(
         case_reader.extract_case_documents_with_openai(
-            documents=[(b"image", "image/jpeg", "page.jpg")]
+            documents=[(synthetic_image(), "image/jpeg", "page.jpg")]
         )
     )
     image = next(

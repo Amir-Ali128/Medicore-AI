@@ -1,3 +1,4 @@
+import { privacyErrorMessage } from './privacyError';
 import { getAccessToken } from './authClient';
 import { assertCurrentPatientScope, capturePatientScope, type PatientScope } from './patientScope';
 
@@ -94,7 +95,7 @@ async function readErrorMessage(response: Response): Promise<string> {
   if (contentType.includes('application/json')) {
     try {
       const body = await response.json();
-      return typeof body?.detail === 'string' ? body.detail : JSON.stringify(body);
+      return privacyErrorMessage(body) || (typeof body?.detail === 'string' ? body.detail : JSON.stringify(body));
     } catch {
       return response.statusText;
     }

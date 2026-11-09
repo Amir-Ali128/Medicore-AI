@@ -55,3 +55,77 @@ KNOWN_UNITS = frozenset({"mg/dl", "mg/l", "g/dl", "g/l", "mmol/l", "umol/l", "u/
 DERIVED_FIELDS = ("is_derived", "derived", "derived_from")
 ANNOTATION_ONLY_CODES = frozenset(code for code in MESSAGES_TR if code.startswith(('source_flag_', 'differential_', 'absolute_percent_', 'protein_sum_', 'value_outside_', 'flag_without_', 'magnitude_', 'printed_reference_', 'consistency_unit_', 'report_', 'cross_read_')))
 ANNOTATION_FEATURES = ('lab_consistency_rules_enabled', 'report_consistency_enabled', 'lab_cross_read_enabled')
+CONCEPT_WINDOW = 70
+CLINIC_TIMEZONE = 'Europe/Istanbul'
+POLARITY_CLAUSE_SPLIT = r'[.;\n]+|,\s*(?:ancak|fakat)\s*'
+ORGAN_TERMS = {'kidney': ('bobrek', 'renal'), 'lung': ('akciger', 'pulmoner', 'lung'), 'ovary': ('over', 'ovary', 'ovaries'),
+               'testis': ('testis', 'testicle'), 'uterus': ('uterus', 'rahim'), 'prostate': ('prostat', 'prostate'), 'breast': ('meme', 'breast')}
+SEX_SPECIFIC_ORGANS = {'male': ('uterus','ovary'), 'female': ('prostate','testis')}
+SIDE_TERMS = {'right': ('sag','right'), 'left': ('sol','left')}
+REPORT_DATE_ORDER = (('exam_date','report_date'),('event_date','report_date'),('consultation_date','report_date'),('report_date','uploaded_at'),('document_date','uploaded_at'))
+
+RADIOLOGY_CONCEPT_MARKERS = {
+    "pneumothorax": ("pnömotoraks", "pnomotoraks", "pneumothorax"),
+    "pleural_effusion": ("plevral efüzyon", "plevral sivi", "pleural effusion"),
+    "airspace_opacity": ("opasite", "airspace opacity", "hava sahasi opasitesi"),
+    "consolidation": ("konsolidasyon", "consolidation"),
+    "atelectasis": ("atelektazi", "atelectasis"),
+    "cardiomegaly": ("kardiyomegali", "kalp silueti genis", "cardiomegaly"),
+    "pulmonary_edema": ("pulmoner ödem", "pulmoner odem", "pulmonary edema"),
+    "free_air": (
+        "serbest hava",
+        "subdiyafragmatik hava",
+        "subdiafragmatik hava",
+        "free intraperitoneal air",
+        "pneumoperitoneum",
+    ),
+    "bowel_dilatation": (
+        "barsak dilat",
+        "bağırsak dilat",
+        "bagirsak dilat",
+        "bowel dilat",
+        "dilated bowel",
+    ),
+    "air_fluid_levels": ("hava-sıvı", "hava sivi", "air-fluid", "air fluid"),
+    "fecal_burden": ("fekal yük", "fekal yuk", "dışkı yük", "diski yuk", "stool burden"),
+    "fracture": ("kırık", "kirik", "fracture"),
+    "dislocation": ("çıkık", "cikik", "dislocation"),
+    "foreign_body": ("yabancı cisim", "yabanci cisim", "foreign body"),
+    "calcification": ("kalsifik", "calcific", "calcification"),
+    "hydronephrosis": ("hidronefroz", "hydronephrosis"),
+}
+RADIOLOGY_NEGATION_MARKERS = (
+    " yok",
+    " izlenmiyor",
+    " gorulmuyor",
+    " secilmiyor",
+    " saptanmadi",
+    " mevcut degil",
+    " lehine bulgu yok",
+    " no evidence",
+    " not seen",
+    " absent",
+    " without evidence",
+    " negative for",
+)
+RADIOLOGY_HIGH_ATTENTION_CONCEPTS = {
+    "pneumothorax",
+    "free_air",
+    "fracture",
+    "dislocation",
+}
+
+CROSS_READ_DATE_FIELDS = ('event_date', 'specimen_date', 'measured_at', 'result_date', 'document_date')
+CROSS_READ_VALUE_FIELDS = ('raw_parameter_name','canonical_name','raw_value','normalized_value','unit','reference_text','reference_min','reference_max','reference_unit','source_flag') + CROSS_READ_DATE_FIELDS
+CROSS_READ_COMPLETENESS_RETRY_LIMIT = 1
+CROSS_READ_SMALL_TABLE_ROWS = 8
+CROSS_READ_TIMEOUT_SECONDS = 95.0
+# Existing cost analytics' published rates only. Unknown model/cache pricing stays null.
+READER_PRICES_PER_MILLION_USD = {'claude-sonnet-5': (2.0, 10.0)}
+TOKEN_PRICE_DIVISOR = 1_000_000
+
+CROSS_READ_MIN_REMAINING_SECONDS = 0.001
+READER_ANALYTICS_FIELDS = ('event_id','reader','page','recorded_at','elapsed_ms','extracted_rows','visible_rows','row_count_check','available','input_tokens','output_tokens','estimated_cost_usd','cost_status','calls')
+READER_MIGRATION_LOCK = 4382030
+READER_ANALYTICS_WRITE_TIMEOUT_SECONDS = 3.0
+READER_CALL_FIELDS = ('provider','model','input_tokens','output_tokens','estimated_cost_usd','cost_status')

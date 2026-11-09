@@ -24,3 +24,6 @@ numpy>=1.26,<3.0
 
 Pillow>=10.4,<13
 opencv-python-headless>=4.10,<5
+
+# Existing local OCR engine is mandatory for the strict image/privacy boundary.
+rapidocr-onnxruntime>=1.4.4,<2.0

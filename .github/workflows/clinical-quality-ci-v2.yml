@@ -37,12 +37,21 @@ jobs:
       - name: Run simplified backend tests
         run: |
           PYTHONPATH=. python -m pytest -q \
+            tests/test_privacy_gateway.py \
+            tests/test_privacy_canaries.py \
+            tests/test_openai_case_document_service.py \
+            tests/test_openai_lab_extraction_service.py \
+            tests/test_openai_radiology_second_reader.py \
+            tests/test_gemini_radiology_third_reader.py \
+            tests/test_lab_30s_budget.py \
             tests/test_simple_case.py \
             tests/test_patient_clinical_vitals.py \
             tests/test_patient_protocol.py \
             tests/test_case_management.py \
             tests/test_consistency_section.py \
             tests/test_lab_consistency_rules.py \
+            tests/test_report_consistency.py \
+            tests/test_lab_cross_read.py \
             tests/test_clinical_voice.py \
             tests/test_radiology_report_parser.py \
             tests/test_patient_isolation.py \

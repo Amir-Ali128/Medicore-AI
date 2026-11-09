@@ -6,6 +6,8 @@ doctor review. These endpoints never diagnose and never produce treatment advice
 
 from __future__ import annotations
 
+from app.domain.privacy_gateway import PrivacyViolation
+
 import uuid
 
 from fastapi import APIRouter, HTTPException, status
@@ -52,6 +54,8 @@ async def create_clinical_hypothesis(
     try:
         repository.create(hypothesis)
         await session.commit()
+    except PrivacyViolation:
+        raise
     except Exception:
         await session.rollback()
         raise
@@ -134,6 +138,8 @@ async def delete_compact_clinical_hypotheses_for_analysis_run(
         for hypothesis in compact:
             await session.delete(hypothesis)
         await session.commit()
+    except PrivacyViolation:
+        raise
     except Exception:
         await session.rollback()
         raise
@@ -169,6 +175,8 @@ async def delete_source_only_compact_hypotheses_for_patient(
         for hypothesis in compact:
             await session.delete(hypothesis)
         await session.commit()
+    except PrivacyViolation:
+        raise
     except Exception:
         await session.rollback()
         raise

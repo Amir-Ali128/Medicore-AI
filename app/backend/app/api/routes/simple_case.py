@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.domain.privacy_gateway import PrivacyViolation
+
 import io
 import hashlib
 import json
@@ -162,6 +164,8 @@ def _parse_measured_at(value):
 def _extract_pdf_text(content: bytes) -> str:
     try:
         reader = PdfReader(io.BytesIO(content))
+    except PrivacyViolation:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=400, detail="PDF dosyası okunamadı.") from exc
 
@@ -539,7 +543,7 @@ async def get_saved_simple_case(
         await validate_source_metadata(session, patient_id=patient_id, metadata=saved_case)
         try:
             restored = _restore_case_input(saved_case)
-            if getattr(get_settings(), 'lab_consistency_rules_enabled', False):
+            if getattr(get_settings(), 'lab_consistency_rules_enabled', False) or getattr(get_settings(), 'report_consistency_enabled', False):
                 from app.domain.lab_consistency_rules import annotate_request_with_database
                 restored = await annotate_request_with_database(restored, session)
             saved_case = normalize_simple_case(restored).model_dump(mode="json")
@@ -575,7 +579,7 @@ async def get_saved_simple_case(
 async def normalize_case(payload: SimpleCaseRequest) -> SimpleCaseResponse:
     """Normalize source data and numeric ranges without clinical interpretation."""
 
-    if getattr(get_settings(), 'lab_consistency_rules_enabled', False):
+    if getattr(get_settings(), 'lab_consistency_rules_enabled', False) or getattr(get_settings(), 'report_consistency_enabled', False):
         from app.domain.lab_consistency_rules import annotate_request
         payload = annotate_request(payload)
     return normalize_simple_case(payload)
@@ -594,12 +598,14 @@ async def ai_interpret_case(
         payload, session, current_user, raw_payload=await request.json(),
     )
     try:
-        if getattr(get_settings(), 'lab_consistency_rules_enabled', False):
+        if getattr(get_settings(), 'lab_consistency_rules_enabled', False) or getattr(get_settings(), 'report_consistency_enabled', False):
             from app.domain.lab_consistency_rules import annotate_request_with_database
             payload = await annotate_request_with_database(payload, session)
         result = await interpret_simple_case(payload)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except PrivacyViolation:
+        raise
     except Exception as exc:
         raise HTTPException(
             status_code=503,
@@ -640,12 +646,14 @@ async def ai_interpret_patient_case(
         payload, session, current_user, patient_id, raw_payload=await request.json(),
     )
     try:
-        if getattr(get_settings(), 'lab_consistency_rules_enabled', False):
+        if getattr(get_settings(), 'lab_consistency_rules_enabled', False) or getattr(get_settings(), 'report_consistency_enabled', False):
             from app.domain.lab_consistency_rules import annotate_request_with_database
             payload = await annotate_request_with_database(payload, session)
         result = await interpret_simple_case(payload)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except PrivacyViolation:
+        raise
     except Exception as exc:
         raise HTTPException(
             status_code=503,
@@ -683,6 +691,8 @@ async def _extract_lab_document_with_claude(
     try:
         service = ClaudeLabExtractionService(api_key=settings.anthropic_api_key, model=model)
         result = await service.extract_from_bytes(content, file_name, media_type)
+    except PrivacyViolation:
+        raise
     except Exception as exc:
         failure = reader_failure("Claude", exc)
         logger.warning("lab_reader_failed reader=Claude code=%s status=%s", failure['code'], failure['status'])
@@ -811,6 +821,7 @@ def _lab_inputs_from_extracted(
                     "reference_unit": row.get("reference_unit"),
                     "source_flag": row.get("source_flag"),
                     **({key: row[key] for key in ('is_derived', 'derived', 'derived_from') if key in row} if getattr(get_settings(), 'lab_consistency_rules_enabled', False) else {}),
+                    **({"reader_values": row.get("reader_values")} if getattr(get_settings(), "lab_cross_read_enabled", False) and "reader_values" in row else {}),
                     "raw_parameter_name": row.get("raw_parameter_name"),
                     "raw_value": row.get("raw_value"),
                     "source_sha256": row.get("source_sha256"),
@@ -847,6 +858,20 @@ async def _ingest_lab_upload(file: UploadFile, media_type: str, *, rotation: int
     file_name = file.filename or ("lab.pdf" if media_type == "application/pdf" else "lab-image.png")
 
     async def extract_page(page: DocumentPage) -> dict | None:
+        if getattr(get_settings(), 'lab_cross_read_enabled', False):
+            import asyncio
+            from app.domain.lab_cross_read import cross_read_page
+            from app.infrastructure.database.lab_reader_telemetry import persist_reader_event
+            async def local_reader():
+                return await asyncio.to_thread(
+                    try_fast_pdf_lab_case, content=page.native_pdf, media_type='application/pdf',
+                    file_name=file_name, source_type=SOURCE_FILE_UPLOAD,
+                )
+            return await cross_read_page(
+                page, local_reader=local_reader, usage_sink=persist_reader_event,
+                claude_reader=lambda: _extract_lab_document_with_claude(content=page.image,file_name=file_name,media_type='image/png'),
+                openai_reader=lambda: extract_lab_document_with_openai(content=page.image,file_name=file_name,media_type='image/png'),
+            )
         # A PDF page may have selectable text while the next page is a scan.
         if page.native_pdf is not None:
             import asyncio
@@ -894,8 +919,12 @@ async def _ingest_lab_upload(file: UploadFile, media_type: str, *, rotation: int
 @router.post("/labs/pdf", response_model=list[LabResultInput])
 async def upload_lab_pdf(
     current_user: Annotated[User, Depends(get_current_active_user)],
+    session: SessionDep,
+    patient_id: uuid.UUID | None = None,
     file: UploadFile = File(...),
 ) -> list[LabResultInput]:
+    if patient_id is not None:
+        await ensure_patient_access(session, patient_id=patient_id, current_user=current_user)
     media_type = (file.content_type or "").split(";", 1)[0].lower()
     if media_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Laboratuvar dosyası PDF olmalıdır.")
@@ -905,9 +934,13 @@ async def upload_lab_pdf(
 @router.post("/labs/image", response_model=list[LabResultInput])
 async def upload_lab_image(
     current_user: Annotated[User, Depends(get_current_active_user)],
+    session: SessionDep,
+    patient_id: uuid.UUID | None = None,
     file: UploadFile = File(...),
     rotation: int = Form(0),
 ) -> list[LabResultInput]:
+    if patient_id is not None:
+        await ensure_patient_access(session, patient_id=patient_id, current_user=current_user)
     media_type = (file.content_type or "").split(";", 1)[0].lower()
     if media_type not in {"image/jpeg", "image/png", "image/webp"}:
         raise HTTPException(status_code=400, detail="Laboratuvar fotoğrafı JPG, PNG veya WEBP olmalıdır.")
@@ -917,11 +950,15 @@ async def upload_lab_image(
 @router.post("/reports/pdf", response_model=MedicalReportInput)
 async def upload_report_pdf(
     current_user: Annotated[User, Depends(get_current_active_user)],
+    session: SessionDep,
+    patient_id: uuid.UUID | None = None,
     file: UploadFile = File(...),
     report_type: str = Form("Tıbbi Rapor"),
     body_region: str | None = Form(None),
 ) -> MedicalReportInput:
     """Extract text from a generic medical report PDF and add it to the case."""
+    if patient_id is not None:
+        await ensure_patient_access(session, patient_id=patient_id, current_user=current_user)
 
     if (file.content_type or "").split(";", 1)[0].lower() != "application/pdf":
         raise HTTPException(status_code=400, detail="Tetkik raporu PDF olmalıdır.")
@@ -995,11 +1032,15 @@ async def upload_report_pdf(
 @router.post("/reports/image", response_model=MedicalReportInput)
 async def upload_report_image(
     current_user: Annotated[User, Depends(get_current_active_user)],
+    session: SessionDep,
+    patient_id: uuid.UUID | None = None,
     file: UploadFile = File(...),
     report_type: str = Form("Tıbbi Rapor"),
     body_region: str | None = Form(None),
 ) -> MedicalReportInput:
     """Extract a photographed written medical report or review a medical image."""
+    if patient_id is not None:
+        await ensure_patient_access(session, patient_id=patient_id, current_user=current_user)
 
     media_type = (file.content_type or "").split(";", 1)[0].lower()
     if media_type not in {"image/jpeg", "image/png", "image/webp"}:
@@ -1021,6 +1062,8 @@ async def upload_report_image(
             modality="AUTO",
             body_part=body_region,
         )
+    except PrivacyViolation:
+        raise
     except Exception as exc:
         raise HTTPException(
             status_code=422,
@@ -1113,7 +1156,7 @@ async def save_case_for_patient(
         payload = payload.model_copy(update={
             "clinical": payload.clinical.model_copy(update=preserved),
         })
-    if getattr(get_settings(), 'lab_consistency_rules_enabled', False):
+    if getattr(get_settings(), 'lab_consistency_rules_enabled', False) or getattr(get_settings(), 'report_consistency_enabled', False):
         from app.domain.lab_consistency_rules import annotate_request_with_database
         payload = await annotate_request_with_database(payload, session)
     normalized = normalize_simple_case(payload)

@@ -7,6 +7,8 @@ labelled clinical block for the current report screen.
 
 from __future__ import annotations
 
+from app.domain.privacy_gateway import PrivacyViolation
+
 from dataclasses import replace
 from typing import Any
 
@@ -75,6 +77,8 @@ async def _enhance_report_document_structured(
 
     try:
         clinical = await summarize_medical_report_text(visible_text)
+    except PrivacyViolation:
+        raise
     except Exception:
         return review
     if clinical is None:

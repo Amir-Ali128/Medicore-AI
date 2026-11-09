@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.domain.privacy_gateway import PrivacyViolation
+
 import io
 import uuid
 from datetime import date
@@ -178,6 +180,8 @@ async def _ensure_report_access(report, session: SessionDep, current_user: User)
 def _extract_pdf_text(content: bytes) -> str:
     try:
         reader = PdfReader(io.BytesIO(content))
+    except PrivacyViolation:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=400, detail="PDF dosyası okunamadı.") from exc
 

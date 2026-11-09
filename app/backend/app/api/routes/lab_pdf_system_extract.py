@@ -20,6 +20,8 @@ Rules:
 
 from __future__ import annotations
 
+from app.domain.privacy_gateway import PrivacyViolation
+
 import hashlib
 import re
 import uuid
@@ -306,6 +308,8 @@ async def _load_system_parameter_catalog() -> list[dict[str, Any]]:
                 )
             )
             rows = result.mappings().all()
+    except PrivacyViolation:
+        raise
     except Exception:
         return []
 

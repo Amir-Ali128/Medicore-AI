@@ -10,6 +10,10 @@ review flag exists, the LLM is not called at all.
 
 from __future__ import annotations
 
+from app.domain.privacy_gateway import PrivacyViolation
+
+from app.infrastructure.ai_privacy_client import privacy_call
+
 import json
 import re
 import uuid
@@ -121,7 +125,7 @@ class ClaudeClinicalHypothesisService:
         warnings: list[str] = []
         ai_called = True
         try:
-            response = await self._client.messages.create(
+            response = await privacy_call(self._client.messages.create, provider='Anthropic', call_site=__name__,
                 model=self._model,
                 max_tokens=_MAX_OUTPUT_TOKENS,
                 temperature=0,
@@ -150,6 +154,8 @@ class ClaudeClinicalHypothesisService:
             )
             if payload is None:
                 warnings.append("Invalid compact AI JSON; deterministic fallback used.")
+        except PrivacyViolation:
+            raise
         except Exception:
             risk, summary = self._fallback_output(flags, request.language)
             warnings.append("AI call failed; deterministic fallback used.")
