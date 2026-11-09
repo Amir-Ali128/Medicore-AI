@@ -13,6 +13,7 @@ from app.infrastructure.database.models.doctor_review import DoctorReview
 from app.infrastructure.database.models.extracted_lab_value import ExtractedLabValue
 from app.infrastructure.database.models.extraction_job import ExtractionJob
 from app.infrastructure.database.models.lab_report import LabReport
+from app.infrastructure.database.models.lab_reader_event import LabReaderEvent
 from app.infrastructure.database.models.lab_result import LabResult
 from app.infrastructure.database.models.parameter_alias import ParameterAlias
 from app.infrastructure.database.models.patient import Patient
@@ -28,6 +29,7 @@ __all__ = [
     "ParameterAlias",
     "ReferenceRange",
     "LabReport",
+    "LabReaderEvent",
     "LabResult",
     "AnalysisRun",
     "ClinicalHypothesis",

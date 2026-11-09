@@ -7,7 +7,10 @@ not diagnose in this pass. Deterministic lab math/classification remains native 
 
 from __future__ import annotations
 
-import base64
+from app.domain.privacy_gateway import PrivacyViolation
+
+from app.infrastructure.ai_privacy_client import privacy_call, private_media
+
 import json
 from typing import Any
 
@@ -205,16 +208,15 @@ class OpenAICaseDocumentError(RuntimeError):
 
 
 def _media_block(*, content: bytes, media_type: str, file_name: str) -> dict[str, Any]:
-    encoded = base64.b64encode(content).decode("ascii")
     if media_type == "application/pdf":
         return {
             "type": "input_file",
             "filename": file_name or "case.pdf",
-            "file_data": f"data:application/pdf;base64,{encoded}",
+            "file_data": private_media(content, 'application/pdf', data_url=True),
         }
     return {
         "type": "input_image",
-        "image_url": f"data:{media_type};base64,{encoded}",
+        "image_url": private_media(content, media_type, data_url=True),
         "detail": "high",
     }
 
@@ -261,7 +263,7 @@ async def extract_case_documents_with_openai(
 
     client = AsyncOpenAI(api_key=settings.openai_api_key)
     try:
-        response = await client.responses.create(
+        response = await privacy_call(client.responses.create, provider='OpenAI', call_site=__name__,
             model=model,
             store=False,
             max_output_tokens=16000,
@@ -274,6 +276,8 @@ async def extract_case_documents_with_openai(
             }},
             input=[{"role": "user", "content": parts}],
         )
+    except PrivacyViolation:
+        raise
     except Exception as exc:
         raise OpenAICaseDocumentError(f"OpenAI vaka belge analizi başarısız: {exc}") from exc
 

@@ -8,7 +8,8 @@ non-diagnostic and physician-review-only.
 
 from __future__ import annotations
 
-import base64
+from app.infrastructure.ai_privacy_client import privacy_call, private_media
+
 
 from openai import AsyncOpenAI
 
@@ -128,12 +129,9 @@ Yalnızca şu JSON nesnesini döndür:
 }}
 """.strip()
 
-    image_url = (
-        f"data:{normalized_media_type};base64,"
-        + base64.b64encode(content).decode("ascii")
-    )
+    image_url = private_media(content, normalized_media_type, data_url=True)
     client = AsyncOpenAI(api_key=settings.openai_api_key)
-    response = await client.responses.create(
+    response = await privacy_call(client.responses.create, provider='OpenAI', call_site=__name__,
         model=model,
         store=False,
         max_output_tokens=2800,

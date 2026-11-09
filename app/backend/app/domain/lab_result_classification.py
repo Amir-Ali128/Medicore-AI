@@ -12,6 +12,7 @@ from decimal import Decimal, InvalidOperation
 import math
 import re
 from typing import Any, Iterable, Literal
+from app.domain.consistency_config import ANNOTATION_ONLY_CODES, ANNOTATION_FEATURES
 
 Status = Literal["LOW", "NORMAL", "HIGH", "UNKNOWN"]
 _NUMBER = r"[+-]?(?:\d+(?:[.,]\d+)?|[.,]\d+)(?:[eE][+-]?\d+)?"
@@ -148,7 +149,9 @@ structured bounds. No source flag or incoming status can override comparison.
         return result("UNKNOWN", "reference_unit_mismatch")
 
     reasons = (ingestion_reasons,) if isinstance(ingestion_reasons, str) else (ingestion_reasons or ())
-    if any(_UNSAFE_REASON.search(str(reason)) for reason in reasons):
+    from app.core.config import get_settings
+    annotation_active = any(getattr(get_settings(), name, False) for name in ANNOTATION_FEATURES)
+    if any(not (annotation_active and str(reason) in ANNOTATION_ONLY_CODES) and _UNSAFE_REASON.search(str(reason)) for reason in reasons):
         return result("UNKNOWN", "ingestion_review_required")
 
     match = _VALUE.fullmatch(str(value).strip().replace("≤", "<=").replace("≥", ">=").replace("−", "-"))

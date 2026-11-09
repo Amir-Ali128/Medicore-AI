@@ -1,3 +1,5 @@
+
+from tests.test_privacy_gateway import synthetic_image
 """Source dates survive extraction without becoming the file's upload date."""
 
 import asyncio
@@ -128,6 +130,7 @@ def test_malformed_optional_date_does_not_drop_other_dates_or_table():
     assert result.values[0].needs_review
 
 
+@pytest.mark.usefixtures("synthetic_privacy_ocr")
 def test_claude_completeness_merge_does_not_merge_different_specimens():
     def response(sample_date):
         text = json.dumps({"visible_row_count": 2, "values": [source_row(
@@ -141,5 +144,5 @@ def test_claude_completeness_merge_does_not_merge_different_specimens():
         response("2026-10-02"), response("2026-10-03"),
     ])))
     service._guard = SimpleNamespace(call=lambda operation: operation())
-    result = asyncio.run(service.extract_from_bytes(b"mock image", "lab.png", "image/png"))
+    result = asyncio.run(service.extract_from_bytes(synthetic_image(), "lab.png", "image/png"))
     assert [row.specimen_date for row in result.values] == [date(2026, 10, 2), date(2026, 10, 3)]

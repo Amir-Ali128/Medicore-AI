@@ -7,6 +7,8 @@ then hands the de-identified text to the normal universal report pipeline.
 
 from __future__ import annotations
 
+from app.domain.privacy_gateway import PrivacyViolation
+
 import io
 import uuid
 from datetime import date
@@ -43,6 +45,8 @@ def _native_pdf_text(content: bytes) -> str | None:
     """Return embedded text when present; image-only PDFs return None."""
     try:
         reader = PdfReader(io.BytesIO(content))
+    except PrivacyViolation:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=400, detail="PDF dosyası okunamadı.") from exc
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from urllib.parse import quote_plus
+from typing import Literal
 
 from pydantic import Field, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -29,6 +30,7 @@ class Settings(BaseSettings):
     app_name: str = "MediCore AI"
     environment: str = "development"
     debug: bool = False
+    ai_privacy_mode: Literal["strict"] = "strict"
     api_v1_prefix: str = "/api/v1"
 
     # Optional, operator-provisioned offline ASR assets. No runtime downloads.
