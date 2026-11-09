@@ -49,6 +49,12 @@ OCR, mevcut `local_ocr_lab_parser` motorudur. Eski OCR yardımcısının hata yu
 
 Bu katman DB'deki özgün klinik notu veya hasta belgesini kalıcı olarak temizlemeye çalışmaz; görevi dışarıya giden kopyayı temizlemektir. Arşivleme için mevcut `pdf_privacy.py` yolu ve frontend demo/dev maskelemesi ayrı kalır.
 
+## Python çalışma sürümü
+
+Python **3.12.14** repo kökündeki ve Render servis kökü `app/backend` altındaki `.python-version` dosyalarında sabittir. CI da repo kökündeki aynı dosyayı okur ve iki pinin eşitliğini kontrol eder. `rapidocr-onnxruntime` 1.4.x Python `<3.13` gerektirir; Render'ın değişebilen varsayılan 3.14 sürümüyle kurulum başarısız olur. Paketi kaldırmak veya gizlilik denetimini atlamak çözüm değildir.
+
+Render'ın açık `PYTHON_VERSION` ortam değişkeni `.python-version` dosyasından önceliklidir. Bu düzeltmede servis ortam değişkenleri değiştirilmedi; hata logunda kullanılan sürüm zaten `(default)` olarak belirtiliyordu.
+
 ## Hasta bağlamı ve erişim
 
 `ai_privacy_context.py::load_patient_identifiers` mevcut Patient alanlarını ve kimlik metadata alanlarını kullanır; klinik notu bütünüyle kimlik listesine katmaz. İstek bağımlılığı path/query/form/JSON içindeki mevcut hasta ve kaynak ilişkilerini çözebilir. İlk SDK denemesine kadar DB sorgusu yapmaz; AI kullanmayan ekranların erişim/hata akışı korunur. İki okuyucu aynı istek oturumunda paralel DB sorgusu açmaz; ilk kimlik yüklemesini paylaşır. `ContextVar` farklı kullanıcı/hasta isteklerini ayırır ve istek bitince sıfırlanır.
