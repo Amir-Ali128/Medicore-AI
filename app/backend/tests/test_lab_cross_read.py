@@ -1,3 +1,5 @@
+
+from tests.test_privacy_gateway import synthetic_image
 import asyncio
 from copy import deepcopy
 from datetime import datetime, UTC, timedelta
@@ -174,6 +176,7 @@ def test_saved_analytics_dedup_window_and_no_patient_text():
 
 
 @pytest.mark.parametrize('provider',['Claude','OpenAI'])
+@pytest.mark.usefixtures("synthetic_privacy_ocr")
 def test_real_provider_boundary_records_response_usage_without_extra_calls(monkeypatch,provider):
     import json
     async def scenario():
@@ -190,17 +193,18 @@ def test_real_provider_boundary_records_response_usage_without_extra_calls(monke
                 class Guard:
                     async def call(self,operation):return await operation()
                 service._guard=Guard()
-                await service.extract_from_bytes(b'image','lab.png','image/png')
+                await service.extract_from_bytes(synthetic_image(),'lab.png','image/png')
             else:
                 from app.domain import openai_lab_extraction_service as service
                 monkeypatch.setattr(service,'get_settings',lambda:SimpleNamespace(openai_api_key='fake',openai_lab_model='unknown-price',lab_extraction_max_bytes=1000000))
                 monkeypatch.setattr(service,'_client_for_key',lambda key:SimpleNamespace(responses=SimpleNamespace(create=create)))
-                await service.extract_lab_document_with_openai(content=b'image',media_type='image/png',file_name='lab.png')
+                await service.extract_lab_document_with_openai(content=synthetic_image(),media_type='image/png',file_name='lab.png')
         finally:reader_calls.reset(token)
         assert create.call_count==1 and len(calls)==1
         assert calls[0]['input_tokens']==100 and calls[0]['output_tokens']==20
         assert calls[0]['provider']==provider
     asyncio.run(scenario())
+
 
 
 @pytest.mark.parametrize('enabled',[False,True])

@@ -21,7 +21,8 @@ def fake_tckn():
 
 def synthetic_image():
     image=Image.new('RGB',(1000,260),'white')
-    font=ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',26)
+    try: font=ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',26)
+    except OSError: font=ImageFont.load_default(size=26)
     draw=ImageDraw.Draw(image)
     draw.text((30,30),'Hasta Adi: Ayse Yilmazoglu',fill='black',font=font)
     draw.text((30,120),'Hemoglobin 13.2 g/dL',fill='black',font=font)
@@ -90,7 +91,7 @@ def test_image_masks_identifier_pixels_and_removes_exif(monkeypatch):
         exif=Image.Exif();exif[270]=NAME;exif[34853]={1:'N',2:(1,1,1)}
         data=io.BytesIO();image.save(data,format='JPEG',exif=exif)
     calls=0
-    def ocr(image):
+    def ocr(image, **kwargs):
         nonlocal calls
         calls+=1
         return fake_tokens(image) if calls==1 else fake_tokens(image)[1:]
@@ -106,7 +107,7 @@ def test_scanned_pdf_rebuilt_without_original_text_layer(monkeypatch):
     with pymupdf.open() as pdf:
         page=pdf.new_page(width=1000,height=260);page.insert_image(page.rect,stream=synthetic_image());original=pdf.tobytes()
     # The synthetic document is enlarged 2.5x by rasterization.
-    def ocr(image):
+    def ocr(image, **kwargs):
         from app.domain.local_ocr_lab_parser import OcrToken
         scale=image.width/1000
         tokens=[OcrToken(t.text,t.score,t.x*scale,t.y*scale,t.width*scale,t.height*scale) for t in fake_tokens(image)]
@@ -138,3 +139,15 @@ def test_dates_and_strict_configuration():
     assert Settings(_env_file=None).ai_privacy_mode=='strict'
     for mode in ('off','debug','permissive'):
         with pytest.raises(ValidationError):Settings(_env_file=None,ai_privacy_mode=mode)
+
+
+def test_real_offline_ocr_masks_synthetic_identifier_without_network():
+    # RapidOCR loads the bundled ONNX weights; no provider/client is constructed.
+    result=sanitize_image(synthetic_image(),'image/png',known_identifiers=[NAME])
+    with Image.open(io.BytesIO(result)) as image:
+        assert max(image.getpixel((200,50)))<10
+        assert not image.getexif()
+
+
+def test_ambiguous_identity_line_with_lab_value_blocks_instead_of_erasing_clinical_data():
+    with pytest.raises(PrivacyViolation):sanitize_text('Hasta Adı: Ayşe Yılmazoğlu Hemoglobin 13.2 g/dL')

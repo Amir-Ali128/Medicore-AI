@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import pytest
+from tests.test_privacy_gateway import synthetic_image, synthetic_pdf
+pytestmark = pytest.mark.usefixtures("synthetic_privacy_ocr")
+
 import asyncio
 import json
 from types import SimpleNamespace
@@ -74,7 +78,7 @@ def test_openai_second_reader_uses_stateless_responses_image_input(monkeypatch) 
 
     result = asyncio.run(
         openai_reader.review_radiology_media_openai(
-            content=b"fake-image",
+            content=synthetic_image(),
             media_type="image/png",
             modality="XRAY",
             body_part="CHEST",
@@ -111,7 +115,7 @@ def test_openai_second_reader_is_optional_when_key_is_missing(monkeypatch) -> No
 
     result = asyncio.run(
         openai_reader.review_radiology_media_openai(
-            content=b"fake-image",
+            content=synthetic_image(),
             media_type="image/jpeg",
             modality="XRAY",
             body_part="CHEST",
