@@ -41,3 +41,6 @@ Thumbs.db
 uploads/
 tmp/
 temp/
+
+# Prepared public ASR weights stay out of Git.
+.voice_models/

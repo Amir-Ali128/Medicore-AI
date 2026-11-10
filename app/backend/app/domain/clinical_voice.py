@@ -8,6 +8,7 @@ from threading import Lock
 from time import monotonic
 
 import numpy as np
+from app.infrastructure.local_model_resources import model_lock, activate_model, register_model
 
 SAMPLE_RATE = 16_000
 MAX_AUDIO_SECONDS = 15
@@ -82,10 +83,42 @@ class OfflineTurkishRecognizer:
         self._model = None
         self._model_path: str | None = None
 
+    def prepare(self, model_path: str | None) -> None:
+        """Validate/warm a local model during startup without any patient audio."""
+        if not voice_ready(model_path):
+            raise VoiceUnavailable()
+        with model_lock, self._lock:
+            activate_model("voice")
+            self._load_model(model_path)
+
+    def release(self):
+        with self._lock:
+            self._model = None
+            self._model_path = None
+
+    def _load_model(self, model_path: str | None) -> None:
+        if self._model is None or self._model_path != model_path:
+            import onnxruntime
+
+            onnxruntime.disable_telemetry_events()
+            from faster_whisper import WhisperModel
+
+            # A real local directory plus local_files_only prevents the
+            # library's model-name/network fallback, even on a cache miss.
+            self._model = WhisperModel(str(Path(model_path).resolve()), device="cpu", compute_type="int8",
+                                       cpu_threads=2, num_workers=1, local_files_only=True)
+            if "tr" not in self._model.supported_languages:
+                self._model = None
+                raise VoiceUnavailable()
+            self._model_path = model_path
+
     def transcribe(self, data: bytes, model_path: str | None) -> dict:
         if not voice_ready(model_path):
             raise VoiceUnavailable()
+        if not model_lock.acquire(blocking=False):
+            raise VoiceBusy()
         if not self._lock.acquire(blocking=False):
+            model_lock.release()
             raise VoiceBusy()
         try:
             samples = decode_bounded_audio(data)
@@ -93,20 +126,8 @@ class OfflineTurkishRecognizer:
             # Suppress the common silence hallucination case before inference.
             if duration < 0.25 or float(np.sqrt(np.mean(samples ** 2))) < 0.001:
                 return {"text": "", "duration_seconds": round(duration, 3), "language": "tr"}
-            if self._model is None or self._model_path != model_path:
-                import onnxruntime
-
-                onnxruntime.disable_telemetry_events()
-                from faster_whisper import WhisperModel
-
-                # A real local directory plus local_files_only prevents the
-                # library's model-name/network fallback, even on a cache miss.
-                self._model = WhisperModel(str(Path(model_path).resolve()), device="cpu", compute_type="int8",
-                                           cpu_threads=2, num_workers=1, local_files_only=True)
-                if "tr" not in self._model.supported_languages:
-                    self._model = None
-                    raise VoiceUnavailable()
-                self._model_path = model_path
+            activate_model("voice")
+            self._load_model(model_path)
             segments, _info = self._model.transcribe(
                 samples, language="tr", task="transcribe", beam_size=3,
                 temperature=0, condition_on_previous_text=False, vad_filter=True,
@@ -119,6 +140,9 @@ class OfflineTurkishRecognizer:
             return {"text": text, "duration_seconds": round(duration, 3), "language": "tr", "needs_review": review}
         finally:
             self._lock.release()
+            model_lock.release()
 
 
 recognizer = OfflineTurkishRecognizer()
+
+register_model("voice", recognizer.release)

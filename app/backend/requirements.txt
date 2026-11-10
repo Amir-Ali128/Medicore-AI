@@ -27,3 +27,6 @@ opencv-python-headless>=4.10,<5
 
 # Existing local OCR engine is mandatory for the strict image/privacy boundary.
 rapidocr-onnxruntime>=1.4.4,<2.0
+
+# Local ASR runtime; pinned model assets are prepared before requests are served.
+-r requirements-voice.txt

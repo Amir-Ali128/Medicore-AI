@@ -1,2 +1,2 @@
-# Optional offline ASR; not added to the live application's default install.
+# Local CPU ASR. This file is included by the default backend requirements.
 faster-whisper==1.2.1

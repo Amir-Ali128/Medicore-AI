@@ -11,6 +11,7 @@ from app.domain.clinical_voice import (
     VoiceUnavailable, recognizer, voice_ready,
 )
 from app.infrastructure.database.models.user import User
+from app.domain.voice_model_assets import effective_voice_model_path
 
 router = APIRouter(prefix="/clinical-voice", tags=["clinical-voice"])
 _User = Annotated[User, Depends(get_current_active_user)]
@@ -18,7 +19,7 @@ _User = Annotated[User, Depends(get_current_active_user)]
 
 @router.get("/capabilities")
 async def capabilities(_user: _User) -> dict:
-    return {"ready": voice_ready(get_settings().clinical_voice_model_path),
+    return {"ready": voice_ready(effective_voice_model_path(get_settings().clinical_voice_model_path)),
             "language": "tr", "processing": "medicore-server-offline",
             "max_audio_seconds": MAX_AUDIO_SECONDS}
 
@@ -32,7 +33,7 @@ async def transcribe(request: Request, response: Response, _user: _User) -> dict
     length = request.headers.get("content-length", "")
     if length.isdigit() and int(length) > MAX_AUDIO_BYTES:
         raise HTTPException(413, "Ses parçası çok büyük; daha kısa bir kayıt kullanın.")
-    path = get_settings().clinical_voice_model_path
+    path = effective_voice_model_path(get_settings().clinical_voice_model_path)
     if not voice_ready(path):
         raise HTTPException(503, "Yerel Türkçe ses modeli henüz hazırlanmadı. Metni elle girebilirsiniz.")
     data = bytearray()

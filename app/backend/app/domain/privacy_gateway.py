@@ -188,8 +188,10 @@ def _ocr_tokens(image, *, allow_empty: bool = False):
     """Call the existing local engine directly; its legacy helper swallows errors."""
     import numpy as np
     from app.domain.local_ocr_lab_parser import _ocr_engine, _tokens_from_result, _ocr_engine_lock
+    from app.infrastructure.local_model_resources import model_lock, activate_model
     try:
-        with _ocr_engine_lock:
+        with model_lock, _ocr_engine_lock:
+            activate_model("ocr")
             tokens = _tokens_from_result(_ocr_engine()(np.array(image)))
     except Exception: raise PrivacyViolation() from None
     if (not tokens and not allow_empty) or any(token.score < MIN_OCR_CONFIDENCE for token in tokens): raise PrivacyViolation()

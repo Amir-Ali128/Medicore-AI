@@ -87,7 +87,7 @@ Bilerek ayrı kalan yollar:
 
 - `claude_usage_runtime` saf bir usage proxy'sidir; zaten temizlenmiş `*args/**kwargs` ile SDK'ya iletir, yeni prompt/medya oluşturmaz.
 - `claude_sonnet5_compat_runtime` yalnız sampling/thinking uyumluluk parametrelerini düzenler; temizlenmiş isteğe ham klinik veri eklemez.
-- `clinical_voice` yerel/offline ASR kullanır, ses veya transkript harici sağlayıcıya gitmez; değiştirilmedi.
+- `clinical_voice` yerel/offline ASR kullanır, ses veya transkript harici sağlayıcıya gitmez. Sunucu hazırlığında yalnız sabit revizyon/hash ile doğrulanan kamuya açık model yazılımı indirilir; bu işlem hasta girdisi almaz ve transkripsiyon endpointinde çalışmaz.
 - `analytics.py` içindeki opt-in IP geolocation HTTP istemcisi AI/patient document transport değildir; değiştirilmedi.
 - Yerel deterministik parser, OCR, sınıflama ve arşiv işlemleri dış sağlayıcı çağrısı değildir.
 
