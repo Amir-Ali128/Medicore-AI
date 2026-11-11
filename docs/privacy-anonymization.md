@@ -118,3 +118,26 @@ CI listesine iki gizlilik dosyası ve ilgili eski sağlayıcı regresyonları ek
 Tüm eski testleri birlikte toplama denemesinde önceden bulunan dört collection hatası vardır: `test_combined_case_import.py`, `test_lab_image_extraction.py`, `test_patient_lab_history.py`, `test_universal_lab_ingestion.py`. Başlangıç commit'i `1f96eb1` de `native_lab_engine` / `canonical_native_trust` modüllerini içermez. Bu dört dosya ayrıldığında altı eski hata kalır: `test_claude_possibility_review_runtime`, `test_clinical_ai_performance`, `test_lab_pdf_system_extract_runtime` (iki test), `test_radiology_report_safety`, `test_report_type_inference`. Aynı altı hata temiz başlangıç checkout'ında da tekrarlandı (**580 passed / 6 failed**); gizlilik öncesi mevcut duruma aitler. Kaldırılmış native pipeline bu görev için geri getirilmedi ve klinik çıktılar bu testleri yeşile çevirmek amacıyla değiştirilmedi.
 
 Son yerel doğrulama (9 Kasım 2026): genişletilmiş aktif CI listesindeki **510 backend testi** başarılı; bunun **46** tanesi gizlilik/gateway canary testidir. Frontend'de **132 test**, TypeScript kontrolü ve Vite production build başarılı. Mevcut passlib/crypt ve frontend paket boyutu uyarıları kontrolü engellemedi. Sağlayıcı istemcileri ve DB oturumları taklit edildi; gerçek yerel OCR modeli yalnız sentetik görüntüde çalıştırıldı. Ücretli AI çağrısı, canlı veritabanı sorgusu/migration, ortam değişkeni değişikliği veya deploy yapılmadı.
+
+## OCR bellek sınırlandırması (2026-11-11)
+
+PDF yüklemelerinden hemen sonra canlı süreç iki kez yeniden başladı (11:53:45
+ve 11:55:24 Türkiye saati). 30 saniyelik metrikler kısa tepeyi yakalamadı;
+bellek taşması olasılığı yerel yeniden üretimdeki yüksek OCR belleğiyle tutarlı.
+RapidOCR'nin varsayılan `min` ölçeklemesi dar görselleri büyütüyor, büyük sayfaları
+ise tam boyutta tek çıkarımda işliyordu.
+
+Yerel OCR artık kaynak çözünürlüğünü düşürmeden tam genişlikte, yarı örtüşen
+şeritler kullanır. Her çağrı en çok 262144 kaynak piksel içerir; otomatik büyütme
+ve geniş şeritlere boşluk ekleme kapalıdır. Algılama/okuma aynı yerel modelleri
+kullanır; okuma batch'i 1'dir. Koordinatlar özgün sayfaya taşınır, aynı metnin
+örtüşen kutuları tekilleştirilir. Farklı okunan değerler sessizce seçilmez.
+Kesilmiş satırın tam karşılığı yoksa veya genişlik 3200 pikseli aşıyorsa güvenli
+hata verilir; Privacy Gateway geçilemez. PDF raster kopyaları azaltıldı;
+maskeleme sonrası tam çözünürlükte yeniden oluşturma ve ikinci OCR kontrolü sürer.
+
+Doğrulama: 534 aktif backend testi geçti. Gerçek yerel modelle sentetik A4 tarama
+maskelendi ve klinik satırlar korundu; tepe RSS yaklaşık 469 MiB oldu. Önceki
+ses→OCR→ses denemesi yaklaşık 714 MiB iken sınırlı OCR ile yaklaşık 444 MiB oldu.
+Bu sayılar belirli sentetik girdilerdir; tüm belgeler/eşzamanlı yük için 512 MiB
+kapasite garantisi değildir. Ücretli plan veya ortam değişkeni değiştirilmedi.

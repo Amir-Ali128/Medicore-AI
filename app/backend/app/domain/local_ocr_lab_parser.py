@@ -148,7 +148,13 @@ def _ocr_engine():
     from rapidocr_onnxruntime import RapidOCR
 
     # Model initialization is expensive; keep a single process-local instance.
-    return RapidOCR(intra_op_num_threads=1, inter_op_num_threads=1)
+    from app.infrastructure.bounded_local_ocr import BoundedLocalOCR
+    return BoundedLocalOCR(RapidOCR(
+        intra_op_num_threads=1, inter_op_num_threads=1,
+        det_limit_type="max", det_limit_side_len=4096,
+        max_side_len=4096, width_height_ratio=100,
+        rec_batch_num=1, cls_batch_num=1,
+    ))
 
 
 register_model("ocr", _ocr_engine.cache_clear)
