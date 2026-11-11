@@ -13,7 +13,7 @@ from typing import Any
 from app.domain.canonical_lab_model import SourceContext, build_canonical_case, content_sha256
 from app.domain.lab_document_normalizer import DocumentPage, normalize_document
 from app.domain.lab_document_errors import LabDocumentReadError
-from app.domain.lab_result_classification import normalize_lab_unit
+from app.domain.lab_result_classification import normalize_lab_unit, parse_lab_observation
 
 CONTRACT = 'medicore-lab-document-ingestion-v2'
 INGESTION_TIMEOUT_SECONDS = 300.0
@@ -58,20 +58,25 @@ def validate_merge(rows: list[RawLabRow], source: SourceContext) -> dict[str, An
             reasons.append('missing_parameter_name')
         if value is None or value == '':
             reasons.append('missing_observed_value')
-        if not _text(row.get('unit')):
-            reasons.append('missing_unit')
         numeric = row.get('normalized_value')
+        observed = parse_lab_observation(value, row.get('unit'))
+        if not _text(row.get('unit')) and not observed.inline_unit:
+            reasons.append('missing_unit')
+        if observed.error in ('observed_unit_mismatch', 'unverified_observed_unit'):
+            reasons.append(observed.error)
         if numeric is not None:
-            raw_match = re.fullmatch(r'[<>]=?\s*(-?\d+(?:[.,]\d+)?)|(-?\d+(?:[.,]\d+)?)', _text(value))
-            try:
-                if not math.isfinite(float(numeric)):
-                    raise ValueError()
-                if raw_match and float((raw_match.group(1) or raw_match.group(2)).replace(',', '.')) != float(numeric):
-                    reasons.append('numeric_value_conflict')
-                    row['normalized_value'] = None
-            except (ValueError, TypeError):
+            row['reader_normalized_value'] = str(numeric)
+            supplied = parse_lab_observation(numeric)
+            if supplied.error or supplied.comparator:
                 reasons.append('invalid_numeric_value')
                 row['normalized_value'] = None
+            elif observed.number is None or observed.number != supplied.number:
+                reasons.append('numeric_value_conflict')
+                row['normalized_value'] = None
+            else:
+                row['normalized_value'] = float(observed.number) if not observed.comparator else None
+        elif observed.number is not None and not observed.comparator:
+            row['normalized_value'] = float(observed.number)
         if row.get('reference_unit') and row.get('unit') and normalize_lab_unit(row['reference_unit']) != normalize_lab_unit(row['unit']):
             reasons.append('reference_unit_mismatch')
         flag = _text(row.get('source_flag'))
@@ -107,7 +112,8 @@ def validate_merge(rows: list[RawLabRow], source: SourceContext) -> dict[str, An
         merged.append(row)
         group = (name.casefold(), _text(row.get('unit')).casefold(),
                  _text(row.get('measured_at')), _text(row.get('event_date')),
-                 _text(row.get('specimen_date')), _text(row.get('result_date')))
+                 _text(row.get('specimen_date')), _text(row.get('result_date')),
+                 _text(row.get('document_date')))
         groups.setdefault(group, []).append(row)
     for group in groups.values():
         if len(group) > 1:
@@ -116,7 +122,7 @@ def validate_merge(rows: list[RawLabRow], source: SourceContext) -> dict[str, An
                 row['ingestion_reasons'].append('conflicting_or_repeated_observation')
     case = build_canonical_case(source=source, rows=merged, default_confidence=0.85)
     for canonical, row in zip(case['labs'], merged):
-        canonical.update(reference_unit=row.get('reference_unit'), source_flag=row['source_flag'], source_row=row['source_row'],
+        canonical.update(reader_normalized_value=row.get('reader_normalized_value'), reference_unit=row.get('reference_unit'), source_flag=row['source_flag'], source_row=row['source_row'],
                          source_locations=row['source_locations'],
                          ingestion_reasons=list(dict.fromkeys(canonical['ingestion_reasons'] + row['ingestion_reasons'])))
         canonical['needs_review'] |= row['needs_review']

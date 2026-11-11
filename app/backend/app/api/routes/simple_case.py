@@ -407,7 +407,7 @@ async def _persist_simple_case_sources(
                     parameter_code=None,
                     canonical_name=item.test_name,
                     raw_value=None if item.value is None else str(item.value),
-                    normalized_value=_decimal_or_none(item.value),
+                    normalized_value=_decimal_or_none(item.normalized_value),
                     unit=item.unit,
                     reference_min=_decimal_or_none(item.reference_low),
                     reference_max=_decimal_or_none(item.reference_high),
@@ -441,6 +441,10 @@ async def _persist_simple_case_sources(
                             if item.reference_details is not None
                             else None
                         ),
+                        "normalized_value": item.normalized_value,
+                        "value_comparator": item.value_comparator,
+                        "value_limit": item.value_limit,
+                        "parsed_unit": item.parsed_unit,
                         "classification_method": "deterministic_source_reference",
                     },
                 )
@@ -824,6 +828,7 @@ def _lab_inputs_from_extracted(
                     **({"reader_values": row.get("reader_values")} if getattr(get_settings(), "lab_cross_read_enabled", False) and "reader_values" in row else {}),
                     "raw_parameter_name": row.get("raw_parameter_name"),
                     "raw_value": row.get("raw_value"),
+                    "reader_normalized_value": row.get("reader_normalized_value"),
                     "source_sha256": row.get("source_sha256"),
                     "source_locations": row.get("source_locations", []),
                     "ingestion_reasons": row.get("ingestion_reasons", []),
@@ -846,6 +851,8 @@ def _lab_inputs_from_extracted(
         "status": lab.status, "reference_low": lab.reference_low,
         "reference_high": lab.reference_high, "raw_reference": lab.raw_reference,
         "classification_reason": lab.classification_reason,
+        "normalized_value": lab.normalized_value, "value_comparator": lab.value_comparator,
+        "value_limit": lab.value_limit, "parsed_unit": lab.parsed_unit,
     }) for row, lab in zip(rows, normalized.labs)]
 
 

@@ -143,6 +143,11 @@ def _build_case_payload(payload: SimpleCaseRequest) -> dict[str, Any]:
             {
                 "test_name": item.test_name,
                 "value": item.value,
+                "raw_value": item.value,
+                "normalized_value": item.normalized_value,
+                "value_comparator": item.value_comparator,
+                "value_limit": item.value_limit,
+                "parsed_unit": item.parsed_unit,
                 "unit": item.unit,
                 "reference_text": item.reference_text,
                 "reference_source": item.reference_source,
@@ -154,6 +159,10 @@ def _build_case_payload(payload: SimpleCaseRequest) -> dict[str, Any]:
                 "source_flag": item.source_metadata.get("source_flag"),
                 "needs_review": item.source_metadata.get("needs_review", False),
                 "ingestion_reasons": item.source_metadata.get("ingestion_reasons", []),
+                "source_metadata": {key: item.source_metadata[key] for key in (
+                    "source_page", "source_row", "extraction_confidence",
+                    "needs_review", "ingestion_reasons", "reader_values", "reader_normalized_value",
+                ) if key in item.source_metadata},
                 "measured_at": item.measured_at.isoformat()
                 if hasattr(item.measured_at, "isoformat")
                 else item.measured_at,

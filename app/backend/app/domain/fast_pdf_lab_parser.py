@@ -15,6 +15,7 @@ from typing import Any
 
 from app.domain.canonical_lab_model import SourceContext, build_canonical_case, content_sha256
 from app.domain.document_dates import extract_document_dates
+from app.domain.lab_result_classification import parse_lab_observation, parse_source_reference
 
 FAST_PDF_WARNING = "fast_pdf_local_parser_v1"
 ENABIZ_TABLE_WARNING = "enabiz_native_table_parser_v2"
@@ -22,13 +23,6 @@ _MIN_TEXT_CHARS = 180
 _MIN_ENABIZ_ROWS = 3
 _MIN_GENERIC_ROWS = 5
 
-_NUMERIC_VALUE_RE = re.compile(r"^\s*([<>]?)\s*(-?\d+(?:[.,]\d+)?)\s*$")
-_RANGE_RE = re.compile(
-    r"^\s*(-?\d+(?:[.,]\d+)?)\s*[-–—]\s*(-?\d+(?:[.,]\d+)?)\s*$"
-)
-_ONE_SIDED_REFERENCE_RE = re.compile(
-    r"^\s*([<>]=?)\s*(-?\d+(?:[.,]\d+)?)\s*$"
-)
 _DATE_RE = re.compile(r"\b\d{2}\.\d{2}\.\d{4}\b")
 _TIME_RE = re.compile(r"\b\d{2}:\d{2}\b")
 
@@ -95,39 +89,18 @@ def _looks_like_enabiz(text: str, file_name: str) -> bool:
     return name_hint or content_hint or table_markers >= 3
 
 
-def _parse_numeric_value(raw_value: str) -> tuple[float | None, str | None]:
-    match = _NUMERIC_VALUE_RE.fullmatch(raw_value)
-    if not match:
-        return None, None
-    number = float(match.group(2).replace(",", "."))
-    comparator = match.group(1) or None
-    return number, comparator
+def _parse_numeric_value(raw_value: str, unit: str | None = None) -> tuple[float | None, str | None]:
+    parsed = parse_lab_observation(raw_value, unit)
+    return (float(parsed.number), parsed.comparator) if parsed.number is not None else (None, None)
 
 
-def _parse_reference(
-    reference_text: str,
-) -> tuple[float | None, float | None, str | None]:
+def _parse_reference(reference_text: str) -> tuple[float | None, float | None, str | None]:
     text = _clean_cell(reference_text)
-    if not text:
-        return None, None, None
-
-    range_match = _RANGE_RE.fullmatch(text)
-    if range_match:
-        return (
-            float(range_match.group(1).replace(",", ".")),
-            float(range_match.group(2).replace(",", ".")),
-            text,
-        )
-
-    one_sided = _ONE_SIDED_REFERENCE_RE.fullmatch(text)
-    if one_sided:
-        number = float(one_sided.group(2).replace(",", "."))
-        operator = one_sided.group(1)
-        if operator.startswith("<"):
-            return None, number, text
-        return number, None, text
-
-    return None, None, text
+    parsed = parse_source_reference(text)
+    if parsed.error:
+        return None, None, text or None
+    return (float(parsed.low) if parsed.low is not None else None,
+            float(parsed.high) if parsed.high is not None else None, text)
 
 
 def _merge_measured_at(current: str | None, cell: str) -> str | None:
@@ -203,21 +176,21 @@ def _parse_enabiz_table_data(
         if not name or not raw_value:
             continue
 
-        normalized_value, comparator = _parse_numeric_value(raw_value)
+        normalized_value, comparator = _parse_numeric_value(raw_value, unit)
         ref_min, ref_max, ref_text = _parse_reference(reference)
         qualitative = normalized_value is None
 
         row = {
             "raw_parameter_name": name,
             "raw_value": raw_value,
-            "normalized_value": normalized_value,
+            "normalized_value": normalized_value if not comparator else None,
             "unit": None if unit in {"", "---"} else unit,
             "reference_min": ref_min,
             "reference_max": ref_max,
             "reference_text": ref_text,
             "measured_at": current_measured_at,
             "source_page": page_number,
-            "value_type": "qualitative" if qualitative else "numeric",
+            "value_type": "censored" if comparator else "qualitative" if qualitative else "numeric",
             # Comparator values are not exact measurements; qualitative results
             # stay visible but remain on the review side of the trust boundary.
             "needs_review": qualitative or comparator is not None,

@@ -99,6 +99,11 @@ class LabResultInput(BaseModel):
     reference_high: float | None = None
     raw_reference: str | None = None
     classification_reason: str | None = None
+    # Recomputed from source fields; incoming cached values are not authoritative.
+    normalized_value: float | None = None
+    value_comparator: str | None = None
+    value_limit: float | None = None
+    parsed_unit: str | None = None
 
     @field_validator("value", mode="before")
     @classmethod
@@ -128,6 +133,11 @@ class LabResultOutput(BaseModel):
     reference_high: float | None = None
     raw_reference: str | None = None
     classification_reason: str | None = None
+    # Recomputed from source fields; incoming cached values are not authoritative.
+    normalized_value: float | None = None
+    value_comparator: str | None = None
+    value_limit: float | None = None
+    parsed_unit: str | None = None
 
 
 class MedicalReportInput(BaseModel):

@@ -331,3 +331,30 @@ def test_resaving_a_pre_upgrade_source_does_not_duplicate_its_rows(vaka1_client)
     with c.factory() as db:
         assert len(db.scalars(select(LabReport).where(LabReport.patient_id == c.a)).all()) == 1
         assert len(db.scalars(select(LabResult).where(LabResult.patient_id == c.a)).all()) == 1
+
+
+def test_verified_lab_formats_and_censored_limits_survive_real_save_reload(vaka1_client):
+    c=vaka1_client
+    payload={'clinical':{'sex':'female','age':40},'labs':[
+        {'test_name':'WBC','value':'14.8','unit':'10^9/L','source_reference':'Ref: 4.0–10.0'},
+        {'test_name':'CRP','value':'94 mg/L','unit':'mg/L','source_reference':'Reference: <5'},
+        {'test_name':'Creatinine','value':'0,91 mg/dL','unit':'mg/dL','source_reference':'Normal: 0.5–1.0','specimen_date':'2026-02-01'},
+        {'test_name':'Creatinine','value':'1.98 mg/dL','unit':'mg/dL','source_reference':'0.5–1.0','specimen_date':'2026-02-03'},
+        {'test_name':'AST','value':'31 U/L','unit':'U/L','source_reference':'<35'},
+        {'test_name':'Censored','value':'≤5 mg/L','unit':'mg/L','source_reference':'<5'},
+    ],'reports':[]}
+    for row in payload['labs']:row['source_metadata']={'patient_id':str(c.a),'source_file_name':'verified-labs.pdf'}
+    saved=save(c,c.a,payload)
+    assert [row['status'] for row in saved['labs']]==['HIGH','HIGH','NORMAL','HIGH','NORMAL','UNKNOWN']
+    detail=reopened(c)['simple_case']
+    assert detail['labs']==saved['labs']
+    assert [row['value'] for row in detail['labs']]==[row['value'] for row in payload['labs']]
+    assert detail['labs'][-1]['normalized_value'] is None
+    assert detail['labs'][-1]['value_comparator']=='<=' and detail['labs'][-1]['value_limit']==5
+    with c.factory() as db:
+        crp=db.scalar(select(LabResult).where(LabResult.patient_id==c.a,LabResult.raw_parameter_name=='CRP'))
+        assert crp.raw_value=='94 mg/L' and float(crp.normalized_value)==94
+        censored=db.scalar(select(LabResult).where(LabResult.patient_id==c.a,LabResult.raw_parameter_name=='Censored'))
+        assert censored.raw_value=='≤5 mg/L' and censored.normalized_value is None
+    again=save(c,c.a,{'clinical':detail['clinical'],'labs':detail['labs'],'reports':[]})
+    assert again['labs']==saved['labs']

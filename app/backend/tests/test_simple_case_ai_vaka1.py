@@ -301,3 +301,22 @@ def test_application_notice_cannot_hide_empty_clinical_section(mocked_provider):
     with pytest.raises(RuntimeError,match='HEKİM NOTU'):
         asyncio.run(simple_case_ai.interpret_simple_case(_vaka1_request()))
     assert mocked_provider.await_count==2
+
+
+def test_ai_serialization_has_original_and_parsed_observations_without_overriding_unknown():
+    payload=SimpleCaseRequest.model_validate({'labs':[
+        {'test_name':'CRP','value':'94 mg/L','unit':'mg/L','source_reference':'Reference: <5',
+         'specimen_date':'2026-02-01','source_metadata':{'source_page':2,'source_row':3}},
+        {'test_name':'Censored','value':'≤5 mg/L','unit':'mg/L','source_reference':'<5'},
+        {'test_name':'Qualitative','value':'Positive','source_reference':'Negative'},
+    ]})
+    before=payload.model_dump(mode='json')
+    rows=simple_case_ai._build_case_payload(payload)['labs']
+    assert rows[0]['raw_value']=='94 mg/L' and rows[0]['normalized_value']==94
+    assert rows[0]['raw_reference']=='Reference: <5' and rows[0]['reference_high']==5
+    assert rows[0]['status']=='HIGH' and rows[0]['source_metadata']['source_page']==2
+    assert rows[0]['specimen_date']=='2026-02-01'
+    assert rows[1]['normalized_value'] is None and rows[1]['value_limit']==5
+    assert rows[1]['value_comparator']=='<=' and rows[1]['status']=='UNKNOWN'
+    assert rows[2]['normalized_value'] is None and rows[2]['status']=='UNKNOWN'
+    assert payload.model_dump(mode='json')==before
