@@ -306,3 +306,22 @@ def test_printed_population_label_cannot_be_overridden_by_conflicting_structured
     case=SimpleCaseRequest.model_validate({'clinical':{'age':40,'sex':'male'},'labs':[{
         'test_name':'Test','value':.91,'source_references':[reference]}]})
     assert normalize_simple_case(case).labs[0].status=='UNKNOWN'
+
+
+@pytest.mark.parametrize(('value','unit','reference','expected','numeric'),[
+    ('%82','%','40–75','HIGH',82),
+    ('%37.1','%','36–46','NORMAL',37.1),
+    ('14.8 x10^9/L','10^9/L','4–10','HIGH',14.8),
+    ('282 ×10⁹/L','10^9/L','150–400','NORMAL',282),
+    ('68 mm/s','mm/s','<20','HIGH',68),
+])
+def test_source_percent_prefix_and_count_unit_typography_preserve_raw_scale(value,unit,reference,expected,numeric):
+    c=classify_lab_result(value=value,unit=unit,reference_text=reference)
+    assert c.status==expected and c.normalized_value==numeric
+    assert c.parsed_unit==unit
+
+
+def test_percent_prefix_cannot_override_a_conflicting_unit_or_mixed_value():
+    assert classify_lab_result(value='%82',unit='g/dL',reference_text='40–75').status=='UNKNOWN'
+    assert classify_lab_result(value='%95, 2 L/dk O2',unit='%',reference_text='90–100').status=='UNKNOWN'
+    assert classify_lab_result(value='68 mm/s',unit='mm/h',reference_text='<20').status=='UNKNOWN'
