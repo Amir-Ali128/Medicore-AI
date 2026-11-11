@@ -237,14 +237,20 @@ def _sanitize_image(content: bytes, media_type: str, known_identifiers: Sequence
     try:
         with Image.open(io.BytesIO(content)) as original:
             if original.width*original.height > MAX_PIXELS or getattr(original,'n_frames',1)!=1: raise PrivacyViolation()
-            oriented=ImageOps.exif_transpose(original).convert('RGBA')
-            image=Image.new('RGBA',oriented.size,'white');image.alpha_composite(oriented)
-            image=image.convert('RGB')
+            oriented=ImageOps.exif_transpose(original)
+            if oriented.mode in ('RGBA','LA') or 'transparency' in oriented.info:
+                rgba=oriented.convert('RGBA')
+                image=Image.new('RGB',rgba.size,'white')
+                image.paste(rgba,mask=rgba.getchannel('A'))
+                del rgba
+            else:
+                image=oriented.convert('RGB')
+            del oriented
         image,counts=_mask_image(image,known_identifiers)
         output=io.BytesIO()
         # Preserve declared format, but never copy original info/EXIF/ICC metadata.
-        clean=Image.frombytes('RGB',image.size,image.tobytes())
-        clean.save(output,format={'image/png':'PNG','image/jpeg':'JPEG','image/webp':'WEBP'}[media_type])
+        image.info.clear()
+        image.save(output,format={'image/png':'PNG','image/jpeg':'JPEG','image/webp':'WEBP'}[media_type])
         return output.getvalue(),counts
     except PrivacyViolation: raise
     except Exception: raise PrivacyViolation() from None
