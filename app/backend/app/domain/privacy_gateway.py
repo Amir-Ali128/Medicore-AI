@@ -265,9 +265,10 @@ def _sanitize_pdf(content: bytes, known_identifiers: Sequence[str]):
                 if page.get_images(full=True) or not page.get_text().strip():
                     scale=min(2.5,3200/max(page.rect.width,page.rect.height))
                     pix=page.get_pixmap(matrix=fitz.Matrix(scale,scale),alpha=False)
-                    image=Image.open(io.BytesIO(pix.tobytes('png'))).convert('RGB')
+                    image=Image.frombytes('RGB',(pix.width,pix.height),pix.samples)
+                    del pix
                     image,redactions=_mask_image(image,known_identifiers);counts.update(redactions)
-                    buffer=io.BytesIO();Image.frombytes('RGB',image.size,image.tobytes()).save(buffer,format='PNG')
+                    buffer=io.BytesIO();image.info.clear();image.save(buffer,format='PNG')
                     rebuilt=output.new_page(width=page.rect.width,height=page.rect.height)
                     rebuilt.insert_image(rebuilt.rect,stream=buffer.getvalue())
                     continue
