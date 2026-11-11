@@ -129,3 +129,20 @@ def normalize_document(content: bytes, media_type: str, *, rotation: int = 0) ->
                 result.native_pdf = single.tobytes()
             pages.append(result)
         return pages
+
+
+def provider_document(page: DocumentPage) -> tuple[bytes, str]:
+    """Keep text-only PDFs native; privacy_call still sanitizes all provider media.
+
+    Images/scans retain the raster path, including mixed image/text pages. Never
+    replace an image containing patient data with an incomplete text extraction.
+    """
+    if page.native_pdf is not None:
+        import pymupdf
+        try:
+            with pymupdf.open(stream=page.native_pdf, filetype='pdf') as document:
+                if len(document) and all(p.get_text().strip() and not p.get_images(full=True) for p in document):
+                    return page.native_pdf, 'application/pdf'
+        except (RuntimeError, ValueError):
+            pass
+    return page.image, 'image/png'
