@@ -14,7 +14,7 @@ import re
 from typing import Any
 
 from app.domain.canonical_lab_model import SourceContext, build_canonical_case, content_sha256
-from app.domain.document_dates import extract_document_dates
+from app.domain.document_dates import extract_document_dates, calendar_day
 from app.domain.lab_result_classification import parse_lab_observation, parse_source_reference
 
 FAST_PDF_WARNING = "fast_pdf_local_parser_v1"
@@ -228,6 +228,80 @@ def _extract_enabiz_table_rows(content: bytes) -> list[dict[str, Any]]:
         return []
 
 
+def _extract_source_reference_rows(content: bytes) -> list[dict[str, Any]]:
+    """Read explicit 3/4-column source tables, never diagnostic prose.
+
+    Unsupported lab layouts defer the entire local result to existing readers;
+    no partial table or inferred date/reference is returned as a complete read.
+    """
+    import pymupdf
+    names = {'TEST', 'TETKIK', 'TAHLIL', 'PARAMETRE'}
+    results = {'SONUC', 'RESULT', 'VALUE'}
+    references = {'REFERANS', 'REFERANS ARALIGI', 'REFERENCE', 'REFERENCE RANGE'}
+    units = {'BIRIM', 'UNIT'}
+    output = []
+    try:
+        with pymupdf.open(stream=content, filetype='pdf') as document:
+            for number, page in enumerate(document, 1):
+                if page.get_images(full=True):
+                    return []
+                dates = extract_document_dates(page.get_text() or '')
+                tables = [table.extract() for table in page.find_tables().tables]
+                document_days = {dates['document_date']} if dates.get('document_date') else set()
+                for cells in tables:
+                    if not cells or len(cells[0]) != 2 or _fold(_clean_cell(cells[0][0])) != 'BELGE':
+                        continue
+                    if not any(_fold(_clean_cell(row[0])) == 'BELGE TURU' for row in cells if len(row) == 2):
+                        continue
+                    for row in cells:
+                        if len(row) == 2 and _fold(_clean_cell(row[0])) == 'TARIH / SAAT':
+                            stamp = _clean_cell(row[1]).split()
+                            if stamp and (day := calendar_day(stamp[0])) is not None:
+                                document_days.add(day)
+                if len(document_days) > 1:
+                    return []
+                if document_days:
+                    dates['document_date'] = next(iter(document_days))
+                for cells in tables:
+                    if not cells:
+                        continue
+                    header = [_fold(_clean_cell(cell)) for cell in cells[0]]
+                    if not header or header[0] not in names:
+                        continue
+                    if len(header) not in (3, 4) or header[1] not in results or header[-1] not in references:
+                        return []
+                    if len(header) == 4 and header[2] not in units:
+                        return []
+                    for source_row in cells[1:]:
+                        if not any(_clean_cell(cell) for cell in source_row):
+                            continue
+                        if len(source_row) != len(header):
+                            return []
+                        name, value = map(_clean_cell, source_row[:2])
+                        if not name or not value:
+                            return []
+                        unit = _clean_cell(source_row[2]) if len(header) == 4 else None
+                        parsed = parse_lab_observation(value, unit)
+                        unit = unit or parsed.inline_unit
+                        raw_reference = _clean_cell(source_row[-1]) or None
+                        ref = parse_source_reference(raw_reference)
+                        output.append({
+                            'raw_parameter_name': name, 'raw_value': value,
+                            'normalized_value': float(parsed.number) if parsed.number is not None and not parsed.comparator else None,
+                            'unit': unit, 'reference_text': raw_reference,
+                            'reference_min': float(ref.low) if ref.low is not None else None,
+                            'reference_max': float(ref.high) if ref.high is not None else None,
+                            'source_page': number, 'measured_at': None,
+                            'needs_review': bool(parsed.error or parsed.comparator or ref.error),
+                            'confidence': .995,
+                            **{key: value.isoformat() for key, value in dates.items()
+                               if key in {'event_date', 'specimen_date', 'result_date', 'document_date'}},
+                        })
+    except (RuntimeError, ValueError, TypeError):
+        return []
+    return output
+
+
 def _canonical_rows(parsed_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for row in parsed_rows:
@@ -319,6 +393,18 @@ def try_fast_pdf_lab_case(
                 extraction_confidence=0.995,
                 default_confidence=0.995,
             )
+
+    source_rows = _extract_source_reference_rows(content)
+    if source_rows:
+        rows = _canonical_rows(source_rows)
+        preserve_explicit_dates(rows)
+        result = build_canonical_case(
+            source=source, rows=rows, warnings=[FAST_PDF_WARNING, 'source_reference_table_parser_v1',
+                                              f'local_parser_rows={len(rows)}'],
+            extraction_confidence=.995, default_confidence=.995,
+        )
+        result['visible_row_count'] = len(rows)
+        return result
 
     # Legacy deterministic parser remains useful for non-standard text PDFs.
     try:

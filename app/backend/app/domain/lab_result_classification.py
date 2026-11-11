@@ -66,7 +66,11 @@ def normalize_lab_unit(value: str | None) -> str | None:
     if not value or not str(value).strip():
         return None
     # Typography aliases only. Never silently convert different measurement units.
-    return re.sub(r"\s+", "", str(value)).casefold().replace("µ", "u").replace("μ", "u")
+    text = re.sub(r"\s+", "", str(value)).casefold().replace("µ", "u").replace("μ", "u")
+    # x/× and superscripts spell the unit scale; no measured value is rescaled.
+    text = re.sub(r'^x(?=10)', '', text).replace('×10', '10')
+    superscripts = str.maketrans('⁰¹²³⁴⁵⁶⁷⁸⁹', '0123456789')
+    return re.sub(r'10([⁰¹²³⁴⁵⁶⁷⁸⁹]+)', lambda match: '10^'+match[1].translate(superscripts), text)
 
 
 # Physical unit spellings only; this list supplies no medical reference values.
@@ -75,7 +79,7 @@ _INLINE_UNITS = frozenset(normalize_lab_unit(value) for value in (
     'ug/L', 'ug/dL', 'ug/mL', 'mmol/L', 'umol/L', 'mEq/L', 'mol/L',
     'U/L', 'IU/L', 'U/mL', 'IU/mL', 'mIU/L', 'uIU/mL', 'mU/L',
     '10^9/L', '10^12/L', '10^3/uL', '10^6/uL', '10³/uL', '10⁶/uL',
-    '10⁹/L', '10¹²/L', '/uL', 'cells/uL', 'fL', 'mm/h', 'mm/saat',
+    '10⁹/L', '10¹²/L', '/uL', 'cells/uL', 'fL', 'mm/h', 'mm/s', 'mm/saat',
     'mL/min', 'mL/min/1.73m2', 'mL/min/1.73m²', 'mmHg',
 ))
 
@@ -90,6 +94,9 @@ class ParsedObservation:
 
 def parse_lab_observation(value: Any, unit: str | None = None) -> ParsedObservation:
     text = str(value).strip().replace('≤', '<=').replace('≥', '>=').replace('−', '-')
+    prefix_percent = re.fullmatch(rf'(?P<op><=|>=|<|>)?\s*%\s*(?P<value>{_NUMBER})', text)
+    if prefix_percent:
+        text = (prefix_percent['op'] or '') + prefix_percent['value'] + ' %'
     match = _VALUE.fullmatch(text)
     if isinstance(value, bool) or match is None or _number(match['value']) is None:
         return ParsedObservation(None, error='invalid_observed_value')

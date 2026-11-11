@@ -800,3 +800,78 @@ def test_verified_inline_unit_does_not_create_false_missing_unit_review():
     row=output['labs'][0]
     assert row['unit'] is None and row['raw_value']=='94 mg/L'
     assert 'missing_unit' not in row['ingestion_reasons'] and row['normalized_value']==94
+
+
+def reference_table_pdf(headers, rows, *, add_unsupported=False, document_stamp=None):
+    """Synthetic ruled source geometry; no uploaded document is committed."""
+    with pymupdf.open() as doc:
+        page=doc.new_page()
+        page.insert_text((35,35),'Synthetic source report for deterministic laboratory extraction. '*3,fontsize=7)
+        def draw_table(top,columns,body):
+            xs=[35+i*min(160,(page.rect.width-70)/len(columns)) for i in range(len(columns)+1)]
+            for index,line in enumerate([columns,*body]):
+                for col,text in enumerate(line):
+                    page.insert_text((xs[col]+6,top+index*28+18),str(text),fontsize=10)
+            for x in xs:page.draw_line((x,top),(x,top+(len(body)+1)*28))
+            for index in range(len(body)+2):page.draw_line((xs[0],top+index*28),(xs[-1],top+index*28))
+        draw_table(100,headers,rows)
+        if add_unsupported:draw_table(430,['Test','03.02','04.02'],[['Creatinine','0.91','1.72 mg/dL']])
+        if document_stamp:draw_table(530,['Belge','01/02'],[['Tarih / Saat',document_stamp],['Belge turu','Laboratory']])
+        return doc.tobytes()
+
+
+def test_three_column_pdf_table_keeps_every_source_reference_without_provider_inference():
+    from app.domain.fast_pdf_lab_parser import try_fast_pdf_lab_case
+    rows=[['WBC','14.8 x10^9/L','4.0-10.0'],['Neutrophils','%82','40-75'],
+          ['CRP','94 mg/L','<5'],['Procalcitonin','0.42 ng/mL','<0.10'],
+          ['Creatinine','0.91 mg/dL','0.5-1.0'],['AST','31 U/L','<35']]
+    content=reference_table_pdf(['Test','Sonuc','Referans'],rows)
+    case=try_fast_pdf_lab_case(content=content,media_type='application/pdf',file_name='synthetic.pdf',source_type='file_upload')
+    assert case and case['visible_row_count']==6
+    assert 'source_reference_table_parser_v1' in case['warnings']
+    result=simple_case._lab_inputs_from_extracted(case,source_file_name='synthetic.pdf',extraction_source='local')
+    assert [r.value for r in result]==[r[1] for r in rows]
+    assert [r.source_reference for r in result]==[r[2] for r in rows]
+    assert [r.status for r in result]==['HIGH','HIGH','HIGH','HIGH','NORMAL','NORMAL']
+    assert all(r.source_metadata['source_page']==1 for r in result)
+
+
+def test_reference_table_missing_cells_or_unsupported_date_table_defers_without_partial_read():
+    from app.domain.fast_pdf_lab_parser import _extract_source_reference_rows
+    valid=[['CRP','94 mg/L','<5']]
+    assert _extract_source_reference_rows(reference_table_pdf(['Test','Sonuc','Referans'],valid,add_unsupported=True))==[]
+    assert _extract_source_reference_rows(reference_table_pdf(['Test','Sonuc','Referans'],[['CRP','','<5']]))==[]
+    assert _extract_source_reference_rows(reference_table_pdf(['Test','Sonuc'],[['CRP','94 mg/L']]))==[]
+
+
+def test_four_column_table_preserves_conflicting_units_and_missing_references_for_review():
+    from app.domain.fast_pdf_lab_parser import _extract_source_reference_rows
+    source=reference_table_pdf(['Test','Sonuc','Birim','Referans'],[
+        ['CRP','94 mg/dL','mg/L','<5'],['Creatinine','1.98','mg/dL','']])
+    rows=_extract_source_reference_rows(source)
+    assert len(rows)==2 and rows[0]['raw_value']=='94 mg/dL' and rows[0]['unit']=='mg/L'
+    case=validate_merge([RawLabRow(row,1,index) for index,row in enumerate(rows,1)],SourceContext('file_upload'))
+    output=simple_case._lab_inputs_from_extracted(case,source_file_name='synthetic.pdf',extraction_source='local')
+    assert all(r.status=='UNKNOWN' for r in output)
+    assert output[1].source_reference is None and output[1].source_metadata['needs_review']
+
+
+def test_three_column_upload_never_calls_cloud_and_is_independent_of_diagnostic_title(monkeypatch):
+    import asyncio
+    from fastapi import UploadFile
+    from io import BytesIO
+    content=reference_table_pdf(['Test','Sonuc','Referans'],[['CRP','94 mg/L','<5']])
+    cloud=AsyncMock(side_effect=AssertionError('Source reference is available locally'))
+    monkeypatch.setattr(simple_case,'_extract_lab_document_with_claude',cloud)
+    output=asyncio.run(simple_case._ingest_lab_upload(UploadFile(BytesIO(content),filename='Normal_vs_High_diagnostic_title.pdf'),'application/pdf'))
+    assert len(output)==1 and output[0].status=='HIGH' and output[0].source_reference=='<5'
+    cloud.assert_not_awaited()
+
+
+def test_explicit_document_metadata_date_never_becomes_specimen_or_result_date():
+    from app.domain.fast_pdf_lab_parser import _extract_source_reference_rows
+    content=reference_table_pdf(['Test','Sonuc','Referans'],[['CRP','94 mg/L','<5']],document_stamp='03.02.2026 08:48')
+    rows=_extract_source_reference_rows(content)
+    assert len(rows)==1 and rows[0]['document_date']=='2026-02-03'
+    assert rows[0].get('specimen_date') is None and rows[0].get('result_date') is None
+    assert rows[0]['measured_at'] is None
