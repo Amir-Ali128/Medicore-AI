@@ -7,6 +7,9 @@ from app.domain.privacy_gateway import PrivacyViolation
 from app.infrastructure.ai_privacy_client import privacy_call
 
 import json
+import logging
+import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Any
 
@@ -20,6 +23,17 @@ from app.core.config import get_settings
 from app.domain.simple_case import normalize_simple_case
 from app.domain.consistency_flags import collect_consistency_flags, render_consistency_section
 from app.schemas.simple_case import SimpleCaseRequest
+
+
+logger = logging.getLogger(__name__)
+
+
+def _heading_key(text: str) -> str:
+    """Compare formatting/Turkish casing only; never rewrite clinical output."""
+    folded = unicodedata.normalize("NFKD", text.replace("ı", "i")).casefold()
+    folded = "".join(char for char in folded if not unicodedata.combining(char))
+    folded = re.sub(r"[#*_]", "", folded)
+    return re.sub(r"\s*/\s*", "/", " ".join(folded.split()))
 
 
 @dataclass(frozen=True)
@@ -226,21 +240,33 @@ async def interpret_simple_case(payload: SimpleCaseRequest) -> CaseAIInterpretat
         ).strip()
 
     def missing_headings(report_text: str) -> list[str]:
-        upper = report_text.upper()
-        return [heading for heading in required_headings if heading not in upper]
+        normalized = _heading_key(report_text)
+        return [heading for heading in required_headings if _heading_key(heading) not in normalized]
 
     try:
         text = await generate()
     except PrivacyViolation:
         raise
     except Exception as exc:
-        raise RuntimeError(f"AI klinik rapor üretimi başarısız: {exc}") from exc
+        status = getattr(exc, "status_code", None)
+        logger.warning("clinical_report_provider_failed type=%s status=%s", type(exc).__name__, status)
+        if status in (401, 403):
+            message = "AI rapor hizmetine erişim reddedildi. Sunucudaki sağlayıcı erişimi kontrol edilmeli."
+        elif status == 429:
+            message = "AI rapor hizmetinin istek veya kullanım sınırına ulaşıldı. Kısa süre sonra tekrar deneyin."
+        elif "timeout" in type(exc).__name__.lower():
+            message = "AI rapor hizmeti süre sınırını aştı. Kısa süre sonra tekrar deneyin."
+        else:
+            message = "AI rapor hizmeti yanıt veremedi. Kısa süre sonra tekrar deneyin."
+        raise RuntimeError(message) from None
 
     if not text:
+        logger.warning("clinical_report_validation_failed code=empty_response")
         raise RuntimeError("AI klinik rapor modeli boş yanıt döndürdü.")
 
     missing = missing_headings(text)
     if missing:
+        logger.warning("clinical_report_validation_retry code=missing_sections count=%s", len(missing))
         retry_instruction = (
             "Önceki yanıt eksik bölümler içerdi. Vaka verisini yeniden değerlendir ve raporu baştan yaz. "
             "Aşağıdaki başlıkların TAMAMINI, tam bu yazımla ve bu sırayla kullan: "
@@ -253,11 +279,12 @@ async def interpret_simple_case(payload: SimpleCaseRequest) -> CaseAIInterpretat
                 text = retried
         except PrivacyViolation:
             raise
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("clinical_report_retry_failed type=%s status=%s", type(exc).__name__, getattr(exc,"status_code",None))
 
     missing = missing_headings(text)
     if missing:
+        logger.warning("clinical_report_validation_failed code=missing_sections count=%s", len(missing))
         raise RuntimeError(
             "AI klinik raporu eksik üretildi. Eksik bölümler: " + ", ".join(missing)
         )
@@ -267,11 +294,11 @@ async def interpret_simple_case(payload: SimpleCaseRequest) -> CaseAIInterpretat
         from app.domain.consistency_config import CONSISTENCY_HEADING
         lines, kept, suppress = text.splitlines(), [], False
         for line in lines:
-            heading = line.strip().strip('# *:').strip().upper()
-            if heading == CONSISTENCY_HEADING:
+            heading = _heading_key(line.strip().strip('# *:'))
+            if heading == _heading_key(CONSISTENCY_HEADING):
                 suppress = True
                 continue
-            if heading in required_headings:
+            if heading in {_heading_key(value) for value in required_headings}:
                 suppress = False
             if not suppress:
                 kept.append(line)
