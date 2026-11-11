@@ -858,6 +858,8 @@ async def _ingest_lab_upload(file: UploadFile, media_type: str, *, rotation: int
     file_name = file.filename or ("lab.pdf" if media_type == "application/pdf" else "lab-image.png")
 
     async def extract_page(page: DocumentPage) -> dict | None:
+        from app.domain.lab_document_normalizer import provider_document
+        provider_content, provider_media_type = provider_document(page)
         if getattr(get_settings(), 'lab_cross_read_enabled', False):
             import asyncio
             from app.domain.lab_cross_read import cross_read_page
@@ -869,8 +871,8 @@ async def _ingest_lab_upload(file: UploadFile, media_type: str, *, rotation: int
                 )
             return await cross_read_page(
                 page, local_reader=local_reader, usage_sink=persist_reader_event,
-                claude_reader=lambda: _extract_lab_document_with_claude(content=page.image,file_name=file_name,media_type='image/png'),
-                openai_reader=lambda: extract_lab_document_with_openai(content=page.image,file_name=file_name,media_type='image/png'),
+                claude_reader=lambda: _extract_lab_document_with_claude(content=provider_content,file_name=file_name,media_type=provider_media_type),
+                openai_reader=lambda: extract_lab_document_with_openai(content=provider_content,file_name=file_name,media_type=provider_media_type),
             )
         # A PDF page may have selectable text while the next page is a scan.
         if page.native_pdf is not None:
@@ -883,13 +885,13 @@ async def _ingest_lab_upload(file: UploadFile, media_type: str, *, rotation: int
                 return native
         # Reading-only provider: never route laboratory tables through radiology interpretation.
         result = await _extract_lab_document_with_claude(
-            content=page.image, file_name=file_name, media_type="image/png",
+            content=provider_content, file_name=file_name, media_type=provider_media_type,
         )
         if result and result.get("labs"):
             return result
         try:
             fallback = await extract_lab_document_with_openai(
-                content=page.image, media_type="image/png", file_name=file_name,
+                content=provider_content, media_type=provider_media_type, file_name=file_name,
             )
         except (OpenAILabExtractionError, ValueError) as exc:
             failure = reader_failure("OpenAI", exc)

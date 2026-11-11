@@ -315,3 +315,51 @@ def test_text_pdf_upload_never_short_circuits_second_reader_when_enabled(monkeyp
     assert local.call_count==1 and claude.call_count==int(enabled) and openai.call_count==0
     assert result[0].value=='2.1'
     assert ('cross_read_agreed' in result[0].source_metadata['ingestion_reasons']) is enabled
+
+
+def test_provider_document_keeps_text_pdf_and_keeps_mixed_pages_as_images():
+    from app.domain.lab_document_normalizer import provider_document
+    with pymupdf.open() as pdf:
+        page=pdf.new_page();page.insert_text((40,40),'PR3-ANCA 42 U/mL\nAnti-GBM Negative\nC3 Normal')
+        native=pdf.tobytes()
+        assert provider_document(DocumentPage(1,b'raster',native))==(native,'application/pdf')
+        page.insert_image(pymupdf.Rect(40,100,240,160),stream=synthetic_image())
+        mixed=pdf.tobytes()
+    assert provider_document(DocumentPage(1,b'raster',mixed))==(b'raster','image/png')
+    assert provider_document(DocumentPage(1,b'raster'))==(b'raster','image/png')
+    assert provider_document(DocumentPage(1,b'raster',b'broken'))==(b'raster','image/png')
+
+
+@pytest.mark.parametrize('enabled',[False,True])
+def test_text_pdf_cloud_reader_uses_pdf_when_numeric_parser_cannot_read_serology(monkeypatch,enabled):
+    from app.infrastructure.database import lab_reader_telemetry
+    with pymupdf.open() as pdf:
+        page=pdf.new_page();page.insert_text((40,40),'PR3-ANCA 42 U/mL\nAnti-GBM Negative\nC3 Normal');native=pdf.tobytes()
+    settings=SimpleNamespace(lab_cross_read_enabled=enabled,consistency_section_enabled=False)
+    monkeypatch.setattr(simple_case,'get_settings',lambda:settings)
+    monkeypatch.setattr(config,'get_settings',lambda:settings)
+    monkeypatch.setattr(ingestion,'normalize_document',lambda *a,**kw:[DocumentPage(1,b'not-an-ocr-image',native)])
+    monkeypatch.setattr(simple_case,'try_fast_pdf_lab_case',lambda **kwargs:None)
+    claude=AsyncMock(return_value={'labs':[row()],'visible_row_count':1})
+    monkeypatch.setattr(simple_case,'_extract_lab_document_with_claude',claude)
+    monkeypatch.setattr(lab_reader_telemetry,'persist_reader_event',AsyncMock())
+    result=asyncio.run(simple_case._ingest_lab_upload(UploadFile(BytesIO(native),filename='serology.pdf'),'application/pdf'))
+    assert len(result)==1
+    assert claude.call_args.kwargs['content']==native
+    assert claude.call_args.kwargs['media_type']=='application/pdf'
+
+
+def test_native_pdf_openai_fallback_also_uses_pdf(monkeypatch):
+    with pymupdf.open() as pdf:
+        page=pdf.new_page();page.insert_text((40,40),'Anti-GBM Negative');native=pdf.tobytes()
+    settings=SimpleNamespace(lab_cross_read_enabled=False,consistency_section_enabled=False)
+    monkeypatch.setattr(simple_case,'get_settings',lambda:settings)
+    monkeypatch.setattr(ingestion,'normalize_document',lambda *a,**kw:[DocumentPage(1,b'raster',native)])
+    monkeypatch.setattr(simple_case,'try_fast_pdf_lab_case',lambda **kwargs:None)
+    monkeypatch.setattr(simple_case,'_extract_lab_document_with_claude',AsyncMock(return_value={'labs':[]}))
+    fallback=AsyncMock(return_value={'labs':[row()],'visible_row_count':1})
+    monkeypatch.setattr(simple_case,'extract_lab_document_with_openai',fallback)
+    result=asyncio.run(simple_case._ingest_lab_upload(UploadFile(BytesIO(native),filename='serology.pdf'),'application/pdf'))
+    assert len(result)==1
+    assert fallback.call_args.kwargs['content']==native
+    assert fallback.call_args.kwargs['media_type']=='application/pdf'

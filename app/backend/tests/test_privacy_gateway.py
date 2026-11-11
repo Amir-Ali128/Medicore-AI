@@ -151,3 +151,27 @@ def test_real_offline_ocr_masks_synthetic_identifier_without_network():
 
 def test_ambiguous_identity_line_with_lab_value_blocks_instead_of_erasing_clinical_data():
     with pytest.raises(PrivacyViolation):sanitize_text('Hasta Adı: Ayşe Yılmazoğlu Hemoglobin 13.2 g/dL')
+
+
+def test_text_serology_pdf_reaches_mocked_provider_only_after_native_redaction(monkeypatch):
+    import asyncio,base64
+    from unittest.mock import AsyncMock
+    from app.infrastructure.ai_privacy_client import privacy_call,private_media
+    from app.domain.lab_document_normalizer import DocumentPage,provider_document
+    with pymupdf.open() as pdf:
+        page=pdf.new_page();page.insert_text((40,40),'Hasta Adi: Ayse Yilmazoglu\nPR3-ANCA 42 U/mL\nMPO-ANCA Negative\nAnti-GBM Negative\nANA 1:160\nC3 Normal\nC4 Normal')
+        native=pdf.tobytes()
+    content,kind=provider_document(DocumentPage(1,b'not-needed',native))
+    def reject_ocr(*args,**kwargs):raise AssertionError('Native text privacy must not use raster OCR')
+    monkeypatch.setattr(gateway,'_ocr_tokens',reject_ocr)
+    sdk=AsyncMock(return_value='read-only response')
+    asyncio.run(privacy_call(sdk,provider='test',call_site='synthetic-native-pdf',messages=[{
+        'role':'user','content':[{'type':'document','source':{'type':'base64','media_type':kind,'data':private_media(content,kind)}}],
+    }]))
+    sdk.assert_awaited_once()
+    clean=base64.b64decode(sdk.call_args.kwargs['messages'][0]['content'][0]['source']['data'])
+    with pymupdf.open(stream=clean,filetype='pdf') as pdf:
+        text='\n'.join(page.get_text() for page in pdf)
+        assert 'Ayse Yilmazoglu' not in text
+        assert all(value in text for value in ('PR3-ANCA 42 U/mL','MPO-ANCA Negative','Anti-GBM Negative','ANA 1:160','C3 Normal','C4 Normal'))
+        assert not pdf.metadata.get('author')
