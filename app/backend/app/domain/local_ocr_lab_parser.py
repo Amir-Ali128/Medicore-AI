@@ -23,6 +23,7 @@ os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 os.environ.setdefault("MKL_NUM_THREADS", "1")
 
 import numpy as np
+from app.infrastructure.local_model_resources import model_lock, activate_model, register_model
 
 _ocr_engine_lock = threading.RLock()
 
@@ -147,12 +148,15 @@ def _ocr_engine():
     from rapidocr_onnxruntime import RapidOCR
 
     # Model initialization is expensive; keep a single process-local instance.
-    return RapidOCR()
+    return RapidOCR(intra_op_num_threads=1, inter_op_num_threads=1)
 
+
+register_model("ocr", _ocr_engine.cache_clear)
 
 def _ocr_once(image: np.ndarray) -> list[OcrToken]:
     try:
-        with _ocr_engine_lock:
+        with model_lock, _ocr_engine_lock:
+            activate_model("ocr")
             result = _ocr_engine()(image)
     except Exception:
         return []

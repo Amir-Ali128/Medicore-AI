@@ -12,6 +12,7 @@ from app.api.router import api_router
 from app.infrastructure.ai_privacy_context import privacy_request_context
 from app.domain.privacy_gateway import PrivacyViolation, PRIVACY_ERROR_CODE, PRIVACY_MESSAGE
 from app.infrastructure.admin_bootstrap import ensure_bootstrap_admin
+from app.infrastructure.voice_model_provisioning import prepare_offline_voice
 from app.infrastructure.database.feedback_migrations import ensure_user_feedback
 from app.infrastructure.database.lab_reader_telemetry import ensure_lab_reader_events
 from app.infrastructure.database.session import AsyncSessionFactory, engine
@@ -66,6 +67,8 @@ async def lifespan(_: FastAPI):
             "Analytics retention cleanup completed: "
             f"removed {purged_analytics_rows} stale presence row(s)."
         )
+
+    await run_noncritical_startup_step("offline_turkish_voice", prepare_offline_voice)
 
     yield
 

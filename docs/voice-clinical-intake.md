@@ -2,10 +2,8 @@
 
 ## Kapsam ve veri akışı
 
-Bu özellik `feature/voice-clinical-intake` dalında incelenmek üzere hazırlanmıştır.
-PR'ın merge edilmesi, canlıya yayınlanması veya canlı ortamın hazırlanması bu
-görevin parçası değildir. Mevcut karar destek/inference algoritmaları, hasta
-kimlikleri, veritabanı şeması ve kayıt endpointleri korunur.
+Mevcut karar destek/inference algoritmaları, hasta kimlikleri, veritabanı şeması
+ve kayıt endpointleri korunur. Ses yalnız sunucuda işlenir; sonuç bir taslaktır.
 
 1. Hasta/Klinik adımındaki **Konuşmaya başla** önce kimlik doğrulamalı
    `GET /clinical-voice/capabilities` ile yerel motorun hazır olduğunu doğrular.
@@ -38,38 +36,41 @@ vakanın geç gelen yanıtları uygulanmaz. Durdur, son parçanın okunması bit
 taslak onayını açmaz. Mikrofon izni reddedilirse veya hizmet hazır değilse metin
 elle girilebilir. Yerel önizleme HTTPS veya localhost gerektirir.
 
-## Yerel geliştirme için opsiyonel motor
+## Yerel motorun hazırlanması
 
-Bu adımlar **canlı ortamda uygulanmadı**. Varsayılan `requirements.txt` ve canlı
-ayarlar değiştirilmedi. Motor/model yokken özellik güvenli biçimde kullanılamaz
-durumu bildirir; uzaktaki bir sağlayıcıya otomatik geçiş yapmaz.
+`requirements.txt`, sabitlenmiş `faster-whisper==1.2.1` bağımlılığını içerir.
+Sunucu istek kabul etmeden önce `offline_turkish_voice` hazırlık adımı çalışır.
+Operatör `CLINICAL_VOICE_MODEL_PATH` tanımlamışsa yalnız bu yerel dizin kullanılır;
+hatalı bir override otomatik olarak değiştirilmez.
+
+Override yoksa MIT lisanslı `Systran/faster-whisper-tiny` multilingual modelinin
+`d90ca5fe260221311c53c58e660288d3deb8d356` revizyonu hazırlanır. Dört dosyanın
+sabit SHA256 ve byte uzunluğu `voice_model_assets.py` içinde kayıtlıdır.
+Yalnız sabit HTTPS yazılım URL'leri kullanılır; indirme girdilerinde ses, transkript,
+hasta veya istek verisi bulunmaz. İndirme süre/boyut sınırlarıyla yapılır.
+Hash ve Türkçe destekli CPU/int8 yükleme başarılı olmadan hazır işareti yazılmaz.
+Ağırlıklar `.voice_models/` altındadır ve Git'e girmez. Mevcut doğrulanmış
+dosyalar tekrar indirilmez. Ephemeral sunucu yeniden başladığında indirme
+tekrarlanabilir; soğuk açılış süresi uzar.
+
+Hazırlık başarısızsa uygulama açılır, runtime health bileşeni degraded olur ve
+ses özelliği kapalı kalır. İstek sırasında indirme veya uzak ASR fallback yoktur.
+`GET /health/ready` içindeki runtime bileşenleri hazırlık durumunu gösterir.
+İsteğe bağlı ön hazırlık komutu:
 
 ```sh
 cd app/backend
-pip install -r requirements.txt -r requirements-voice.txt
+pip install -r requirements.txt
+python -m app.infrastructure.voice_model_provisioning
 ```
 
-Operatörün uygun lisansı ve kaynak güvenilirliğini incelemesi sonrasında bir
-multilingual CTranslate2 Whisper modelini önceden yerel dizine hazırlaması gerekir.
-İngilizceye özel `.en` modeller kullanılmamalıdır. Örneğin testte kullanılan
-`Systran/faster-whisper-small` revizyonu
-`536b0662742c02347bc0e980a01041f333bce120` şu dosyaları içerir:
-
-```text
-/approved/local/whisper-small/
-  config.json
-  model.bin
-  tokenizer.json
-  vocabulary.txt  (veya vocabulary.json)
-```
-
-Yalnızca kendi geliştirme sürecinde `CLINICAL_VOICE_MODEL_PATH` bu dizine
-ayarlanabilir. Bu PR hiçbir Render servisine, ortam değişkenine veya canlı DB'ye
-dokunmaz. Model ağırlıkları Git'e eklenmez. Örnek model indirme yalnızca kamuya
-açık model dosyalarını taşır; test/üretim hasta verisi içermez. CPU/int8 kullanılır;
-sunucu donanımı, eşzamanlı yük ve gecikme ayrıca ölçülmelidir. Her worker en çok
-bir ASR işini çalıştırır; dolu olduğunda 429 döner. Varsayılan kurulumun bu
-opsiyonel modeli barındıracak belleğe sahip olduğu varsayılmaz.
+ASR ve OCR ortak işlem kilidiyle çalışır. Motor değiştiğinde diğerinin önbelleği
+boşaltılır; ses isteği OCR çalışırken 429 alır. Böylece iki motor aynı anda
+çıkarım yapmaz. Bu, tek başına sunucu kapasite garantisi değildir: yerel sentetik
+ölçümde uygulama+ASR yaklaşık 392 MiB tepe RSS, ASR→OCR→ASR yaklaşık 714 MiB;
+OCR tek başına da yaklaşık 679 MiB oldu. OCR sonrası anlık RSS yaklaşık 316 MiB
+idi. **512 MiB ücretsiz plan için bu belge iş yükü doğrulanmış değildir.**
+Plan/ortam değişkeni/Render ayarı bu değişiklikle değiştirilmez.
 
 ## Ayrıştırma örneği ve sınırlar
 
@@ -92,8 +93,9 @@ transkript mutlaka okunup düzeltilmelidir.
 
 ## Test ve bilinen eksikler
 
-Yerel doğrulama sonucu: mevcut CI kapsamıyla birlikte **363 backend testi** ve
-**130 frontend testi** geçti; TypeScript ve production build başarılı. Gerçek
+Bu düzeltmede aktif CI kapsamındaki **527 backend testi**, **16 frontend test
+dosyası**, TypeScript ve production build geçti. Model hazırlama, bütünlük,
+hata/timeout, override ve yerel motor kaynak yönetimi için 17 test eklendi. Gerçek
 Chromium mikrofonu (yalnız sentetik ses), gerçek yerel ASR ve izole SQLite test
 API'siyle kayıt öncesi değişmezlik, ayrı alan onayı, açık kaydetme sonrası aynı
 UUID/lab/rapor korunması, refresh ve vaka değiştirme kontrolleri geçti. Alan
@@ -118,6 +120,6 @@ kullanıldı; bu kontrol ASR'nin her sözcüğü doğru okuduğu anlamına gelme
   hastane iş akışı değerlendirmesi henüz yapılmadı. Klinik kullanımdan önce bu
   değerlendirme, sunucu kapasitesi ve kurumun ses/veri işleme politikası gerekir.
 
-Geri alma, feature commit'inin çıkarılmasıyla mümkündür; migration veya hasta
+Geri alma, düzeltme commit'inin çıkarılmasıyla mümkündür; migration veya hasta
 verisi temizleme işlemi gerekmez. İnceleme teslimatında PR açık bırakılır,
 `main` değişmez ve deploy yapılmaz.

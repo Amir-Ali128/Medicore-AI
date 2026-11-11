@@ -80,7 +80,7 @@ export default function VoiceClinicalIntake({ values, onApply }: Props) {
       <button type="button" onClick={() => session.current?.stop()} disabled={!busy || status === 'stopping'} className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm disabled:opacity-40">Durdur</button>
       <span role="status" className="text-sm text-slate-600">{status === 'preparing' ? 'Mikrofon hazırlanıyor…' : status === 'listening' ? 'Dinleniyor · Metin parçalar halinde güncellenir' : status === 'stopping' ? 'Son ses parçası okunuyor…' : 'Kayıt kapalı'}</span>
     </div>
-    <p className="mt-2 text-xs text-slate-500">En fazla 3 dakika. Mikrofon kullanılamıyorsa metni aşağıya yazabilirsiniz. Fizik muayene, Ek klinik not alanına eşlenir.</p>
+    <p className="mt-2 text-xs text-slate-500">En fazla 3 dakika. Mikrofon kullanılamıyorsa metni aşağıya yazabilirsiniz. Fizik muayene, Ek klinik not alanına eşlenir. Sesli giriş taslaktır; özellikle sayıları ve tıbbi terimleri kontrol edin.</p>
     <label className="mt-4 block text-sm font-medium text-slate-700">Canlı transkripsiyon
       <textarea value={transcript} disabled={busy} maxLength={12000} onChange={(event) => { setTranscript(event.target.value); setApprovedText(null); }} rows={4}
         placeholder="Örnek: Altmış beş yaşında erkek. Şikayetler: iki gündür kusma. Anamnez: hipertansiyon. Vital bulgular: tansiyon 145/90, nabız 108, ateş 37,2. Muayenede ağız mukozası kuru."

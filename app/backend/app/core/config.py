@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     ai_privacy_mode: Literal["strict"] = "strict"
     api_v1_prefix: str = "/api/v1"
 
-    # Optional, operator-provisioned offline ASR assets. No runtime downloads.
+    # Optional operator override; otherwise verified local assets prepared at startup.
     clinical_voice_model_path: str | None = None
 
     consistency_section_enabled: bool = False
