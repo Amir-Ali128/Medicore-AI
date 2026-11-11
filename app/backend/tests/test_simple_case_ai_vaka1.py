@@ -252,3 +252,52 @@ def test_provider_failures_have_safe_turkish_errors_and_no_raw_payload(mocked_pr
     assert 'raw private payload' not in str(error.value)+caplog.text
     assert 'AI rapor hizmeti' in str(error.value) or 'AI rapor hizmetine' in str(error.value)
     assert 'clinical_report_provider_failed' in caplog.text
+
+
+def test_end_turn_missing_only_review_note_uses_labeled_application_notice(mocked_provider):
+    clinical=_REPORT.split('HEKİM NOTU')[0].rstrip()
+    mocked_provider.return_value=SimpleNamespace(content=[SimpleNamespace(type='text',text=clinical)],stop_reason='end_turn')
+    result=asyncio.run(simple_case_ai.interpret_simple_case(_vaka1_request()))
+    assert result.report_text.startswith(clinical+'\n\nHEKİM NOTU\nUygulama notu:')
+    assert 'Yapay zekâ hekim notu üretmedi' in result.report_text
+    mocked_provider.assert_awaited_once()
+
+
+def test_missing_clinical_section_is_never_filled_by_application(mocked_provider):
+    incomplete=_REPORT.replace('SONUÇ / KANAAT','')
+    mocked_provider.return_value=SimpleNamespace(content=[SimpleNamespace(type='text',text=incomplete)],stop_reason='end_turn')
+    with pytest.raises(RuntimeError,match='SONUÇ / KANAAT'):
+        asyncio.run(simple_case_ai.interpret_simple_case(_vaka1_request()))
+    assert mocked_provider.await_count==2
+
+
+def test_output_limit_retries_with_larger_budget_without_returning_cut_text(mocked_provider):
+    mocked_provider.side_effect=[
+        SimpleNamespace(content=[SimpleNamespace(type='text',text=_REPORT.split('HEKİM NOTU')[0])],stop_reason='max_tokens'),
+        SimpleNamespace(content=[SimpleNamespace(type='text',text=_REPORT)],stop_reason='end_turn'),
+    ]
+    result=asyncio.run(simple_case_ai.interpret_simple_case(_vaka1_request()))
+    assert result.report_text==_REPORT
+    assert [call.kwargs['max_tokens'] for call in mocked_provider.await_args_list]==[5200,8000]
+
+
+def test_output_limit_never_passes_even_if_all_headings_are_present(mocked_provider):
+    mocked_provider.return_value=SimpleNamespace(content=[SimpleNamespace(type='text',text=_REPORT)],stop_reason='max_tokens')
+    with pytest.raises(RuntimeError,match='çıktı sınırında kesildi'):
+        asyncio.run(simple_case_ai.interpret_simple_case(_vaka1_request()))
+    assert mocked_provider.await_count==2
+
+
+def test_complete_report_is_not_silently_cut_at_24000_characters(mocked_provider):
+    complete=(_REPORT+'\n'+('Kaynak bilgisi. '*1700)).rstrip()
+    mocked_provider.return_value=SimpleNamespace(content=[SimpleNamespace(type='text',text=complete)],stop_reason='end_turn')
+    result=asyncio.run(simple_case_ai.interpret_simple_case(_vaka1_request()))
+    assert result.report_text==complete
+
+
+def test_application_notice_cannot_hide_empty_clinical_section(mocked_provider):
+    incomplete=_REPORT.split('HEKİM NOTU')[0].replace('Menoraji ve halsizlik.','').rstrip()
+    mocked_provider.return_value=SimpleNamespace(content=[SimpleNamespace(type='text',text=incomplete)],stop_reason='end_turn')
+    with pytest.raises(RuntimeError,match='HEKİM NOTU'):
+        asyncio.run(simple_case_ai.interpret_simple_case(_vaka1_request()))
+    assert mocked_provider.await_count==2

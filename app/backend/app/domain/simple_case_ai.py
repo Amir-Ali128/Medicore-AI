@@ -216,14 +216,14 @@ async def interpret_simple_case(payload: SimpleCaseRequest) -> CaseAIInterpretat
         "HEKİM NOTU",
     )
 
-    async def generate(extra_instruction: str | None = None) -> str:
+    async def generate(extra_instruction: str | None = None, *, token_budget: int = 5200) -> tuple[str, str | None]:
         user_text = prompt
         if extra_instruction:
             user_text += "\n\n" + extra_instruction
 
         response = await privacy_call(client.messages.create, provider='Anthropic', call_site=__name__,
             model=model,
-            max_tokens=5200,
+            max_tokens=token_budget,
             system=_SYSTEM_PROMPT + ("\nconsistency_flags bayraklarını yorumunda dikkate al; işaretli değerleri kesin kabul etme. VERİ TUTARLILIK UYARILARI bölümünü yazma; bu bölüm sunucu tarafından eklenecek." if flags is not None else ""),
             messages=[
                 {
@@ -233,18 +233,22 @@ async def interpret_simple_case(payload: SimpleCaseRequest) -> CaseAIInterpretat
             ],
         )
 
-        return "".join(
+        text = "".join(
             block.text
             for block in response.content
             if getattr(block, "type", None) == "text" and getattr(block, "text", None)
         ).strip()
+        stop_reason = getattr(response, "stop_reason", None)
+        if stop_reason == "max_tokens":
+            logger.warning("clinical_report_truncated code=output_limit budget=%s", token_budget)
+        return text, stop_reason
 
     def missing_headings(report_text: str) -> list[str]:
         normalized = _heading_key(report_text)
         return [heading for heading in required_headings if _heading_key(heading) not in normalized]
 
     try:
-        text = await generate()
+        text, stop_reason = await generate()
     except PrivacyViolation:
         raise
     except Exception as exc:
@@ -264,24 +268,52 @@ async def interpret_simple_case(payload: SimpleCaseRequest) -> CaseAIInterpretat
         logger.warning("clinical_report_validation_failed code=empty_response")
         raise RuntimeError("AI klinik rapor modeli boş yanıt döndürdü.")
 
+    def append_application_review_note(report_text: str, absent: list[str], reason: str | None) -> str:
+        # This is explicitly application-owned review guidance, not an invented
+        # clinical conclusion or a claim that the model produced a physician note.
+        if absent == ["HEKİM NOTU"] and reason == "end_turn":
+            lines = report_text.splitlines()
+            keys = [_heading_key(line.strip().strip("# *:")) for line in lines]
+            clinical_keys = [_heading_key(heading) for heading in required_headings[:-1]]
+            positions = []
+            for key in clinical_keys:
+                if key not in keys:
+                    return report_text
+                positions.append(keys.index(key))
+            if positions != sorted(positions):
+                return report_text
+            for index, start in enumerate(positions):
+                end = positions[index+1] if index+1 < len(positions) else len(lines)
+                if not any(line.strip().strip("# *-:") for line in lines[start+1:end]):
+                    return report_text
+            logger.warning("clinical_report_review_note code=application_notice")
+            return report_text + "\n\nHEKİM NOTU\nUygulama notu: Yapay zekâ hekim notu üretmedi. Raporun klinik içeriği hekim tarafından gözden geçirilmelidir."
+        return report_text
+
+    text = append_application_review_note(text, missing_headings(text), stop_reason)
     missing = missing_headings(text)
-    if missing:
+    if missing or stop_reason == "max_tokens":
         logger.warning("clinical_report_validation_retry code=missing_sections count=%s", len(missing))
         retry_instruction = (
             "Önceki yanıt eksik bölümler içerdi. Vaka verisini yeniden değerlendir ve raporu baştan yaz. "
             "Aşağıdaki başlıkların TAMAMINI, tam bu yazımla ve bu sırayla kullan: "
             + " | ".join(required_headings)
-            + ". Hiçbir bölümü atlama. Kısa ve taranabilir yaz."
+            + ". Hiçbir bölümü atlama. Tekrarlama yapmadan kısa ve taranabilir yaz; son iki bölümü de bütçe dolmadan tamamla."
         )
         try:
-            retried = await generate(retry_instruction)
+            retried, retried_stop = await generate(
+                retry_instruction, token_budget=8000 if stop_reason == "max_tokens" else 5200,
+            )
             if retried:
-                text = retried
+                text, stop_reason = retried, retried_stop
+                text = append_application_review_note(text, missing_headings(text), stop_reason)
         except PrivacyViolation:
             raise
         except Exception as exc:
             logger.warning("clinical_report_retry_failed type=%s status=%s", type(exc).__name__, getattr(exc,"status_code",None))
 
+    if stop_reason == "max_tokens":
+        raise RuntimeError("AI raporu çıktı sınırında kesildi; tamamlanmamış klinik rapor kaydedilmedi. Lütfen yeniden deneyin.")
     missing = missing_headings(text)
     if missing:
         logger.warning("clinical_report_validation_failed code=missing_sections count=%s", len(missing))
@@ -304,7 +336,7 @@ async def interpret_simple_case(payload: SimpleCaseRequest) -> CaseAIInterpretat
                 kept.append(line)
         text = '\n'.join(kept)
     return CaseAIInterpretation(
-        report_text=(render_consistency_section(flags) if flags is not None else "") + text[:24_000],
+        report_text=(render_consistency_section(flags) if flags is not None else "") + text,
         model=model,
         consistency_flags=flags,
     )
