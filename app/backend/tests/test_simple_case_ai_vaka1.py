@@ -217,3 +217,38 @@ def test_full_input_too_large_fails_before_provider_call(mocked_provider):
     with pytest.raises(RuntimeError, match="sessizce kırpılmadı"):
         asyncio.run(simple_case_ai.interpret_simple_case(request))
     mocked_provider.assert_not_awaited()
+
+
+def test_turkish_title_case_markdown_and_slash_spacing_do_not_reject_complete_report(mocked_provider):
+    # Python upper() cannot match Turkish i/İ reliably; harmless formatting must
+    # not cause a second paid call or turn a complete report into HTTP 503.
+    lines=[]
+    for line in _REPORT.splitlines():
+        lines.append('## **'+line.title().replace(' / ','/')+'**' if line and line==line.upper() else line)
+    formatted='\n'.join(lines)
+    mocked_provider.return_value=SimpleNamespace(content=[SimpleNamespace(type='text',text=formatted)])
+    result=asyncio.run(simple_case_ai.interpret_simple_case(_vaka1_request()))
+    assert result.report_text==formatted
+    mocked_provider.assert_awaited_once()
+
+
+def test_truly_missing_section_still_fails_without_fabricating_a_report(mocked_provider,caplog):
+    incomplete=_REPORT.replace('HEKİM NOTU','')
+    mocked_provider.return_value=SimpleNamespace(content=[SimpleNamespace(type='text',text=incomplete)])
+    with pytest.raises(RuntimeError,match='Eksik bölümler: HEKİM NOTU'):
+        asyncio.run(simple_case_ai.interpret_simple_case(_vaka1_request()))
+    assert mocked_provider.await_count==2
+    assert 'code=missing_sections' in caplog.text
+    assert 'Menoraji' not in caplog.text
+
+
+@pytest.mark.parametrize('status',[401,403,429,500])
+def test_provider_failures_have_safe_turkish_errors_and_no_raw_payload(mocked_provider,caplog,status):
+    failure=RuntimeError('raw private payload must never be surfaced')
+    failure.status_code=status
+    mocked_provider.side_effect=failure
+    with pytest.raises(RuntimeError) as error:
+        asyncio.run(simple_case_ai.interpret_simple_case(_vaka1_request()))
+    assert 'raw private payload' not in str(error.value)+caplog.text
+    assert 'AI rapor hizmeti' in str(error.value) or 'AI rapor hizmetine' in str(error.value)
+    assert 'clinical_report_provider_failed' in caplog.text

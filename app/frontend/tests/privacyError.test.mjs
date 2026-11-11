@@ -16,6 +16,11 @@ test('privacy block is shown in Turkish for structured API errors',async()=>{
   globalThis.fetch=async()=>new Response(JSON.stringify(body),{status:422,headers:{'Content-Type':'application/json'}});
   const {apiClient}=await server.ssrLoadModule('/src/services/apiClient.ts');
   await assert.rejects(apiClient.post('/test',{}),error=>error.message===PRIVACY_FAILURE_MESSAGE);
+  globalThis.fetch=async()=>new Response(JSON.stringify({detail:'AI klinik raporu eksik üretildi. Eksik bölümler: HEKİM NOTU'}),{status:503,headers:{'Content-Type':'application/json'}});
+  await assert.rejects(apiClient.post('/test',{}),error=>error.status===503 && error.message.includes('HEKİM NOTU'));
+  globalThis.fetch=async()=>new Response('<html>proxy error</html>',{status:503,headers:{'Content-Type':'text/html'}});
+  await assert.rejects(apiClient.post('/test',{}),error=>error.message==='Hizmet şu anda yanıt veremiyor. Kısa süre sonra tekrar deneyin.');
+  globalThis.fetch=async()=>new Response(JSON.stringify(body),{status:422,headers:{'Content-Type':'application/json'}});
   const simple=await server.ssrLoadModule('/src/services/simpleCaseClient.ts');
   await assert.rejects(simple.normalizeSimpleCase({clinical:{},labs:[],reports:[]}),error=>error.message===PRIVACY_FAILURE_MESSAGE);
   let requested;

@@ -13,7 +13,10 @@ export class ApiClientError extends Error {
   body: unknown;
 
   constructor(status: number, statusText: string, body: unknown) {
-    super(privacyErrorMessage(body) || `API request failed with ${status} ${statusText}`);
+    const detail = body && typeof body === 'object' ? (body as { detail?: unknown }).detail : undefined;
+    super(privacyErrorMessage(body) || (typeof detail === 'string' && detail.trim() ? detail.trim()
+      : status === 503 ? 'Hizmet şu anda yanıt veremiyor. Kısa süre sonra tekrar deneyin.'
+        : `API isteği başarısız (${status}).`));
     this.name = 'ApiClientError';
     this.status = status;
     this.statusText = statusText;
