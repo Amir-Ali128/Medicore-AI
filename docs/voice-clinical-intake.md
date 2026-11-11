@@ -7,8 +7,10 @@ ve kayıt endpointleri korunur. Ses yalnız sunucuda işlenir; sonuç bir taslak
 
 1. Hasta/Klinik adımındaki **Konuşmaya başla** önce kimlik doğrulamalı
    `GET /clinical-voice/capabilities` ile yerel motorun hazır olduğunu doğrular.
-2. Tarayıcı kullanıcıdan mikrofon izni ister; MediaRecorder bağımsız altı
-   saniyelik parçalar üretir. En çok üç dakika kayıt yapılır. Sıra sınırlıdır;
+2. Tarayıcı kullanıcıdan mikrofon izni ister; MediaRecorder bağımsız parçalar üretir.
+   Yerel ses seviyesi ölçümü, en az üç saniyelik kayıtta 800 ms duraklama
+   görüldüğünde parçayı gönderir; kesintisiz konuşmada üst sınır 12 saniyedir.
+   Web Audio yoksa 12 saniyelik güvenli sınır kullanılır. En çok üç dakika kayıt yapılır. Sıra sınırlıdır;
    işlem yetişmezse kayıt durur ve okunamayan bölümün tekrarı istenir.
 3. Ses yalnızca mevcut `API_BASE_URL` üzerindeki
    `POST /clinical-voice/transcribe` endpointine, mevcut oturum yetkisiyle gider.
@@ -123,3 +125,32 @@ kullanıldı; bu kontrol ASR'nin her sözcüğü doğru okuduğu anlamına gelme
 Geri alma, düzeltme commit'inin çıkarılmasıyla mümkündür; migration veya hasta
 verisi temizleme işlemi gerekmez. İnceleme teslimatında PR açık bırakılır,
 `main` değişmez ve deploy yapılmaz.
+
+
+## STT incelemesi ve konuşma sınırları (2026-11-11)
+
+Sabit altı saniyelik recorder yeniden başlatması konuşmanın ortasına denk
+gelebiliyordu. Yerel Web Audio seviye ölçümü duraklama sınırlarını tercih eder;
+bu bir klinik yorum veya harici tarayıcı konuşma servisi değildir. Mono/16 kHz
+ideal mikrofon ayarları, yankı ve gürültü azaltma istenir. Toplam kayıt sınırı
+parça sayısına değil gerçek üç dakikalık süreye bağlıdır. Hasta değişimi/iptal
+mikrofonu, AudioContext'i ve bütün zamanlayıcıları kapatır. Üst sınırda hâlâ bir
+kelime bölünebilir; bu değişiklik kusursuz veya kesintisiz streaming ASR değildir.
+
+Model karşılaştırması yalnız yerel sentetik robotik Türkçe sesle yapıldı: tiny
+beam=3/5 ve VAD açık/kapalı aynı hatalı metni üretti; bu yüzden kanıt olmadan
+decoder ayarları değiştirilmedi. Yerel Systran/faster-whisper-base revizyonu
+`ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66` denendi. Bazı kelimeleri daha iyi
+okudu, ancak vital sayıları yine hatalıydı; uygulamayla tepe RSS ~488 MiB oldu
+(tiny ~394 MiB). 512 MiB canlı planın ek yükü için yeterli pay doğrulanmadığından
+varsayılan model büyütülmedi. Model ağırlıkları Git'e eklenmedi, hasta sesi
+harici yere gönderilmedi, plan veya ortam ayarı değiştirilmedi.
+
+Tanıma doğruluğunun iyileştiğine dair gerçek hekim sesiyle WER ölçümü henüz yok.
+Yanlış okunan örnek cümle ve beklenen metinle hedefli değerlendirme gerekir.
+Sayı/tıbbi terimler için doktorun incelemesi ve açık kaydetme adımı korunur.
+
+Bu değişikliğin doğrulaması: 134 frontend testi, TypeScript ve production build
+başarılı. Yeni ses sınırı testleri altıncı saniyede devam eden konuşmayı,
+duraklamada gönderimi, kesintisiz seste 12 saniyelik üst sınırı, AudioContext
+kapatılmasını ve değişken parça süreleriyle üç dakikalık sınırı kapsar.

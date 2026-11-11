@@ -4,7 +4,7 @@ import { createServer } from 'vite';
 
 test('microphone sessions are transient, bounded and patient scoped', async (t) => {
   const server = await createServer({ configFile: false, appType: 'custom', server: { middlewareMode: true, hmr: false, ws: false, watch: null } });
-  const original = Object.fromEntries(['window', 'localStorage', 'fetch', 'navigator', 'MediaRecorder', 'isSecureContext'].map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  const original = Object.fromEntries(['window', 'localStorage', 'fetch', 'navigator', 'MediaRecorder', 'isSecureContext', 'AudioContext'].map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   const set = (key, value) => Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
   const storage = new Map();
   set('window', { location: { hash: '#/case' }, dispatchEvent() {} });
@@ -61,6 +61,48 @@ test('microphone sessions are transient, bounded and patient scoped', async (t) 
       const post = fetchCalls.find((call) => call.method === 'POST');
       assert.ok(post.url.endsWith('/clinical-voice/transcribe')); assert.ok(post.body instanceof Blob); assert.ok(post.headers['Content-Type'].startsWith('audio/webm')); assert.equal(post.cache, 'no-store');
       assert.ok(fetchCalls.every((call) => call.url.startsWith(`${API_BASE_URL}/clinical-voice/`)));
+    });
+    await t.test('speech survives the old six-second boundary and flushes on a pause', async (t) => {
+      let amplitude = .05, closes = 0;
+      class Context {
+        createAnalyser() { return { fftSize: 2048, getFloatTimeDomainData(values) { values.fill(amplitude); } }; }
+        createMediaStreamSource() { return { connect() {}, disconnect() {} }; }
+        async resume() {}
+        async close() { closes++; }
+      }
+      set('AudioContext', Context);
+      session?.cancel(); // Clear real timers before installing the fake clock.
+      t.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'] });
+      try {
+        fresh(); await session.start();
+        t.mock.timers.tick(6000);
+        assert.equal(recorderInstances[0].state, 'recording', 'continuous speech must not be cut at six seconds');
+        amplitude = 0;
+        t.mock.timers.tick(900);
+        assert.equal(recorderInstances[0].state, 'inactive', 'a sentence pause should flush the chunk');
+        await deliver();
+        amplitude = .05;
+        t.mock.timers.tick(12000);
+        assert.equal(recorderInstances[1].state, 'inactive', 'even continuous speech remains bounded below the server limit');
+        session.cancel();
+        assert.equal(closes, 1);
+      } finally {
+        session.cancel();
+        t.mock.timers.reset();
+        set('AudioContext', undefined);
+      }
+    });
+    await t.test('variable chunk durations still stop recording after three minutes', async (t) => {
+      session?.cancel(); // Clear real timers before installing the fake clock.
+      t.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'] });
+      try {
+        const events = fresh(); await session.start();
+        t.mock.timers.tick(180000);
+        assert.ok(trackStops > 0);
+        assert.equal(events.statuses.at(-1), 'stopping');
+        await deliver();
+        assert.equal(events.statuses.at(-1), 'idle');
+      } finally { session.cancel(); t.mock.timers.reset(); }
     });
     await t.test('stop waits for final recorder data and recognition before idle/approval', async () => {
       const events = fresh(); response = deferred(); await session.start(); session.stop();
