@@ -753,3 +753,50 @@ def test_document_read_budget_rejects_values_outside_document_deadline(timeout):
     from pydantic import ValidationError
     with pytest.raises(ValidationError):
         Settings(_env_file=None, lab_document_read_timeout_seconds=timeout)
+
+
+def test_ingestion_numeric_agreement_with_units_and_scientific_notation_preserves_conflicts():
+    from app.domain.lab_document_ingestion import RawLabRow, validate_merge
+    from app.domain.canonical_lab_model import SourceContext
+    for raw,unit,numeric,conflict in [('94 mg/L','mg/L',94,False),('1.48e1','10^9/L',14.8,False),
+                                     ('94 mg/L','mg/L',9,True),('2+','mg/L',2,True)]:
+        case=validate_merge([RawLabRow({'raw_parameter_name':'Test','raw_value':raw,'unit':unit,'normalized_value':numeric},1,1)],SourceContext('file_upload'))
+        row=case['labs'][0]
+        assert row['raw_value']==raw
+        assert ('numeric_value_conflict' in row['ingestion_reasons']) is conflict
+        assert row['reader_normalized_value']==str(numeric)
+        if conflict:assert row['normalized_value'] is None and row['needs_review']
+    case=validate_merge([RawLabRow({'raw_parameter_name':'Test','raw_value':'≥90','normalized_value':90},1,1)],SourceContext('file_upload'))
+    assert case['labs'][0]['normalized_value'] is None
+
+
+def test_different_source_document_dates_do_not_create_spurious_observation_conflicts():
+    from app.domain.lab_document_ingestion import RawLabRow,validate_merge
+    from app.domain.canonical_lab_model import SourceContext
+    rows=[RawLabRow({'raw_parameter_name':'Creatinine','raw_value':value,'unit':'mg/dL',
+                    'reference_text':'0.5–1.0','document_date':day},1,index)
+          for index,(value,day) in enumerate([('0.91','2026-02-01'),('1.98','2026-02-03')],1)]
+    case=validate_merge(rows,SourceContext('file_upload'))
+    assert len(case['labs'])==2
+    assert all('conflicting_or_repeated_observation' not in row['ingestion_reasons'] for row in case['labs'])
+    rows[1].data['document_date']='2026-02-01'
+    conflict=validate_merge(rows,SourceContext('file_upload'))
+    assert all('conflicting_or_repeated_observation' in row['ingestion_reasons'] for row in conflict['labs'])
+
+
+def test_local_pdf_numeric_and_reference_parsers_share_verified_grammar():
+    from app.domain.fast_pdf_lab_parser import _parse_numeric_value,_parse_reference
+    assert _parse_numeric_value('≥90')==(90,'>=')
+    assert _parse_numeric_value('0.42 ng/mL','ng/mL')==(.42,None)
+    assert _parse_numeric_value('3+')==(None,None)
+    assert _parse_reference('Reference: <5')==(None,5,'Reference: <5')
+    assert _parse_reference('Ref: 4,0–10,0')==(4,10,'Ref: 4,0–10,0')
+
+
+def test_verified_inline_unit_does_not_create_false_missing_unit_review():
+    from app.domain.lab_document_ingestion import RawLabRow,validate_merge
+    from app.domain.canonical_lab_model import SourceContext
+    output=validate_merge([RawLabRow({'raw_parameter_name':'CRP','raw_value':'94 mg/L','reference_text':'<5 mg/L'},1,1)],SourceContext('file_upload'))
+    row=output['labs'][0]
+    assert row['unit'] is None and row['raw_value']=='94 mg/L'
+    assert 'missing_unit' not in row['ingestion_reasons'] and row['normalized_value']==94

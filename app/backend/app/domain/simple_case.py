@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+import unicodedata
 from typing import Any
 
-from app.domain.lab_result_classification import classify_lab_result
+from app.domain.lab_result_classification import classify_lab_result, parse_source_reference, normalize_lab_unit
 from app.domain.document_dates import calendar_day, date_values
 from app.schemas.simple_case import (
     ClinicalContext,
@@ -20,7 +22,14 @@ from app.schemas.simple_case import (
 
 def case_fingerprint(case: dict[str, Any]) -> str:
     """Bind an AI report to the exact normalized case used to generate it."""
-    encoded = json.dumps(case, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    # Additive parsing diagnostics must not invalidate an unchanged legacy report.
+    # Raw observations, reference evidence, status and reasons stay in the hash.
+    parsing_fields = {'normalized_value', 'value_comparator', 'value_limit', 'parsed_unit'}
+    stable = {**case, 'labs': [
+        {key: value for key, value in row.items() if key not in parsing_fields}
+        for row in case.get('labs', [])
+    ]} if 'labs' in case else case
+    encoded = json.dumps(stable, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
@@ -33,6 +42,23 @@ def _reference_matches_patient(
     This function only selects among reference ranges already present in the
     source report. It never invents a medical reference range.
     """
+
+    label = reference.text.rsplit(':', 1)[0] if ':' in reference.text else ''
+    label = ''.join(char for char in unicodedata.normalize('NFKD', label.casefold().replace('ı','i')) if not unicodedata.combining(char))
+    if re.search(r'\b(female|male|women|men|kadin|erkek)\b', label) and reference.sex in (None, 'unknown'):
+        return False
+    if re.search(r'\b(age|yas|adult|adults|child|children|pediatric|eriskin|cocuk)\b', label) and reference.age_min is None and reference.age_max is None:
+        return False
+
+    female_label = bool(re.search(r'\b(female|women|kadin)\b', label))
+    male_label = bool(re.search(r'\b(male|men|erkek)\b', label))
+    if female_label and (male_label or reference.sex != 'female'):
+        return False
+    if male_label and reference.sex != 'male':
+        return False
+    labelled_age = re.search(r'\b(?:age|yas)\s*(\d+)\s*[-–—]\s*(\d+)\b', label)
+    if labelled_age and (reference.age_min != int(labelled_age[1]) or reference.age_max != int(labelled_age[2])):
+        return False
 
     if clinical.age is not None:
         if reference.age_min is not None and clinical.age < reference.age_min:
@@ -76,27 +102,23 @@ def select_source_reference(
             # Equally applicable but conflicting source rows are not resolved by
             # list order. Missing clinical context must not create a false label.
             tied = [item for item in matching if specificity(item) == specificity(selected)]
-            signatures = {
-                (item.minimum, item.maximum, item.unit,
-                 item.text)
-                for item in tied
-            }
+            def signature(item):
+                parsed = parse_source_reference(item.text, item.minimum, item.maximum)
+                if parsed.error:
+                    return ('unparsed', item.text, item.minimum, item.maximum, item.unit)
+                # Unit spelling/boundary semantics are part of the evidence.
+                units = {normalize_lab_unit(value) for value in (item.unit, parsed.unit) if normalize_lab_unit(value)}
+                if not units and normalize_lab_unit(lab.unit):
+                    units.add(normalize_lab_unit(lab.unit))
+                units = tuple(sorted(units))
+                return (parsed.low, parsed.high, parsed.low_inclusive, parsed.high_inclusive, units)
+            signatures = {signature(item) for item in tied}
             if len(signatures) > 1:
                 return None, "missing", None
             return selected.text, "report_age_sex_match", selected
 
     if not lab.source_references and (lab.source_reference or lab.raw_reference):
         return lab.source_reference or lab.raw_reference, "report", None
-
-    # A generic reference row may still be useful when no demographic-specific
-    # row matches and the report explicitly supplied it.
-    for reference in lab.source_references:
-        if (
-            reference.age_min is None
-            and reference.age_max is None
-            and (reference.sex is None or reference.sex == "unknown")
-        ):
-            return reference.text, "report", reference
 
     return None, "missing", None
 
@@ -145,6 +167,10 @@ def normalize_simple_case(payload: SimpleCaseRequest) -> SimpleCaseResponse:
                 reference_high=classification.reference_high,
                 raw_reference=classification.raw_reference,
                 classification_reason=classification.classification_reason,
+                normalized_value=classification.normalized_value,
+                value_comparator=classification.value_comparator,
+                value_limit=classification.value_limit,
+                parsed_unit=classification.parsed_unit,
             )
         )
 

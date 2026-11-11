@@ -95,3 +95,47 @@ test('selected reference never replaces the complete original demographic refere
   const generic = row(445, '250 – 450', { status: 'NORMAL' });
   assert.equal(invalidateDemographicClassification(generic), generic);
 });
+
+test('restoring parsed observations preserves raw units and censored limits', () => {
+  const source = { ...row('>100 mg/L','<5',{unit:'mg/L'}), reference_text:'<5',reference_source:'report',
+    normalized_value:null,value_comparator:'>',value_limit:100,parsed_unit:'mg/L',status:'HIGH' };
+  const restored=normalizedLabToInput(source);
+  assert.equal(restored.value,'>100 mg/L');assert.equal(restored.value_limit,100);
+  assert.equal(restored.normalized_value,null);assert.equal(restored.value_comparator,'>');
+  const refs=[{text:'0.5–1.0',minimum:.5,maximum:1,sex:'female'}];
+  const invalid=invalidateDemographicClassification({...restored,source_references:refs});
+  assert.equal(invalid.status,undefined);assert.equal(invalid.normalized_value,undefined);
+  assert.equal(invalid.value,'>100 mg/L');assert.deepEqual(invalid.source_references,refs);
+});
+
+test('new uncertainty invalidates an otherwise identical canonical cached reading', () => {
+  const first=row('94 mg/L','<5',{unit:'mg/L',status:'HIGH',normalized_value:94,reference_high:5,
+    source_metadata:{source_sha256:'same'}});
+  const before=structuredClone(first);
+  const warning={...first,source_metadata:{source_sha256:'same',needs_review:true,ingestion_reasons:['numeric_value_conflict']}};
+  const merged=mergeLabDocuments([first],[warning,structuredClone(first)]);
+  assert.equal(merged.length,1);assert.equal(merged[0].status,undefined);
+  assert.equal(merged[0].normalized_value,undefined);assert.equal(merged[0].reference_high,undefined);
+  assert.deepEqual(merged[0].source_metadata.ingestion_reasons,['numeric_value_conflict']);
+  assert.deepEqual(first,before);
+  // A later apparently clean reading cannot clear earlier unresolved evidence.
+  const missing={...warning,status:undefined};
+  assert.equal(mergeLabDocuments([missing],[first])[0].status,undefined);
+});
+
+test('equivalent demographic reference order deduplicates but different dates and bounds survive', () => {
+  const refs=[{text:'12–16',minimum:12,maximum:16,sex:'female'},{text:'13–17',minimum:13,maximum:17,sex:'male'}];
+  const first=row(15,null,{source_references:refs,specimen_date:'2026-02-01',status:'NORMAL',reference_low:12});
+  assert.equal(mergeLabDocuments([first],[{...first,source_references:[...refs].reverse()}]).length,1);
+  assert.equal(mergeLabDocuments([first],[{...first,specimen_date:'2026-02-02'}]).length,2);
+  const bad={...first,reference_low:13};
+  assert.equal(mergeLabDocuments([first],[bad])[0].status,undefined);
+});
+
+test('invalidating a legacy cached classification never drops its only printed reference', () => {
+  const first=row(3,null,{status:'NORMAL',raw_reference:'2–5',source_metadata:{source_sha256:'same'}});
+  const warned={...first,source_metadata:{source_sha256:'same',needs_review:true,ingestion_reasons:['low_input_confidence']}};
+  const restored=mergeLabDocuments([first],[warned])[0];
+  assert.equal(restored.status,undefined);assert.equal(restored.source_reference,'2–5');
+  assert.equal(mergeLabDocuments([restored],[first]).length,1);
+});

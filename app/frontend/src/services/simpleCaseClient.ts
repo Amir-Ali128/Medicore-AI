@@ -53,6 +53,10 @@ export type CanonicalLabClassification = {
   reference_high?: number | null;
   raw_reference?: string | null;
   classification_reason?: string | null;
+  normalized_value?: number | null;
+  value_comparator?: string | null;
+  value_limit?: number | null;
+  parsed_unit?: string | null;
 };
 
 export type LabInput = DocumentDates & CanonicalLabClassification & {

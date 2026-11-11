@@ -200,3 +200,109 @@ def test_boolean_observation_does_not_coerce_into_numeric_value():
     output = normalize_simple_case(payload).labs[0]
     assert output.value == "True"
     assert output.status == "UNKNOWN"
+
+
+@pytest.mark.parametrize(('value','unit','reference','status','numeric'),[
+    ('14.8','10^9/L','Ref: 4.0–10.0','HIGH',14.8),
+    ('82','%','40–75','HIGH',82),
+    ('94 mg/L','mg/L','Reference: <5','HIGH',94),
+    ('0.42 ng/mL','ng/mL','<0.10','HIGH',.42),
+    ('0.91','mg/dL','Normal: 0.5-1.0','NORMAL',.91),
+    ('1,98 mg/dL','mg/dL','0,5–1,0','HIGH',1.98),
+    ('31 U/L','U/L','<35','NORMAL',31),
+    ('-3 mmol/L','mmol/L','-5–-1','NORMAL',-3),
+    ('1.48e1 10^9/L','10^9/L','4e0–1e1','HIGH',14.8),
+])
+def test_verified_numeric_formats_and_source_labels(value,unit,reference,status,numeric):
+    c=classify_lab_result(value=value,unit=unit,reference_text=reference)
+    assert (c.status,c.normalized_value,c.parsed_unit)==(status,numeric,unit)
+    assert c.raw_reference==reference
+
+
+@pytest.mark.parametrize(('value','reference','expected','operator','limit'),[
+    ('>100 mg/L','<5','HIGH','>',100),
+    ('<0.10 mg/L','<0.10','NORMAL','<',.10),
+    ('≥90 mg/L','>90','UNKNOWN','>=',90),
+    ('≤5 mg/L','<5','UNKNOWN','<=',5),
+    ('≤5 mg/L','<=5','NORMAL','<=',5),
+])
+def test_inline_units_and_comparators_never_become_exact_measurements(value,reference,expected,operator,limit):
+    c=classify_lab_result(value=value,unit='mg/L',reference_text=reference)
+    assert (c.status,c.value_comparator,c.value_limit)==(expected,operator,limit)
+    assert c.normalized_value is None
+
+
+@pytest.mark.parametrize('value',['Positive','Negative','Normal','2+','3+','94 mg/L elevated','94 mystery'])
+def test_qualitative_or_unvalidated_suffix_cannot_be_numeric(value):
+    c=classify_lab_result(value=value,unit='mg/L',reference_text='<5')
+    assert c.status=='UNKNOWN' and c.normalized_value is None
+
+
+def test_observed_unit_conflict_and_unparseable_reference_are_not_ignored():
+    assert classify_lab_result(value='94 mg/dL',unit='mg/L',reference_text='<5').classification_reason=='observed_unit_mismatch'
+    c=classify_lab_result(value=3,reference_text='2–5 or 8–10',reference_low=2,reference_high=5)
+    assert c.status=='UNKNOWN'
+    assert classify_lab_result(value=3,reference_text='Negative',reference_low=2,reference_high=5).status=='UNKNOWN'
+
+
+def test_equivalent_reference_typography_is_not_a_conflict_but_strictness_still_is():
+    case={'labs':[{'test_name':'Creatinine','value':.91,'unit':'mg/dL','source_references':[
+        {'text':'Ref: 0.5–1.0','minimum':.5,'maximum':1,'unit':'mg/dL'},
+        {'text':'0,5-1,0','minimum':.5,'maximum':1,'unit':'mg/dL'}]}]}
+    assert normalize_simple_case(SimpleCaseRequest.model_validate(case)).labs[0].status=='NORMAL'
+
+
+@pytest.mark.parametrize('label',['Female: 0.5–1.0','Adult: 0.5–1.0','Age 10-17: 0.5–1.0'])
+def test_demographic_label_without_structured_applicability_stays_unknown(label):
+    payload=SimpleCaseRequest.model_validate({'clinical':{'sex':'male','age':40},'labs':[{
+        'test_name':'test','value':.91,'source_references':[{'text':label,'minimum':.5,'maximum':1}]}]})
+    assert normalize_simple_case(payload).labs[0].status=='UNKNOWN'
+
+
+def test_changed_demographics_reclassify_verified_source_intervals_and_ignore_cached_numbers():
+    refs=[{'text':'Female: 0.5–1.0','minimum':.5,'maximum':1,'sex':'female'},
+          {'text':'Male: 0.5–1.2','minimum':.5,'maximum':1.2,'sex':'male'}]
+    first=normalize_simple_case(SimpleCaseRequest.model_validate({'clinical':{'sex':'female'},'labs':[{
+        'test_name':'Creatinine','value':'1.1 mg/dL','unit':'mg/dL','source_references':refs,
+        'status':'NORMAL','normalized_value':99}]}))
+    assert first.labs[0].status=='HIGH' and first.labs[0].normalized_value==1.1
+    snapshot=first.model_dump(mode='json');snapshot['clinical']['sex']='male'
+    second=normalize_simple_case(SimpleCaseRequest.model_validate(snapshot))
+    assert second.labs[0].status=='NORMAL' and second.labs[0].value=='1.1 mg/dL'
+
+
+def test_validated_inline_unit_can_supply_a_missing_unit_without_overwriting_source():
+    for missing in (None,'   '):
+        output=normalize_simple_case(SimpleCaseRequest.model_validate({'labs':[{
+            'test_name':'CRP','value':'94 mg/L','unit':missing,'source_reference':'Reference: <5 mg/L'}]})).labs[0]
+        assert output.status=='HIGH' and output.parsed_unit=='mg/L'
+        assert output.unit==missing and output.value=='94 mg/L'
+
+
+def test_additive_parsed_fields_preserve_legacy_fingerprint_but_status_and_sources_do_not():
+    from app.domain.simple_case import case_fingerprint
+    from copy import deepcopy
+    old={'labs':[{'test_name':'CRP','value':94,'unit':'mg/L','status':'HIGH','raw_reference':'<5'}]}
+    richer=deepcopy(old);richer['labs'][0].update(normalized_value=94,value_comparator=None,value_limit=None,parsed_unit='mg/L')
+    assert case_fingerprint(old)==case_fingerprint(richer)
+    richer['labs'][0]['status']='UNKNOWN'
+    assert case_fingerprint(old)!=case_fingerprint(richer)
+    richer=deepcopy(old);richer['labs'][0]['value']='>94'
+    assert case_fingerprint(old)!=case_fingerprint(richer)
+
+
+def test_reference_unit_can_be_printed_in_either_verified_reference_field():
+    payload=SimpleCaseRequest.model_validate({'labs':[{'test_name':'Test','value':3,'unit':'mg/L','source_references':[
+        {'text':'Ref: 2–5 mg/L'}, {'text':'2-5','unit':'mg/L','minimum':2,'maximum':5},
+    ]}]})
+    assert normalize_simple_case(payload).labs[0].status=='NORMAL'
+
+
+@pytest.mark.parametrize('reference',[
+    {'text':'Female: 0.5–1.0','minimum':.5,'maximum':1,'sex':'male'},
+    {'text':'Age 10-17: 0.5–1.0','minimum':.5,'maximum':1,'age_min':18,'age_max':65},
+])
+def test_printed_population_label_cannot_be_overridden_by_conflicting_structured_applicability(reference):
+    case=SimpleCaseRequest.model_validate({'clinical':{'age':40,'sex':'male'},'labs':[{
+        'test_name':'Test','value':.91,'source_references':[reference]}]})
+    assert normalize_simple_case(case).labs[0].status=='UNKNOWN'
