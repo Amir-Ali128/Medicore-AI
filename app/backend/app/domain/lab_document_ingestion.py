@@ -13,7 +13,7 @@ from typing import Any
 from app.domain.canonical_lab_model import SourceContext, build_canonical_case, content_sha256
 from app.domain.lab_document_normalizer import DocumentPage, normalize_document
 from app.domain.lab_document_errors import LabDocumentReadError
-from app.domain.lab_result_classification import normalize_lab_unit, parse_lab_observation
+from app.domain.lab_result_classification import canonical_lab_unit, parse_lab_observation
 
 CONTRACT = 'medicore-lab-document-ingestion-v2'
 INGESTION_TIMEOUT_SECONDS = 300.0
@@ -70,14 +70,19 @@ def validate_merge(rows: list[RawLabRow], source: SourceContext) -> dict[str, An
             if supplied.error or supplied.comparator:
                 reasons.append('invalid_numeric_value')
                 row['normalized_value'] = None
-            elif observed.number is None or observed.number != supplied.number:
+            elif (observed.number is None or observed.number != supplied.number) and (
+                (grouped := parse_lab_observation(value, row.get('unit'), grouped_thousands=True)).number is None
+                or grouped.number != supplied.number
+            ):
                 reasons.append('numeric_value_conflict')
                 row['normalized_value'] = None
             else:
+                # "250.000" with a reader value of 250000 is a Turkish grouped count.
+                observed = observed if observed.number == supplied.number else grouped
                 row['normalized_value'] = float(observed.number) if not observed.comparator else None
         elif observed.number is not None and not observed.comparator:
             row['normalized_value'] = float(observed.number)
-        if row.get('reference_unit') and row.get('unit') and normalize_lab_unit(row['reference_unit']) != normalize_lab_unit(row['unit']):
+        if row.get('reference_unit') and row.get('unit') and canonical_lab_unit(row['reference_unit']) != canonical_lab_unit(row['unit']):
             reasons.append('reference_unit_mismatch')
         flag = _text(row.get('source_flag'))
         folded_flag = flag.casefold().translate(str.maketrans('ıüşöçğ', 'iusocg'))

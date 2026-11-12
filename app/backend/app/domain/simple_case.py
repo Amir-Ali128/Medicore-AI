@@ -8,7 +8,7 @@ import re
 import unicodedata
 from typing import Any
 
-from app.domain.lab_result_classification import classify_lab_result, parse_source_reference, normalize_lab_unit
+from app.domain.lab_result_classification import canonical_lab_unit, classify_lab_result, has_sex_specific_segments, parse_source_reference
 from app.domain.document_dates import calendar_day, date_values
 from app.schemas.simple_case import (
     ClinicalContext,
@@ -43,7 +43,11 @@ def _reference_matches_patient(
     source report. It never invents a medical reference range.
     """
 
-    label = reference.text.rsplit(':', 1)[0] if ':' in reference.text else ''
+    # One printed reference with rows for both sexes ("Erkek: 13-17 Kadın:
+    # 12-15") is selected here and resolved by the classifier with the
+    # patient's sex; dropping it would wrongly report "no reference".
+    combined_sex_text = reference.sex in (None, "unknown") and has_sex_specific_segments(reference.text)
+    label = '' if combined_sex_text else (reference.text.rsplit(':', 1)[0] if ':' in reference.text else '')
     label = ''.join(char for char in unicodedata.normalize('NFKD', label.casefold().replace('ı','i')) if not unicodedata.combining(char))
     if re.search(r'\b(female|male|women|men|kadin|erkek)\b', label) and reference.sex in (None, 'unknown'):
         return False
@@ -107,9 +111,9 @@ def select_source_reference(
                 if parsed.error:
                     return ('unparsed', item.text, item.minimum, item.maximum, item.unit)
                 # Unit spelling/boundary semantics are part of the evidence.
-                units = {normalize_lab_unit(value) for value in (item.unit, parsed.unit) if normalize_lab_unit(value)}
-                if not units and normalize_lab_unit(lab.unit):
-                    units.add(normalize_lab_unit(lab.unit))
+                units = {canonical_lab_unit(value) for value in (item.unit, parsed.unit) if canonical_lab_unit(value)}
+                if not units and canonical_lab_unit(lab.unit):
+                    units.add(canonical_lab_unit(lab.unit))
                 units = tuple(sorted(units))
                 return (parsed.low, parsed.high, parsed.low_inclusive, parsed.high_inclusive, units)
             signatures = {signature(item) for item in tied}
@@ -145,6 +149,7 @@ def normalize_simple_case(payload: SimpleCaseRequest) -> SimpleCaseResponse:
             reference_high=reference_details.maximum if reference_details else None,
             reference_unit=reference_details.unit if reference_details else None,
             ingestion_reasons=lab.source_metadata.get("ingestion_reasons", ()),
+            patient_sex=payload.clinical.sex,
         )
 
         labs.append(
@@ -171,6 +176,7 @@ def normalize_simple_case(payload: SimpleCaseRequest) -> SimpleCaseResponse:
                 value_comparator=classification.value_comparator,
                 value_limit=classification.value_limit,
                 parsed_unit=classification.parsed_unit,
+                status_explanation=classification.status_explanation,
             )
         )
 

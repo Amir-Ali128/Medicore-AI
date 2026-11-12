@@ -125,17 +125,8 @@ def _canonicalize_known_row(row: dict[str, Any]) -> dict[str, Any]:
             row["extracted_reference_min"] = None
             row["extracted_reference_max"] = None
 
-    # Reuse the already-established deterministic demo references for common
-    # lipid markers. Do not invent ranges for calculated scores/indexes.
-    if row.get("extracted_reference_min") is None or row.get("extracted_reference_max") is None:
-        forced_reference = lab_analysis._forced_demo_reference(canonical)
-        if forced_reference is not None:
-            unit, low, high = forced_reference
-            row["unit"] = unit
-            row["extracted_unit"] = unit
-            row["extracted_reference_min"] = low
-            row["extracted_reference_max"] = high
-
+    # Never substitute demo/catalogue ranges for a reference the PDF did not
+    # print: a missing reference stays missing ("Referans aralığı raporda yok").
     return row
 
 

@@ -160,11 +160,14 @@ def _row_from_numeric_match(match: re.Match[str], report_date: date) -> dict[str
     raw_name = match.group("name").strip(" :-")
     if not raw_name or _is_non_blood_test(raw_name):
         return None
+    # Footer phone numbers ("0 850 240 03 03") look like numeric rows.
+    if re.fullmatch(r"0(?:\s\d+)+", raw_name):
+        return None
 
     value = _parse_number(match.group("value"))
     if value is None:
         return None
-    unit = match.group("unit").strip()
+    unit = (match.groupdict().get("unit") or "").strip()
     if unit == "---":
         unit = ""
     low, high = _parse_reference(match.groupdict().get("reference"))

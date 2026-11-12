@@ -8,6 +8,7 @@ function clearClassification(lab: LabInput) {
   delete lab.status; delete lab.reference_low; delete lab.reference_high;
   delete lab.raw_reference; delete lab.classification_reason;
   delete lab.normalized_value; delete lab.value_comparator; delete lab.value_limit; delete lab.parsed_unit;
+  delete lab.status_explanation;
 }
 
 
@@ -65,6 +66,7 @@ export function mergeLabDocuments(existing: LabInput[], incoming: LabInput[]): L
       duplicate.reference_high = row.reference_high;
       duplicate.raw_reference = row.raw_reference;
       duplicate.classification_reason = row.classification_reason;
+      duplicate.status_explanation = row.status_explanation;
       duplicate.normalized_value = row.normalized_value;
       duplicate.value_comparator = row.value_comparator;
       duplicate.value_limit = row.value_limit;
