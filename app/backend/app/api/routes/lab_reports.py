@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import UTC, date, datetime
 from typing import Annotated, Any
@@ -32,6 +33,7 @@ from app.schemas.radiology_report import DEMO_PATIENT_ID
 router = APIRouter(tags=["lab-reports"])
 
 _MAX_LAB_FILE_BYTES = 10 * 1024 * 1024
+_ARCHIVE_FILE_NAME = "laboratuvar-raporu.pdf"
 
 
 class LabReportSummary(BaseModel):
@@ -357,8 +359,15 @@ async def store_lab_report_original_file(
     if len(content) > _MAX_LAB_FILE_BYTES:
         raise HTTPException(status_code=413, detail="PDF dosyası 10 MB sınırını aşıyor.")
 
+    # Names/TCKN/phone known for this patient are removed everywhere, not only
+    # next to a label. Archival runs the same sanitizer as the AI boundary.
+    from app.infrastructure.ai_privacy_context import load_patient_identifiers
+
+    privacy = await load_patient_identifiers(session, report.patient_id)
     try:
-        anonymized = anonymize_lab_pdf(content)
+        anonymized = await asyncio.to_thread(
+            anonymize_lab_pdf, content, known_identifiers=privacy.known_identifiers,
+        )
     except ValueError as exc:
         raise HTTPException(
             status_code=422,
@@ -398,7 +407,8 @@ async def store_lab_report_original_file(
     )
     report.metadata_json = metadata
     if not report.file_name:
-        report.file_name = filename
+        # The uploaded file name often contains the patient's name; never keep it.
+        report.file_name = _ARCHIVE_FILE_NAME
 
     await session.commit()
     await session.refresh(report)
@@ -436,8 +446,8 @@ async def open_lab_report_original_file(
             detail="Bu kaydın PDF'i saklanmamış. PDF'i yeniden yükleyip Kaydet'e basın.",
         )
 
-    filename = report.file_name or "laboratuvar-raporu.pdf"
-    encoded_filename = quote(filename, safe="")
+    # The archived bytes are anonymized; the download name must be as well.
+    encoded_filename = quote(_ARCHIVE_FILE_NAME, safe="")
     return Response(
         content=bytes(row["original_file_data"]),
         media_type=row["original_file_content_type"] or "application/pdf",
