@@ -1,4 +1,5 @@
 """Authenticated, transient audio-to-text; no patient persistence dependency."""
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -13,6 +14,7 @@ from app.domain.clinical_voice import (
 from app.infrastructure.database.models.user import User
 from app.domain.voice_model_assets import effective_voice_model_path
 
+logger = logging.getLogger("medicore.clinical_voice")
 router = APIRouter(prefix="/clinical-voice", tags=["clinical-voice"])
 _User = Annotated[User, Depends(get_current_active_user)]
 
@@ -51,6 +53,8 @@ async def transcribe(request: Request, response: Response, _user: _User) -> dict
         raise HTTPException(429, "Ses motoru meşgul. Kısa bir süre sonra tekrar deneyin.") from None
     except InvalidVoiceAudio:
         raise HTTPException(422, "Ses çözümlenemedi veya 15 saniyelik parça sınırı aşıldı.") from None
-    except Exception:
-        # Never include decoder/model errors, audio or transcripts in logs/responses.
+    except Exception as exc:
+        # Operators need to know the engine failed; only the exception class is
+        # logged, never its message, audio or transcript text.
+        logger.error("clinical_voice_transcription_failed error_type=%s", type(exc).__name__)
         raise HTTPException(503, "Ses metne dönüştürülemedi. Metni elle düzeltebilir veya tekrar deneyebilirsiniz.") from None

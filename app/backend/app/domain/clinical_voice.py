@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from importlib.util import find_spec
 from io import BytesIO
+import re
+import unicodedata
 from pathlib import Path
 from threading import Lock
 from time import monotonic
@@ -13,6 +15,46 @@ from app.infrastructure.local_model_resources import model_lock, activate_model,
 SAMPLE_RATE = 16_000
 MAX_AUDIO_SECONDS = 15
 MAX_AUDIO_BYTES = 2 * 1024 * 1024
+
+
+# Subtitle credits Whisper emits for Turkish silence/noise (learned from YouTube
+# captions). They are never clinical speech and must not reach the transcript.
+_HALLUCINATIONS = re.compile(
+    r"^(?:altyazi\b.*|.*\baltyazi(?:lar)?\s+(?:m\s*\.?\s*k|mk)\b.*"
+    r"|(?:izlediginiz|dinlediginiz) icin tesekkur(?:ler| ederim| ederiz)"
+    r"|abone ol(?:mayi unutmayin|un)?|altyazilar? .*tarafindan.*)$"
+)
+
+
+def turkish_fold(text: str) -> str:
+    """Locale-correct Turkish lowercase without diacritics (İ→i, I→ı→i).
+
+    Python's str.lower() maps "İ" to "i̇" (two code points), so plain lower()
+    comparisons silently fail on capitalised Turkish words.
+    """
+    lowered = text.replace("İ", "i").replace("I", "ı").lower().replace("ı", "i")
+    stripped = "".join(c for c in unicodedata.normalize("NFD", lowered) if not unicodedata.combining(c))
+    return re.sub(r"\s+", " ", re.sub(r"[^\w\s]", " ", stripped)).strip()
+
+
+def is_hallucination(text: str) -> bool:
+    folded = turkish_fold(text)
+    return bool(folded) and bool(_HALLUCINATIONS.match(folded))
+
+
+def clean_segments(texts: list[str]) -> tuple[str, bool]:
+    """Join segment texts, dropping known silence hallucinations and decoder repeat loops."""
+    kept: list[str] = []
+    changed = False
+    for raw in texts:
+        text = raw.strip()
+        if not text:
+            continue
+        if is_hallucination(text) or (kept and turkish_fold(kept[-1]) == turkish_fold(text)):
+            changed = True
+            continue
+        kept.append(text)
+    return " ".join(kept), changed
 
 
 class VoiceUnavailable(Exception):
@@ -133,10 +175,10 @@ class OfflineTurkishRecognizer:
                 temperature=0, condition_on_previous_text=False, vad_filter=True,
             )
             decoded = list(segments)
-            text = " ".join(segment.text.strip() for segment in decoded if segment.text.strip())
+            text, filtered = clean_segments([segment.text for segment in decoded])
             if len(text) > 12000:
                 raise InvalidVoiceAudio()
-            review = any(segment.avg_logprob < -0.8 or segment.no_speech_prob > 0.6 for segment in decoded)
+            review = filtered or any(segment.avg_logprob < -0.8 or segment.no_speech_prob > 0.6 for segment in decoded)
             return {"text": text, "duration_seconds": round(duration, 3), "language": "tr", "needs_review": review}
         finally:
             self._lock.release()

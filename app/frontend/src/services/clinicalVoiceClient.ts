@@ -7,6 +7,9 @@ type Transcription = { text: string; language: string; duration_seconds: number;
 export type VoiceStatus = 'preparing' | 'listening' | 'stopping' | 'idle';
 export type VoiceCallbacks = { onText: (text: string, review: boolean) => void; onStatus: (status: VoiceStatus) => void; onError: (message: string) => void };
 export const VOICE_CHUNK_MS = 12000;
+// After the soft limit a short breath is enough to cut; the hard limit stays below the 15 s server bound.
+export const VOICE_HARD_CHUNK_MS = 14000;
+const SOFT_PAUSE_MS = 200;
 const MAX_RECORDING_MS = 180000;
 const MIN_CHUNK_MS = 3000;
 const PAUSE_MS = 800;
@@ -59,7 +62,7 @@ export class ClinicalVoiceSession {
       if (!globalThis.isSecureContext || !navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') throw new Error('Bu tarayıcıda güvenli mikrofon kaydı desteklenmiyor. HTTPS üzerinden açın veya metni elle girin.');
       const capabilities = await voiceRequest<Capabilities>('capabilities', this.controller.signal);
       if (!this.current()) return;
-      if (!capabilities.ready || capabilities.processing !== 'medicore-server-offline' || capabilities.language !== 'tr' || capabilities.max_audio_seconds < VOICE_CHUNK_MS / 1000) throw new Error('Yerel Türkçe ses modeli henüz hazırlanmadı. Metni elle girebilirsiniz.');
+      if (!capabilities.ready || capabilities.processing !== 'medicore-server-offline' || capabilities.language !== 'tr' || capabilities.max_audio_seconds <= VOICE_HARD_CHUNK_MS / 1000) throw new Error('Yerel Türkçe ses modeli henüz hazırlanmadı. Metni elle girebilirsiniz.');
       this.mime = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/ogg;codecs=opus'].find((type) => MediaRecorder.isTypeSupported(type)) ?? '';
       if (!this.mime) throw new Error('Tarayıcı desteklenen bir ses biçimi sağlayamıyor. Metni elle girin.');
       const stream = await navigator.mediaDevices.getUserMedia({ audio: {
@@ -98,7 +101,9 @@ export class ClinicalVoiceSession {
           this.heardSpeech = true;
           this.lastSpeech = now;
         }
-        if (this.heardSpeech && now - this.chunkStarted >= MIN_CHUNK_MS && now - this.lastSpeech >= PAUSE_MS) {
+        const elapsed = now - this.chunkStarted;
+        const pause = elapsed >= VOICE_CHUNK_MS ? SOFT_PAUSE_MS : PAUSE_MS;
+        if ((this.heardSpeech && elapsed >= MIN_CHUNK_MS && now - this.lastSpeech >= pause) || elapsed >= VOICE_HARD_CHUNK_MS) {
           this.recorder.stop();
         }
       }, 100);
@@ -139,7 +144,10 @@ export class ClinicalVoiceSession {
     this.lastSpeech = this.chunkStarted;
     this.heardSpeech = false;
     recorder.start();
-    this.timer = setTimeout(() => { if (recorder.state === 'recording') recorder.stop(); }, VOICE_CHUNK_MS);
+    // With level monitoring, continuous speech gets until the hard limit to reach a word gap instead of
+    // being cut mid-word at 12 s; without it, the fixed 12 s fallback remains.
+    const limit = this.audioContext ? VOICE_HARD_CHUNK_MS : VOICE_CHUNK_MS;
+    this.timer = setTimeout(() => { if (recorder.state === 'recording') recorder.stop(); }, limit);
   }
 
   private async drain() {
