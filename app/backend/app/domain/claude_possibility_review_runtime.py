@@ -36,42 +36,7 @@ _original_build_hypothesis = ClaudeClinicalHypothesisService._build_hypothesis
 def _ensure_possibility_language(summary: str, language: str) -> str:
     """Return a short summary that explicitly communicates uncertainty."""
 
-    cleaned = " ".join(str(summary or "").split()).strip()
-    is_turkish = language.lower().startswith("tr")
-
-    if is_turkish:
-        if "olabilir" in cleaned.lower():
-            return cleaned[:_MAX_SUMMARY_CHARS]
-
-        # Remove common review tails before adding the uncertainty/review suffix.
-        lowered = cleaned.lower()
-        tails = (
-            "; acil değerlendirme gerekli",
-            "; acil değerlendirme gerekir",
-            "; hekim değerlendirmesi gerekli",
-            "; hekim değerlendirmesi gerekir",
-            ". hekim değerlendirmesi gerekir",
-        )
-        for tail in tails:
-            if lowered.endswith(tail):
-                cleaned = cleaned[: -len(tail)].rstrip(" .;,:")
-                break
-
-        suffix = " olabilir; hekim değerlendirmesi gerekir."
-        room = max(1, _MAX_SUMMARY_CHARS - len(suffix))
-        base = cleaned[:room].rstrip(" .;,:")
-        if not base:
-            base = "Bulgular klinik bir paternle ilişkili"
-        return f"{base}{suffix}"[:_MAX_SUMMARY_CHARS]
-
-    lowered = cleaned.lower()
-    if " may " in f" {lowered} " or " could " in f" {lowered} ":
-        return cleaned[:_MAX_SUMMARY_CHARS]
-
-    suffix = " may represent a possible pattern; physician review is required."
-    room = max(1, _MAX_SUMMARY_CHARS - len(suffix))
-    base = cleaned[:room].rstrip(" .;,:") or "Findings"
-    return f"{base}{suffix}"[:_MAX_SUMMARY_CHARS]
+    return service_module.ensure_possibility_language(summary, language, _MAX_SUMMARY_CHARS)
 
 
 @classmethod

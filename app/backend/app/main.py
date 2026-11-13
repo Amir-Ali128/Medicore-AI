@@ -9,6 +9,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.router import api_router
+# Install the clinical runtime layers at startup in a fixed order. They were
+# previously imported lazily by the first source-only evaluation request, so the
+# AI prompt/behaviour silently changed after the first such request.
+import app.domain.clinical_domain_router_runtime  # noqa: F401,E402
 from app.infrastructure.ai_privacy_context import privacy_request_context
 from app.domain.privacy_gateway import PrivacyViolation, PRIVACY_ERROR_CODE, PRIVACY_MESSAGE
 from app.infrastructure.admin_bootstrap import ensure_bootstrap_admin
