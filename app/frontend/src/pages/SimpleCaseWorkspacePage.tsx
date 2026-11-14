@@ -61,9 +61,15 @@ function labReferenceText(lab: LabInput) {
 
 function LabSourceFlag({ lab }: { lab: LabInput }) {
   const flag = lab.source_metadata?.source_flag;
-  return typeof flag === 'string' && flag.trim()
-    ? <p className="mt-1 text-xs text-slate-400">Belgedeki işaret: {flag}</p>
-    : null;
+  const explanation = lab.status === 'UNKNOWN' ? lab.status_explanation?.trim() : null;
+  return (
+    <>
+      {typeof flag === 'string' && flag.trim()
+        ? <p className="mt-1 text-xs text-slate-400">Belgedeki işaret: {flag}</p>
+        : null}
+      {explanation ? <p className="mt-1 text-xs text-slate-500">{explanation}</p> : null}
+    </>
+  );
 }
 
 const CURRENT_REPORT_HEADINGS = [

@@ -104,6 +104,8 @@ class LabResultInput(BaseModel):
     value_comparator: str | None = None
     value_limit: float | None = None
     parsed_unit: str | None = None
+    # Human-readable Turkish reason for UNKNOWN (e.g. "Referans aralığı raporda yok").
+    status_explanation: str | None = None
 
     @field_validator("value", mode="before")
     @classmethod
@@ -138,6 +140,8 @@ class LabResultOutput(BaseModel):
     value_comparator: str | None = None
     value_limit: float | None = None
     parsed_unit: str | None = None
+    # Human-readable Turkish reason for UNKNOWN (e.g. "Referans aralığı raporda yok").
+    status_explanation: str | None = None
 
 
 class MedicalReportInput(BaseModel):

@@ -106,7 +106,8 @@ Strict source fidelity:
 - Preserve source values, units and printed reference text when clinically relevant.
 - Never invent a source finding, value, reference range, reported diagnosis, recommendation, or negative finding.
 - You receive the full laboratory list, including NORMAL and UNKNOWN rows. Do not depend on frontend display groups or omit useful counter-evidence.
-- Preserve each supplied canonical status alongside its source value, unit and raw_reference/reference_text. Never invent or substitute a reference interval. If status is UNKNOWN, describe the supplied classification_reason or uncertainty without independently classifying the result.
+- Preserve each supplied canonical status alongside its source value, unit and raw_reference/reference_text. Never invent or substitute a reference interval. If status is UNKNOWN, describe the supplied status_explanation (for example "Referans aralığı raporda yok") without independently classifying the result.
+- Never write the raw English codes "UNKNOWN" or classification_reason identifiers in the report; write the Turkish status_explanation instead (e.g. "Referans aralığı raporda yok", "değerlendirilemedi").
 - Comparator values such as "<2" or ">90" remain source observations, not exact numbers; retain the supplied canonical status and its uncertainty.
 - Preserve negation and uncertainty.
 - Do not add markdown fences or JSON. Return only the finished Turkish medical report.
@@ -156,6 +157,7 @@ def _build_case_payload(payload: SimpleCaseRequest) -> dict[str, Any]:
                 "reference_high": item.reference_high,
                 "raw_reference": item.raw_reference,
                 "classification_reason": item.classification_reason,
+                "status_explanation": item.status_explanation,
                 "source_flag": item.source_metadata.get("source_flag"),
                 "needs_review": item.source_metadata.get("needs_review", False),
                 "ingestion_reasons": item.source_metadata.get("ingestion_reasons", []),
@@ -344,6 +346,8 @@ async def interpret_simple_case(payload: SimpleCaseRequest) -> CaseAIInterpretat
             if not suppress:
                 kept.append(line)
         text = '\n'.join(kept)
+    from app.domain.lab_result_classification import humanize_status_codes
+    text = humanize_status_codes(text)
     return CaseAIInterpretation(
         report_text=(render_consistency_section(flags) if flags is not None else "") + text,
         model=model,

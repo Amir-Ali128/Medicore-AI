@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import re
 import uuid
-from datetime import date
 from typing import Any
 
 from sqlalchemy import text as sql_text
@@ -129,8 +128,8 @@ def _source_reports_ratio(text: str) -> bool:
     return False
 
 
-def _parse_with_derived_ratio(text: str) -> list[dict[str, Any]]:
-    parsed = _original_parse_lab_values(text)
+def _parse_with_derived_ratio(text: str, patient_sex: str | None = None) -> list[dict[str, Any]]:
+    parsed = _original_parse_lab_values(text, patient_sex=patient_sex)
 
     reported_ratio = next(
         (item for item in parsed if item.get("raw_parameter_name") == _RATIO_NAME),
@@ -172,7 +171,7 @@ def _parse_with_derived_ratio(text: str) -> list[dict[str, Any]]:
             "extracted_reference_min": _RATIO_MIN,
             "extracted_reference_max": _RATIO_MAX,
             "extracted_unit": "",
-            "measured_at": date.today().isoformat(),
+            "measured_at": None,
             "metadata": {
                 "derived": True,
                 "formula": "BUN / Kreatinin",

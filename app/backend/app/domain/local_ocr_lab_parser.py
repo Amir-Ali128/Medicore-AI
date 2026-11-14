@@ -29,9 +29,6 @@ _ocr_engine_lock = threading.RLock()
 
 _MIN_ACCEPTED_ROWS = 3
 _HEADER_HINTS = ("TETKIK", "TAHLIL", "SONUC", "BIRIM", "REFERANS")
-_VALUE_RE = re.compile(r"^\s*([<>]=?)?\s*(-?\d+(?:[.,]\d+)?)\s*$")
-_RANGE_RE = re.compile(r"^\s*(-?\d+(?:[.,]\d+)?)\s*[-–—]\s*(-?\d+(?:[.,]\d+)?)\s*$")
-_ONE_SIDED_RE = re.compile(r"^\s*([<>]=?)\s*(-?\d+(?:[.,]\d+)?)\s*$")
 
 
 @dataclass(frozen=True)
@@ -68,29 +65,27 @@ def _clean(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
 
 
-def _numeric_value(text: str) -> float | None:
-    match = _VALUE_RE.fullmatch(_clean(text))
-    if not match:
-        return None
-    try:
-        return float(match.group(2).replace(",", "."))
-    except ValueError:
-        return None
+def _numeric_value(text: str, unit: str | None = None) -> float | None:
+    """Shared source parser: decimal comma, Turkish grouped counts, flags."""
+    from app.domain.lab_result_classification import parse_lab_observation
 
-
-def _reference_bounds(text: str) -> tuple[float | None, float | None]:
     cleaned = _clean(text)
-    match = _RANGE_RE.fullmatch(cleaned)
-    if match:
-        return (
-            float(match.group(1).replace(",", ".")),
-            float(match.group(2).replace(",", ".")),
-        )
-    match = _ONE_SIDED_RE.fullmatch(cleaned)
-    if match:
-        number = float(match.group(2).replace(",", "."))
-        return (None, number) if match.group(1).startswith("<") else (number, None)
-    return None, None
+    if not cleaned:
+        return None
+    parsed = parse_lab_observation(cleaned, unit)
+    return float(parsed.number) if parsed.number is not None else None
+
+
+def _reference_bounds(text: str, unit: str | None = None) -> tuple[float | None, float | None]:
+    from app.domain.lab_result_classification import parse_source_reference
+
+    parsed = parse_source_reference(_clean(text), unit=unit)
+    if parsed.error:
+        return None, None
+    return (
+        float(parsed.low) if parsed.low is not None else None,
+        float(parsed.high) if parsed.high is not None else None,
+    )
 
 
 def _tokens_from_result(result: Any) -> list[OcrToken]:
@@ -301,14 +296,14 @@ def parse_ocr_tokens_to_lab_rows(
         if folded_name in {"TARIH", "TEST", "TESTLER"}:
             continue
 
-        numeric = _numeric_value(value_text)
+        numeric = _numeric_value(value_text, None if unit in {"", "---", "—"} else unit)
         # OCR fallback is intentionally conservative: require a numeric result
         # and a source reference before accepting a row as trustworthy enough
         # for automatic import.
         if numeric is None or not reference:
             continue
 
-        reference_min, reference_max = _reference_bounds(reference)
+        reference_min, reference_max = _reference_bounds(reference, None if unit in {"", "---", "—"} else unit)
         rows.append(
             {
                 "raw_parameter_name": name,

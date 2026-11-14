@@ -271,8 +271,6 @@ async def _ensure_demo_patient_and_user() -> None:
 
 
 
-# Large but not absurd ceiling for lower-bound-only markers.
-_DEMO_OPEN_UPPER_LIMIT = 999.0
 
 
 
@@ -929,7 +927,7 @@ async def analyze_uploaded_pdf_report(
 
 
 
-    values = _parse_lab_values_from_text(extracted_text)
+    values = _parse_lab_values_from_text(extracted_text, patient_sex=patient_metadata.sex)
 
 
 
@@ -949,7 +947,8 @@ async def analyze_uploaded_pdf_report(
         patient_id=DEMO_PATIENT_ID,
         uploaded_by_user_id=DEMO_UPLOADED_BY_USER_ID,
         file_name=file.filename,
-        report_date=date.today(),
+        # Labelled document dates only; never the upload day.
+        report_date=_document_report_date(extracted_text),
         values=values,
     )
 
@@ -967,6 +966,16 @@ async def analyze_uploaded_pdf_report(
 
 
 
+
+
+def _document_report_date(text: str) -> date | None:
+    from app.domain.document_dates import extract_document_dates
+
+    dates = extract_document_dates(text)
+    for key in ("specimen_date", "event_date", "result_date", "document_date"):
+        if key in dates:
+            return dates[key]
+    return None
 
 
 def _extract_text_from_pdf(file_bytes: bytes) -> str:
@@ -996,7 +1005,33 @@ def _extract_text_from_pdf(file_bytes: bytes) -> str:
 
 
 
-def _parse_lab_values_from_text(text: str) -> list[dict[str, Any]]:
+# One-sided report limits ("< 200", "> 40") reach the legacy RuleEngine with a
+# distant opposite bound. These are open-interval sentinels, not clinical values;
+# a lone number without a printed comparator is never turned into a limit.
+_OPEN_LOWER_SENTINEL = -1_000_000_000.0
+_OPEN_UPPER_SENTINEL = 1_000_000_000.0
+
+_LEGACY_NUM = r"\d{1,3}(?:\.\d{3})+(?![\d.])|\d+(?:\.\d+)?"
+_VALUE_TOKEN = re.compile(rf"(?P<op><=|>=|<|>)?\s*(?P<num>[-+]?(?:{_LEGACY_NUM}))")
+_LEADING_FLAG = re.compile(
+    r"^(?:\(\s*(?:HH|LL|H|L|Y|D)\s*\)|(?:HH|LL|HIGH|LOW|H|L|Y|D)(?![A-Za-z/0-9])|\*+|[↑↓]+)\s*",
+    flags=re.IGNORECASE,
+)
+_REFERENCE_RANGE_IN_TEXT = re.compile(
+    rf"\(?\s*[-+]?(?:{_LEGACY_NUM})\s*-\s*[-+]?(?:{_LEGACY_NUM})\s*\)?"
+)
+_REFERENCE_LIMIT_IN_TEXT = re.compile(rf"(?:<=|>=|<|>)\s*(?:{_LEGACY_NUM})")
+_SEX_REFERENCE_HINT = re.compile(r"(?i)\b(?:erkek|kadin|male|female)\b|(?<![A-Za-z])[EK]\s*:")
+_PREVIOUS_RESULT_DATE = re.compile(r"\(?\b\d{2}\.\d{2}\.\d{4}\b\)?")
+
+
+def _parse_lab_values_from_text(text: str, patient_sex: str | None = None) -> list[dict[str, Any]]:
+    """Read one row per known parameter, using only what the line prints.
+
+    The reference printed on the row is preserved as ``reference_text`` and
+    parsed into bounds; nothing is substituted from demo or catalogue ranges.
+    ``measured_at`` stays empty: document dates are attached by the caller.
+    """
     normalized_text = _normalize_text(text)
     lines = [
         line.strip()
@@ -1004,53 +1039,18 @@ def _parse_lab_values_from_text(text: str) -> list[dict[str, Any]]:
         if line.strip() and not _is_noise_line(line)
     ]
 
-
-
-
     parsed_values: list[dict[str, Any]] = []
-    seen_parameters: set[str] = set()
-
-
-
-
     for raw_parameter_name, config in LAB_PARAMETER_ALIASES.items():
-        if raw_parameter_name in seen_parameters:
-            continue
-
-
-
-
         parsed_value = _find_parameter_value_in_lines(
             raw_parameter_name=raw_parameter_name,
             aliases=config["aliases"],
             default_unit=config["default_unit"],
             lines=lines,
+            patient_sex=patient_sex,
         )
-
-
-
-
-        if parsed_value is None:
-            continue
-
-
-
-
-        parsed_values.append(parsed_value)
-        seen_parameters.add(raw_parameter_name)
-
-
-
-
+        if parsed_value is not None:
+            parsed_values.append(parsed_value)
     return parsed_values
-
-
-
-
-
-
-
-
 
 
 def _is_bun_creatinine_ratio_line(line: str) -> bool:
@@ -1065,119 +1065,75 @@ def _is_bun_creatinine_ratio_line(line: str) -> bool:
     )
 
 
+def _row_quality(row: dict[str, Any]) -> tuple[int, int]:
+    return (1 if row.get("reference_parsed") else 0, 1 if row.get("unit_from_source") else 0)
+
+
 def _find_parameter_value_in_lines(
     *,
     raw_parameter_name: str,
     aliases: list[str],
     default_unit: str,
     lines: list[str],
+    patient_sex: str | None = None,
 ) -> dict[str, Any] | None:
+    """Return the best source row for a parameter.
+
+    A report can mention the same marker more than once (summary, previous
+    result, the table row). The row that carries a usable printed reference and
+    unit wins; ties keep document order.
+    """
     sorted_aliases = sorted(aliases, key=len, reverse=True)
-
-
-
+    best: dict[str, Any] | None = None
 
     for line in lines:
         if raw_parameter_name in {"BUN", "Kreatinin"} and _is_bun_creatinine_ratio_line(line):
             continue
-
         for alias in sorted_aliases:
             if not _line_contains_alias(line, alias):
                 continue
-
-
-
-
-            parsed = _parse_result_row(line, alias, raw_parameter_name, default_unit)
-
-
-
-
+            parsed = _parse_result_row(line, alias, raw_parameter_name, default_unit, patient_sex=patient_sex)
             if parsed is None:
                 continue
-
-
-
-
-            value, unit, reference_min, reference_max = parsed
-
-
-
-
-            forced_reference = _forced_demo_reference(raw_parameter_name)
-            if forced_reference is not None:
-                unit, reference_min, reference_max = forced_reference
-
-
-
-
-            if not _looks_like_reasonable_value(raw_parameter_name, value):
+            if parsed["normalized_value"] is not None and not _looks_like_reasonable_value(
+                raw_parameter_name, parsed["normalized_value"]
+            ):
                 continue
+            if best is None or _row_quality(parsed) > _row_quality(best):
+                best = parsed
+            break
+        if best is not None and _row_quality(best) == (1, 1):
+            break
+
+    if best is None:
+        return None
+    best.pop("reference_parsed", None)
+    best.pop("unit_from_source", None)
+    return best
 
 
-
-
-            return {
-                "raw_parameter_name": raw_parameter_name,
-                "raw_value": str(value),
-                "normalized_value": value,
-                "unit": unit,
-                "extracted_reference_min": reference_min,
-                "extracted_reference_max": reference_max,
-                "extracted_unit": unit,
-                "measured_at": date.today().isoformat(),
-            }
-
-
-
-
+def _reference_text_from_tail(text: str) -> str | None:
+    """Locate the printed reference after the value/unit columns."""
+    text = _PREVIOUS_RESULT_DATE.sub(" ", text).replace("↓", " ").replace("↑", " ")
+    text = re.sub(r"\s+", " ", text).strip()
+    if not text:
+        return None
+    sex_hint = _SEX_REFERENCE_HINT.search(text)
+    if sex_hint:
+        start = min(
+            (m.start() for m in (re.search(r"[<>]?=?\s*[-+]?\d", text), sex_hint) if m is not None),
+            default=sex_hint.start(),
+        )
+        return text[start:].strip()
+    ranges = list(_REFERENCE_RANGE_IN_TEXT.finditer(text))
+    if ranges:
+        return ranges[-1].group(0).strip()
+    limits = list(_REFERENCE_LIMIT_IN_TEXT.finditer(text))
+    if limits:
+        return limits[-1].group(0).strip()
+    if re.search(r"(?i)\b(negatif|negative|pozitif|positive)\b", text):
+        return re.search(r"(?i)\b(negatif|negative|pozitif|positive)\b", text).group(0)
     return None
-
-
-
-
-
-
-
-
-def _forced_demo_reference(parameter_name: str) -> tuple[str, float, float] | None:
-    """FINAL5_FORCE_REFERENCES: deterministic demo ranges for known report markers.
-
-
-
-
-    These values come from the PDF report reference intervals / common decision
-    limits used by the demo parser, and are applied before the downstream
-    ReferenceResolver. This avoids duplicate DB parameter/range ambiguity in
-    the local MVP demo.
-    """
-    forced: dict[str, tuple[str, float, float]] = {
-        "GFR": ("mL/dk/1.73m2", 60.0, 90.0),
-        "Total Kolesterol": ("mg/dL", 0.0, 200.0),
-        "HDL": ("mg/dL", 40.0, 999.0),
-        "Trigliserit": ("mg/dL", 0.0, 150.0),
-        "TRIGLISERIT": ("mg/dL", 0.0, 150.0),
-        "LDL": ("mg/dL", 0.0, 130.0),
-        "Non-HDL": ("mg/dL", 0.0, 120.0),
-        "IG Mutlak": ("K/mm3", 0.0, 0.06),
-        "IG %": ("%", 0.0, 0.6),
-        "Total Bilirubin": ("mg/dL", 0.20, 1.25),
-        "Direkt Bilirubin": ("mg/dL", 0.0, 0.30),
-        "FOLIK_ASIT": ("ng/mL", 3.89, 26.80),
-        "Lökosit": ("K/mm3", 4.50, 11.00),
-        "P_LCR": ("%", 19.40, 43.70),
-        "FT3": ("pmol/L", 3.93, 7.70),
-        "FT4": ("pmol/L", 12.0, 22.0),
-        "VITAMIN_B1": ("ug/L", 25.0, 75.0),
-        "SEDIMENTASYON": ("mm/S", 0.0, 15.0),
-    }
-    return forced.get(parameter_name)
-
-
-
-
-
-
 
 
 def _parse_result_row(
@@ -1185,277 +1141,157 @@ def _parse_result_row(
     alias: str,
     parameter_name: str,
     default_unit: str,
-) -> tuple[float, str, float | None, float | None] | None:
+    *,
+    patient_sex: str | None = None,
+) -> dict[str, Any] | None:
+    from app.domain.lab_result_classification import (
+        _mixed_grouping,
+        _number,
+        is_count_per_volume_unit,
+        parse_source_reference,
+    )
+
     alias_match = _find_alias_match(line, alias)
-
-
-
-
     if alias_match is None:
         return None
 
-
-
-
-    after_alias = line[alias_match.end() :].strip()
-    value_match = re.search(r"[<>]?\s*[-+]?\d+(?:\.\d+)?", after_alias)
-
-
-
-
+    after_alias = line[alias_match.end():].strip()
+    value_match = _VALUE_TOKEN.search(after_alias)
     if value_match is None:
         return None
 
-
-
-
-    value_text = value_match.group(0).replace(">", "").replace("<", "").strip()
-
-
-
-
-    try:
-        value = float(value_text)
-    except ValueError:
-        return None
-
-
-
-
-    after_value = after_alias[value_match.end() :].strip()
+    after_value = after_alias[value_match.end():].strip()
     after_value = re.sub(r"^(?:[:=]|\s)+", "", after_value).strip()
-    after_value = re.sub(r"^(?:H|L|HIGH|LOW|Y|D|\*|↑|↓|v|V)\s*", "", after_value, flags=re.IGNORECASE).strip()
-
-
-
+    source_flag = None
+    flag_match = _LEADING_FLAG.match(after_value)
+    if flag_match:
+        source_flag = flag_match.group(0).strip()
+        after_value = after_value[flag_match.end():].strip()
 
     unit_match = _match_unit(after_value)
-    unit = default_unit
-    after_unit = after_value
+    unit = unit_match.group(0) if unit_match is not None else default_unit
+    after_unit = after_value[unit_match.end():].strip() if unit_match is not None else after_value
 
+    reference_text = _reference_text_from_tail(after_unit)
+    reference_tokens = re.findall(rf"{_LEGACY_NUM}", reference_text or "")
+    grouped = is_count_per_volume_unit(unit) or _mixed_grouping(value_match.group("num"), *reference_tokens)
+    number = _number(value_match.group("num"), grouped_thousands=grouped)
+    if number is None:
+        return None
+    value = float(number)
+    comparator = value_match.group("op")
 
+    reference_min = reference_max = None
+    reference_parsed = False
+    if reference_text:
+        reference = parse_source_reference(
+            reference_text,
+            unit=unit if unit_match is not None else None,
+            patient_sex=patient_sex,
+            grouped_thousands=grouped,
+        )
+        if not reference.error:
+            reference_parsed = True
+            reference_min = float(reference.low) if reference.low is not None else None
+            reference_max = float(reference.high) if reference.high is not None else None
 
+    extracted_min, extracted_max = reference_min, reference_max
+    if extracted_min is not None and extracted_max is None:
+        extracted_max = _OPEN_UPPER_SENTINEL
+    elif extracted_max is not None and extracted_min is None:
+        extracted_min = _OPEN_LOWER_SENTINEL
 
-    if unit_match is not None:
-        unit = unit_match.group(0)
-        after_unit = after_value[unit_match.end() :].strip()
-
-
-
-
-    reference_min, reference_max = _extract_reference_from_after_unit(after_unit)
-    reference_min, reference_max = _adjust_one_sided_reference(
-        parameter_name=parameter_name,
-        reference_min=reference_min,
-        reference_max=reference_max,
-    )
-
-
-
-
-    # Final hard override for two report-specific markers whose DB/reference
-    # resolution can be ambiguous because of duplicate parameter records.
-    # This makes them complete extracted-report ranges and bypasses DB fallback.
-    parameter_key = parameter_name.upper().replace("-", "_").replace(" ", "_")
-    if parameter_key in {"FOLIK_ASIT", "FOLIC_ACID", "FOLATE"}:
-        unit = "ng/mL"
-        reference_min = 3.89
-        reference_max = 26.80
-    elif parameter_key in {"P_LCR", "PLCR"}:
-        unit = "%"
-        reference_min = 19.40
-        reference_max = 43.70
-    elif parameter_key in {"TOTAL_BILIRUBIN", "TOTAL_BILIRUBIN_BILIRUBIN_TOTAL", "BILIRUBIN_TOTAL"}:
-        unit = "mg/dL"
-        reference_min = 0.20
-        reference_max = 1.25
-    elif parameter_key in {"DIREKT_BILIRUBIN", "DIREKT_BILIRUBIN_BILIRUBIN_DIREKT", "DIRECT_BILIRUBIN", "BILIRUBIN_DIREKT"}:
-        unit = "mg/dL"
-        reference_min = 0.00
-        reference_max = 0.30
-    elif parameter_key in {"LOKOSIT", "LÖKOSIT", "WBC", "BEYAZ_KAN_HUCRESI", "BEYAZ_KAN_HÜCRESI"}:
-        unit = "K/mm3"
-        reference_min = 4.50
-        reference_max = 11.00
-
-
-
-
-    return value, unit, reference_min, reference_max
-
-
-
-
-
-
+    if reference_text and _SEX_REFERENCE_HINT.search(reference_text):
+        # The canonical row keeps the full sex-specific text; the deterministic
+        # classifier selects the row from the case's patient sex.
+        reference_min = reference_max = None
+    raw_value = f"{comparator}{value_match.group('num')}" if comparator else value_match.group("num")
+    return {
+        "raw_parameter_name": parameter_name,
+        "raw_value": raw_value,
+        # A censored value ("<0.5") is not an exact measurement.
+        "normalized_value": None if comparator else value,
+        # Only a printed unit is a source unit; the catalogue default is kept
+        # for the legacy reference resolver in ``extracted_unit`` alone.
+        "unit": unit if unit_match is not None else None,
+        "reference_text": reference_text,
+        "reference_min": reference_min,
+        "reference_max": reference_max,
+        "extracted_reference_min": extracted_min,
+        "extracted_reference_max": extracted_max,
+        "extracted_unit": unit,
+        "measured_at": None,
+        "value_type": "censored" if comparator else "numeric",
+        "source_flag": source_flag,
+        "confidence": 0.97 if reference_parsed and unit_match is not None else 0.9,
+        "needs_review": not reference_parsed or comparator is not None,
+        "reference_parsed": reference_parsed,
+        "unit_from_source": unit_match is not None,
+    }
 
 
 def _match_unit(text: str) -> re.Match[str] | None:
     unit_patterns = [
-        r"mL/dk/1\.73m2",
-        r"mL/min/1\.73m2",
+        r"mL/dk/1\.73\s?m\^?2",
+        r"mL/min/1\.73\s?m\^?2",
+        r"x?10\^3/uL",
+        r"x?10\^6/uL",
+        r"x?10\^9/L",
+        r"x?10\^12/L",
+        r"x?10\^3/mm3",
+        r"x?10\^6/mm3",
         r"K/mm3",
         r"M/mm3",
+        r"K/uL",
+        r"M/uL",
         r"K/mm",
         r"M/mm",
-        r"10\^3/uL",
-        r"10\^6/uL",
+        r"(?:hucre|cells?|adet)/uL",
+        r"/mm3",
+        r"/uL",
         r"uIU/mL",
+        r"mIU/mL",
         r"mIU/L",
+        r"mU/L",
+        r"IU/mL",
         r"IU/L",
+        r"U/mL",
         r"U/L",
         r"mmol/L",
         r"umol/L",
         r"pmol/L",
         r"nmol/L",
+        r"mEq/L",
         r"mg/dL",
+        r"ug/dL",
         r"g/dL",
+        r"ng/dL",
         r"ng/mL",
         r"pg/mL",
         r"ug/L",
+        r"ng/L",
         r"mg/L",
+        r"g/L",
+        r"mm/saat",
+        r"mm/sa",
+        r"mm/h",
         r"mm/S",
         r"fL",
-        r"fl",
         r"pg",
         r"%",
     ]
-
-
-
-
-    return re.match("(" + "|".join(unit_patterns) + ")", text, flags=re.IGNORECASE)
-
-
-
-
-
-
-
-
-def _extract_reference_from_after_unit(text: str) -> tuple[float | None, float | None]:
-    # Remove previous result dates before collecting numbers.
-    text = re.sub(r"\(\d{2}\.\d{2}\.\d{4}\)", " ", text)
-    # Remove common low/high markers around reference text.
-    text = text.replace("↓", " ").replace("↑", " ")
-
-
-
-
-    numbers: list[float] = []
-    comparators: list[str] = []
-
-
-
-
-    for match in re.finditer(r"([<>]?)\s*[-+]?\d+(?:\.\d+)?", text):
-        raw = match.group(0).strip()
-        comparator = match.group(1)
-        value_text = raw.replace(">", "").replace("<", "").strip()
-
-
-
-
-        try:
-            value = float(value_text)
-        except ValueError:
-            continue
-
-
-
-
-        numbers.append(value)
-        comparators.append(comparator)
-
-
-
-
-    if len(numbers) >= 2:
-        left = numbers[0]
-        right = numbers[1]
-
-
-
-
-        if left <= right:
-            return left, right
-
-
-
-
-        return None, None
-
-
-
-
-    if len(numbers) == 1:
-        if comparators[0] == ">":
-            return numbers[0], None
-        if comparators[0] == "<":
-            return None, numbers[0]
-        return None, numbers[0]
-
-
-
-
-    return None, None
-
-
-
-
-
-
-
-
-def _adjust_one_sided_reference(
-    *,
-    parameter_name: str,
-    reference_min: float | None,
-    reference_max: float | None,
-) -> tuple[float | None, float | None]:
-    # The current downstream classifier expects both bounds for automatic
-    # classification. For demo-only decision limits, expand one-sided bounds
-    # into broad two-sided ranges.
-    lower_bound_only = {"GFR", "HDL"}
-    upper_bound_only = {"TOTAL KOLESTEROL", "TRIGLISERIT", "LDL"}
-
-
-
-
-    normalized_name = parameter_name.upper()
-
-
-
-
-    if normalized_name in lower_bound_only and reference_min is not None and reference_max is None:
-        return reference_min, _DEMO_OPEN_UPPER_LIMIT
-
-
-
-
-    if normalized_name in lower_bound_only and reference_min is None and reference_max is not None:
-        # PDF often prints HDL as a single decision threshold "40" without ">".
-        return reference_max, _DEMO_OPEN_UPPER_LIMIT
-
-
-
-
-    if normalized_name in upper_bound_only and reference_min is None and reference_max is not None:
-        return 0.0, reference_max
-
-
-
-
-    return reference_min, reference_max
-
-
-
-
-
-
+    return re.match("(" + "|".join(unit_patterns) + r")(?![A-Za-z0-9])", text, flags=re.IGNORECASE) or re.match(
+        r"%", text
+    )
 
 
 def _normalize_text(text: str) -> str:
+    # "10³/µL" must stay a power of ten, not become "103/uL".
+    text = re.sub(
+        r"10([⁰¹²³⁴⁵⁶⁷⁸⁹]+)",
+        lambda m: "10^" + m.group(1).translate(str.maketrans("⁰¹²³⁴⁵⁶⁷⁸⁹", "0123456789")),
+        text,
+    )
     replacements = {
         "İ": "I",
         "ı": "i",
@@ -1478,31 +1314,21 @@ def _normalize_text(text: str) -> str:
         "∙": ".",
         "³": "3",
         "²": "2",
+        "≤": "<=",
+        "≥": ">=",
         "\t": " ",
     }
-
-
-
-
     for old, new in replacements.items():
         text = text.replace(old, new)
-
-
-
-
+    # Turkish "1.234,5" -> "1234.5"; decimal comma "3,5" -> "3.5".
+    text = re.sub(
+        r"(?<![\d.,])(\d{1,3}(?:\.\d{3})+),(\d+)(?![\d.,])",
+        lambda m: m.group(1).replace(".", "") + "." + m.group(2),
+        text,
+    )
     text = text.replace(",", ".")
     text = re.sub(r"[ ]{2,}", " ", text)
-
-
-
-
     return text
-
-
-
-
-
-
 
 
 def _is_noise_line(line: str) -> bool:

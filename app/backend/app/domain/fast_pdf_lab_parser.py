@@ -94,13 +94,44 @@ def _parse_numeric_value(raw_value: str, unit: str | None = None) -> tuple[float
     return (float(parsed.number), parsed.comparator) if parsed.number is not None else (None, None)
 
 
-def _parse_reference(reference_text: str) -> tuple[float | None, float | None, str | None]:
+def _parse_reference(reference_text: str, unit: str | None = None) -> tuple[float | None, float | None, str | None]:
+    """Parse a printed reference; the source text is always preserved.
+
+    Sex-specific or otherwise unparsed text keeps ``reference_text`` with no
+    bounds so the deterministic classifier can select it with patient context.
+    """
     text = _clean_cell(reference_text)
-    parsed = parse_source_reference(text)
+    if text in {"---", "--", "-"}:
+        return None, None, None
+    parsed = parse_source_reference(text, unit=unit)
     if parsed.error:
         return None, None, text or None
     return (float(parsed.low) if parsed.low is not None else None,
             float(parsed.high) if parsed.high is not None else None, text)
+
+
+_SEX_LABEL_HINT = re.compile(r"(?i)\b(?:erkek|kad[ıi]n|male|female)\b|(?<![A-Za-z])[EK]\s*:")
+
+
+def _append_wrapped_reference(previous: dict[str, Any], fragment: str) -> None:
+    """Attach a reference fragment wrapped onto the next e-Nabız table line."""
+    fragment = _clean_cell(fragment)
+    if not fragment or _DATE_RE.search(fragment) or _TIME_RE.fullmatch(fragment):
+        return
+    current = previous.get("reference_text")
+    if not current:
+        combined = fragment
+    elif (
+        previous.get("reference_min") is None and previous.get("reference_max") is None
+    ) or _SEX_LABEL_HINT.search(current) or _SEX_LABEL_HINT.search(fragment):
+        # e.g. "0,5 -" + "1,5" or "Erkek: 13-17" + "Kadın: 12-15".
+        combined = f"{current} {fragment}"
+    else:
+        return
+    ref_min, ref_max, ref_text = _parse_reference(combined, previous.get("unit"))
+    previous["reference_min"] = ref_min
+    previous["reference_max"] = ref_max
+    previous["reference_text"] = ref_text
 
 
 def _merge_measured_at(current: str | None, cell: str) -> str | None:
@@ -158,14 +189,12 @@ def _parse_enabiz_table_data(
 
         current_measured_at = _merge_measured_at(current_measured_at, date_text)
 
-        # Wrapped references can appear in the first column on a continuation row.
-        if not name and not raw_value and date_text and previous_result is not None:
-            if not previous_result.get("reference_text"):
-                ref_min, ref_max, ref_text = _parse_reference(date_text)
-                if ref_text and not _DATE_RE.search(date_text) and not _TIME_RE.fullmatch(date_text):
-                    previous_result["reference_min"] = ref_min
-                    previous_result["reference_max"] = ref_max
-                    previous_result["reference_text"] = ref_text
+        # Wrapped references can appear in the first column or in the reference
+        # column of a continuation row (long or sex-specific references).
+        if not name and not raw_value and previous_result is not None and (date_text or reference):
+            for fragment in (date_text, reference):
+                if fragment:
+                    _append_wrapped_reference(previous_result, fragment)
             continue
 
         # Section/group rows carry a date/title but no observed value.
@@ -177,7 +206,7 @@ def _parse_enabiz_table_data(
             continue
 
         normalized_value, comparator = _parse_numeric_value(raw_value, unit)
-        ref_min, ref_max, ref_text = _parse_reference(reference)
+        ref_min, ref_max, ref_text = _parse_reference(reference, None if unit in {"", "---"} else unit)
         qualitative = normalized_value is None
 
         row = {
@@ -250,9 +279,34 @@ def _canonical_rows(parsed_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "value_type": row.get("value_type") or "numeric",
                 "confidence": row.get("confidence", 0.99),
                 "needs_review": bool(row.get("needs_review", False)),
+                "source_flag": row.get("source_flag"),
             }
         )
     return rows
+
+
+_MIN_LEGACY_QUALITY = 0.6
+
+
+def legacy_parse_quality(rows: list[dict[str, Any]]) -> float:
+    """Share of rows that carry both a printed unit and a usable reference."""
+    if not rows:
+        return 0.0
+    good = sum(
+        1
+        for row in rows
+        if row.get("unit") and row.get("reference_text")
+        and not row.get("needs_review")
+    )
+    return good / len(rows)
+
+
+def _first_document_date(rows: list[dict[str, Any]]) -> str | None:
+    for row in rows:
+        for key in ("specimen_date", "event_date", "result_date", "document_date"):
+            if row.get(key):
+                return row[key]
+    return None
 
 
 def try_fast_pdf_lab_case(
@@ -327,8 +381,8 @@ def try_fast_pdf_lab_case(
             _parse_patient_metadata_from_text,
         )
 
-        parsed_rows = _parse_lab_values_from_text(text)
         patient = _parse_patient_metadata_from_text(text)
+        parsed_rows = _parse_lab_values_from_text(text, patient_sex=getattr(patient, "sex", None))
     except Exception:
         return None
 
@@ -341,13 +395,19 @@ def try_fast_pdf_lab_case(
     if not rows:
         return None
 
+    quality = legacy_parse_quality(rows)
+    if quality < _MIN_LEGACY_QUALITY:
+        # Too many rows lack a printed reference/unit: let the AI reader try
+        # instead of locking in a low-quality local read.
+        return None
+
     return build_canonical_case(
         source=source,
         rows=rows,
         patient_age=getattr(patient, "age", None),
         patient_sex=getattr(patient, "sex", None),
-        report_date=rows[0].get("measured_at"),
-        warnings=[FAST_PDF_WARNING, f"local_parser_rows={len(rows)}"],
-        extraction_confidence=0.99,
-        default_confidence=0.99,
+        report_date=_first_document_date(rows),
+        warnings=[FAST_PDF_WARNING, f"local_parser_rows={len(rows)}", f"local_parser_quality={quality:.2f}"],
+        extraction_confidence=round(0.7 + 0.29 * quality, 3),
+        default_confidence=0.9,
     )

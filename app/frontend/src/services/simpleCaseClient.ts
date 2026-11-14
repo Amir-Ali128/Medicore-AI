@@ -53,6 +53,8 @@ export type CanonicalLabClassification = {
   reference_high?: number | null;
   raw_reference?: string | null;
   classification_reason?: string | null;
+  // Turkish, human-readable reason for UNKNOWN (e.g. "Referans aralığı raporda yok").
+  status_explanation?: string | null;
   normalized_value?: number | null;
   value_comparator?: string | null;
   value_limit?: number | null;
