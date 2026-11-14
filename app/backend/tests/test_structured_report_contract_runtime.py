@@ -1,8 +1,28 @@
+from app.api.routes import radiology_image_review, radiology_reports
 from app.domain.medical_report_summary_ai import MedicalReportReview
-from app.domain.structured_report_contract_runtime import (
+
+# Importing this runtime layer monkeypatches route functions process-wide at import
+# time. It is not installed in production, so undo those patches right away: these
+# tests only exercise its pure helpers and must not change other test modules.
+_PATCHED_ROUTE_ATTRS = [
+    (radiology_reports, name) for name in ("_persist_report", "_extract_upload_text")
+] + [
+    (radiology_image_review, name)
+    for name in (
+        "review_radiology_media",
+        "review_radiology_media_openai",
+        "review_radiology_media_gemini",
+    )
+]
+_SAVED_ROUTE_ATTRS = [(module, name, getattr(module, name)) for module, name in _PATCHED_ROUTE_ATTRS]
+
+from app.domain.structured_report_contract_runtime import (  # noqa: E402
     _merge_review_metadata_structured,
     _structured_result_text,
 )
+
+for _module, _name, _value in _SAVED_ROUTE_ATTRS:
+    setattr(_module, _name, _value)
 
 
 def _review() -> MedicalReportReview:

@@ -17,8 +17,13 @@ class RadiologyReportSafetyTests(unittest.TestCase):
         result = analyze_radiology_report_safely(report)
 
         self.assertNotIn("Pulmoner emboli", result["critical_findings"])
+        # Structured output is built only from the Bulgular/Findings section, so an
+        # indication-only term is never a candidate (nothing left to suppress).
         self.assertTrue(
-            any("suppressed unsupported critical mentions" in item for item in result["warnings"])
+            any("yalnızca Bulgular/Findings bölümünden" in item for item in result["warnings"])
+        )
+        self.assertFalse(
+            any("kritik ifade saptandı" in item for item in result["warnings"])
         )
 
     def test_history_only_critical_term_is_suppressed(self) -> None:
