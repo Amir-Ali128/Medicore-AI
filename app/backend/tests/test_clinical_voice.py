@@ -179,3 +179,106 @@ def test_decoder_failure_releases_capacity_for_the_next_request(monkeypatch):
     with pytest.raises(voice.InvalidVoiceAudio):
         recognizer.transcribe(b"invalid", "/model")
     assert recognizer.transcribe(wav(amplitude=0), "/model")["text"] == ""
+
+
+# --- Turkish ASR output hygiene -------------------------------------------------
+
+def _segment(text, *, logprob=-0.2, no_speech=0.05):
+    return SimpleNamespace(text=text, avg_logprob=logprob, no_speech_prob=no_speech)
+
+
+def _recognizer_returning(monkeypatch, segments):
+    monkeypatch.setattr(voice, "voice_ready", lambda path: True)
+    model = SimpleNamespace(transcribe=Mock(return_value=(segments, None)), supported_languages=["tr"])
+    monkeypatch.setitem(sys.modules, "faster_whisper", SimpleNamespace(WhisperModel=Mock(return_value=model)))
+    monkeypatch.setitem(sys.modules, "onnxruntime", SimpleNamespace(disable_telemetry_events=Mock()))
+    return voice.OfflineTurkishRecognizer(), model
+
+
+def test_turkish_fold_handles_dotted_and_dotless_capitals():
+    # str.lower() turns "İ" into "i" + combining dot, which breaks plain comparisons.
+    assert "İZLEDİĞİNİZ".lower() != "izlediğiniz"
+    assert voice.turkish_fold("İZLEDİĞİNİZ İÇİN") == "izlediginiz icin"
+    assert voice.turkish_fold("NABIZ, Işık") == "nabiz isik"
+
+
+@pytest.mark.parametrize("text", [
+    "Altyazı M.K.", "altyazı mk", "ALTYAZI M.K.", "İzlediğiniz için teşekkürler.",
+    "İzlediğiniz için teşekkür ederim!", "Abone olmayı unutmayın.", "Altyazılar Amara.org topluluğu tarafından",
+])
+def test_known_turkish_silence_hallucinations_are_detected(text):
+    assert voice.is_hallucination(text)
+
+
+@pytest.mark.parametrize("text", ["Hasta teşekkür etti.", "Nabız 108.", "Altı gündür öksürük.", "Abone değil.", ""])
+def test_clinical_speech_is_not_mistaken_for_a_hallucination(text):
+    assert not voice.is_hallucination(text)
+
+
+def test_hallucinated_credits_never_reach_the_transcript(tmp_path, monkeypatch):
+    recognizer, _model = _recognizer_returning(monkeypatch, [
+        _segment(" Tansiyon yüz yirmiye seksen."), _segment(" Altyazı M.K.", no_speech=0.4),
+    ])
+    result = recognizer.transcribe(wav(), str(tmp_path))
+    assert result["text"] == "Tansiyon yüz yirmiye seksen."
+    assert result["needs_review"] is True  # something was removed: the clinician must listen again
+
+
+def test_repeated_decoder_segments_are_collapsed_and_flagged(tmp_path, monkeypatch):
+    recognizer, _model = _recognizer_returning(monkeypatch, [
+        _segment(" Ateşi otuz sekiz buçuk."), _segment(" Ateşi otuz sekiz buçuk."), _segment(" ateşi otuz sekiz buçuk"),
+        _segment(" Nabız doksan."),
+    ])
+    result = recognizer.transcribe(wav(), str(tmp_path))
+    assert result["text"] == "Ateşi otuz sekiz buçuk. Nabız doksan."
+    assert result["needs_review"] is True
+
+
+def test_clean_confident_speech_is_not_flagged(tmp_path, monkeypatch):
+    recognizer, model = _recognizer_returning(monkeypatch, [_segment(" Nabız doksan."), _segment(" Ateş yok.")])
+    result = recognizer.transcribe(wav(), str(tmp_path))
+    assert result == {"text": "Nabız doksan. Ateş yok.", "duration_seconds": 1.0, "language": "tr", "needs_review": False}
+    kwargs = model.transcribe.call_args.kwargs
+    assert kwargs["language"] == "tr" and kwargs["task"] == "transcribe"
+
+
+def test_only_hallucinations_yield_empty_text(tmp_path, monkeypatch):
+    recognizer, _model = _recognizer_returning(monkeypatch, [_segment("İzlediğiniz için teşekkürler.", no_speech=0.7)])
+    result = recognizer.transcribe(wav(), str(tmp_path))
+    assert result["text"] == "" and result["needs_review"] is True
+
+
+@pytest.mark.parametrize("container,codec,media_type", [
+    ("webm", "libopus", "audio/webm"), ("ogg", "libopus", "audio/ogg"), ("mp4", "aac", "audio/mp4"),
+])
+def test_browser_recorder_formats_decode_to_16k_mono(container, codec, media_type):
+    """Chrome (webm/opus), Firefox (ogg/opus) and Safari (mp4/aac) MediaRecorder output at 48 kHz stereo."""
+    av = pytest.importorskip("av")
+    rate, seconds = 48000, 2.0
+    buffer = BytesIO()
+    with av.open(buffer, "w", format=container) as output:
+        stream = output.add_stream(codec, rate=rate)
+        stream.layout = "stereo"
+        size = 960 if codec == "libopus" else 1024
+        tone = (0.2 * np.sin(2 * np.pi * 440 * np.arange(int(rate * seconds)) / rate)).astype(np.float32)
+        for start in range(0, len(tone), size):
+            piece = np.pad(tone[start:start + size], (0, max(0, size - len(tone[start:start + size]))))
+            frame = av.AudioFrame.from_ndarray(np.tile(piece, (2, 1)), format="fltp", layout="stereo")
+            frame.sample_rate, frame.pts = rate, start
+            for packet in stream.encode(frame):
+                output.mux(packet)
+        for packet in stream.encode(None):
+            output.mux(packet)
+    audio = voice.decode_bounded_audio(buffer.getvalue())
+    assert audio.dtype == np.float32 and audio.ndim == 1
+    assert abs(len(audio) / voice.SAMPLE_RATE - seconds) < 0.1
+    assert 0.1 < float(np.abs(audio).max()) < 1.0
+
+
+def test_unexpected_engine_failure_is_logged_by_type_only(api, caplog):
+    api.transcribe.side_effect = RuntimeError("Hasta Ayşe Yılmaz tansiyon 120/80")
+    with caplog.at_level("ERROR", logger="medicore.clinical_voice"):
+        response = api.client.post("/clinical-voice/transcribe", content=b"audio", headers={"Content-Type": "audio/webm"})
+    assert response.status_code == 503
+    assert "clinical_voice_transcription_failed error_type=RuntimeError" in caplog.text
+    assert "Ayşe" not in caplog.text and "120/80" not in caplog.text and "Ayşe" not in response.text

@@ -82,8 +82,16 @@ test('microphone sessions are transient, bounded and patient scoped', async (t) 
         assert.equal(recorderInstances[0].state, 'inactive', 'a sentence pause should flush the chunk');
         await deliver();
         amplitude = .05;
-        t.mock.timers.tick(12000);
+        t.mock.timers.tick(12100);
+        assert.equal(recorderInstances[1].state, 'recording', 'continuous speech is not cut mid-word at the 12 s soft limit');
+        t.mock.timers.tick(1900);
         assert.equal(recorderInstances[1].state, 'inactive', 'even continuous speech remains bounded below the server limit');
+        await deliver();
+        t.mock.timers.tick(12100);
+        assert.equal(recorderInstances[2].state, 'recording');
+        amplitude = 0;
+        t.mock.timers.tick(300);
+        assert.equal(recorderInstances[2].state, 'inactive', 'after the soft limit a short word gap is enough to cut');
         session.cancel();
         assert.equal(closes, 1);
       } finally {
