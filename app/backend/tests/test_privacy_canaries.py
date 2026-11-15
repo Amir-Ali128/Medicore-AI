@@ -186,6 +186,16 @@ def test_ast_guard_has_no_unprotected_sdk_calls_or_binary_encoding():
                 assert 'self._messages.create(*args, **kwargs)' in path.read_text()
     assert not violations,violations
     assert calls==13
+    # Infrastructure may hold HTTP transports only in reviewed, single-purpose modules.
+    approved_http={'hbys_client.py'}
+    for path in (root/'infrastructure').rglob('*.py'):
+        tree=ast.parse(path.read_text(encoding='utf-8-sig'))
+        uses_http=any(
+            (isinstance(node,ast.Import) and any(alias.name in ('httpx','requests') for alias in node.names))
+            or (isinstance(node,ast.ImportFrom) and node.module in ('httpx','requests'))
+            for node in ast.walk(tree)
+        )
+        assert not uses_http or path.name in approved_http, f'{path}: unapproved HTTP transport'
 
 
 def test_db_identifiers_birth_age_and_context_isolation():

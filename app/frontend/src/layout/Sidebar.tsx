@@ -6,6 +6,7 @@ import CaseHistorySidebar from '../components/patient/CaseHistorySidebar';
 const clinicalItems = [
   { label: 'Ana Sayfa', to: '/', href: '#/', icon: '⌂' },
   { label: 'Yeni Vaka', to: '/case', href: '#/case?new=1', icon: '+' },
+  { label: 'HBYS', to: '/hbys', href: '#/hbys', icon: '⇄' },
 ];
 
 const adminItems = [
