@@ -3,9 +3,10 @@ import test from 'node:test';
 import React from 'react';
 import { act, create } from 'react-test-renderer';
 import { createServer } from 'vite';
+import { isolatedVite } from './viteIsolation.mjs';
 
 test('voice proposals require clinical review and never auto-save', async (t) => {
-  const server = await createServer({ configFile: false, appType: 'custom', server: { middlewareMode: true, hmr: false, ws: false, watch: null } });
+  const server = await createServer({ ...isolatedVite(),  configFile: false, appType: 'custom', server: { middlewareMode: true, hmr: false, ws: false, watch: null } });
   const original = { storage: globalThis.localStorage, window: globalThis.window, fetch: globalThis.fetch, act: globalThis.IS_REACT_ACT_ENVIRONMENT };
   const storage = new Map();
   globalThis.localStorage = { getItem: (key) => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: (key) => storage.delete(key) };

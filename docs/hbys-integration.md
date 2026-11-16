@@ -45,6 +45,16 @@ HBYS_SIM_API_KEY=guclu-bir-anahtar uvicorn hbys_sim.main:app --port 8100
 - FHIR: `GET /fhir/metadata`, `GET /fhir/Encounter?status=in-progress|finished`,
   `GET /fhir/Encounter/{id}/$everything`, `POST /fhir/DiagnosticReport`
 - HL7 v2.5: `GET /hl7/oru/{id}` (ORU^R01)
+- Ekran HTTP Basic giriş ister: kullanıcı adı herhangi bir şey, şifre `HBYS_SIM_UI_PASSWORD`
+  (tanımlı değilse `HBYS_SIM_API_KEY`). Ekrandan **yeni hasta + muayene** eklenebilir
+  (şikâyet, vital, ICD-10 ön tanı, `Tetkik | Sonuç | Birim | Referans` satırlarıyla lab,
+  isteğe bağlı radyoloji) ve muayene **tamamlandı / devam ediyor** olarak değiştirilebilir.
+  T.C. numarası sistem tarafından geçersiz (sentetik) üretilir; gerçek hasta bilgisi girilmez.
+- Durum: **Devam ediyor** (FHIR `in-progress`) = hasta hastanede, muayene/tetkik sürüyor;
+  **Tamamlandı** (`finished`) = muayene kapandı / taburcu.
+- Eklenen hastalar, durum değişiklikleri ve gelen raporlar `HBYS_SIM_DATABASE_URL`
+  tanımlıysa PostgreSQL'de (`hbys_sim_records` tablosu) saklanır ve servis uyuyup uyansa da
+  kaybolmaz. Tanımlı değilse yalnızca bellekte tutulur.
 - API uçları `Authorization: Bearer <HBYS_SIM_API_KEY>` ister. Anahtar tanımlı değilse
   yalnızca `HBYS_SIM_ENV=development` iken `dev-hbys-key` kabul edilir.
 
@@ -62,8 +72,11 @@ Backend ortam değişkenleri:
 | `HBYS_TIMEOUT_SECONDS` | `10` | İstek zaman aşımı |
 | `HBYS_INDIVIDUAL_ACCESS` | `true` | Bireysel hesapların HBYS sayfasını kullanmasına izin verir. **Yalnızca** bağlanılan sistem kendini simülasyon olarak tanıtıyorsa geçerlidir; gerçek bir HBYS'de bireysel hesaplar her zaman reddedilir. Bireysel kullanıcılar yalnızca kendi aktardıkları vakaları görür. |
 
-Arayüzde sol menüde **HBYS** sayfası: muayeneleri listeler, **Aktar** ile vakayı açar,
-AI raporu oluşturulduktan sonra **Raporu HBYS'ye gönder** ile geri yollar.
+Arayüzde sol menüde **HBYS** sayfası: muayeneleri listeler, **Aktar** ile vakayı açar.
+HBYS'den aktarılan bir vakada AI raporu oluşturulunca rapor **otomatik olarak** (arka planda)
+ilgili HBYS muayenesine gönderilir; sonuç (gönderildi / atlandı / hata ve nedeni) HBYS
+sayfasındaki **AI raporu** sütununda görünür. **Raporu tekrar gönder** ile elle de gönderilebilir.
+Rapor, vaka rapordan sonra değiştiyse gönderilmez (eski rapor HBYS'ye yazılmaz).
 
 ## Gerçek bir HBYS'ye bağlanmak
 

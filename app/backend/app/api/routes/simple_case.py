@@ -9,11 +9,12 @@ import hashlib
 import json
 import logging
 import uuid
+from types import SimpleNamespace
 from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Request, UploadFile
 from pypdf import PdfReader
 from pydantic import ValidationError
 from sqlalchemy import select
@@ -633,6 +634,7 @@ async def ai_interpret_patient_case(
     request: Request,
     session: SessionDep,
     current_user: Annotated[User, Depends(get_current_active_user)],
+    background_tasks: BackgroundTasks,
 ) -> CaseAIInterpretationResponse:
     """Generate and persist the physician-style AI report for a saved patient case."""
 
@@ -678,6 +680,16 @@ async def ai_interpret_patient_case(
     patient.metadata_json = metadata
     await session.commit()
     await session.refresh(patient)
+
+    # HBYS-imported cases: push the new report to the hospital visit after the
+    # response is sent, so a sleeping HBYS never delays the physician's report.
+    from app.api.routes.hbys import auto_export_ai_report, hbys_configured, is_hbys_case
+
+    if hbys_configured() and is_hbys_case(metadata):
+        background_tasks.add_task(
+            auto_export_ai_report, patient_id,
+            SimpleNamespace(id=current_user.id, role=current_user.role),
+        )
 
     return CaseAIInterpretationResponse(
         report_text=result.report_text,

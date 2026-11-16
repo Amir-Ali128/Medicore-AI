@@ -3,6 +3,7 @@ import test from 'node:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createServer } from 'vite';
+import { isolatedVite } from './viteIsolation.mjs';
 import { groupPatientTimeline, timelineReportLabel } from '../src/services/patientTimelineGrouping.ts';
 import { normalizeClinical } from '../src/services/clinicalRecord.ts';
 
@@ -88,7 +89,7 @@ test('derived report types have readable labels and weak or unrecognized types f
 });
 
 test('timeline API selection checks, abort propagation and UI rendering', async (t) => {
-  const server = await createServer({ configFile: false, appType: 'custom', server: { middlewareMode: true, hmr: false, ws: false, watch: null } });
+  const server = await createServer({ ...isolatedVite(),  configFile: false, appType: 'custom', server: { middlewareMode: true, hmr: false, ws: false, watch: null } });
   const originals = { storage: globalThis.localStorage, window: globalThis.window, fetch: globalThis.fetch };
   globalThis.localStorage = { getItem: () => null, setItem() {}, removeItem() {} };
   globalThis.window = { location: { hash: '#/patient-timeline' } };

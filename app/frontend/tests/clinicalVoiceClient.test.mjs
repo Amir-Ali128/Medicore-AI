@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createServer } from 'vite';
+import { isolatedVite } from './viteIsolation.mjs';
 
 test('microphone sessions are transient, bounded and patient scoped', async (t) => {
-  const server = await createServer({ configFile: false, appType: 'custom', server: { middlewareMode: true, hmr: false, ws: false, watch: null } });
+  const server = await createServer({ ...isolatedVite(),  configFile: false, appType: 'custom', server: { middlewareMode: true, hmr: false, ws: false, watch: null } });
   const original = Object.fromEntries(['window', 'localStorage', 'fetch', 'navigator', 'MediaRecorder', 'isSecureContext', 'AudioContext'].map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   const set = (key, value) => Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
   const storage = new Map();

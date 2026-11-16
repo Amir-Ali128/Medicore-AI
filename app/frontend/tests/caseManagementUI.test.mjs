@@ -4,9 +4,10 @@ import React from 'react';
 import { act, create } from 'react-test-renderer';
 import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
 import { createServer } from 'vite';
+import { isolatedVite } from './viteIsolation.mjs';
 
 test('history searches, renames and opens persisted cases without changing UUIDs or clinical state', async (t) => {
-  const server = await createServer({ configFile: false, appType: 'custom', server: { middlewareMode: true, hmr: false, ws: false, watch: null } });
+  const server = await createServer({ ...isolatedVite(),  configFile: false, appType: 'custom', server: { middlewareMode: true, hmr: false, ws: false, watch: null } });
   const previous = { storage: globalThis.localStorage, window: globalThis.window, fetch: globalThis.fetch, act: globalThis.IS_REACT_ACT_ENVIRONMENT };
   const storage = new Map();
   globalThis.localStorage = { getItem: (key) => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, String(value)), removeItem: (key) => storage.delete(key) };

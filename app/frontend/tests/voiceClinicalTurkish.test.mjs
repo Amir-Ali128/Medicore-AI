@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createServer } from 'vite';
+import { isolatedVite } from './viteIsolation.mjs';
 
 // Regression cases for spoken Turkish clinical dictation as Whisper actually transcribes it.
 test('spoken Turkish clinical speech is mapped without silent misreads', async (t) => {
-  const server = await createServer({ configFile: false, appType: 'custom', server: { middlewareMode: true, hmr: false, ws: false, watch: null } });
+  const server = await createServer({ ...isolatedVite(),  configFile: false, appType: 'custom', server: { middlewareMode: true, hmr: false, ws: false, watch: null } });
   try {
     const { turkishNumber, extractVoiceDraft } = await server.ssrLoadModule('/src/services/voiceClinicalDraft.ts');
     const draft = (text) => extractVoiceDraft(text);

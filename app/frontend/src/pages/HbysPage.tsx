@@ -8,6 +8,7 @@ import {
   listHbysEncounters,
   sendHbysReport,
   type HbysEncounter,
+  type HbysExport,
   type HbysStatus,
 } from '../services/hbysClient';
 
@@ -25,6 +26,23 @@ function formatDate(value: string | null): string {
   return Number.isNaN(date.getTime())
     ? value
     : date.toLocaleString('tr-TR', { dateStyle: 'short', timeStyle: 'short' });
+}
+
+function ExportState({ value }: { value?: HbysExport | null }) {
+  if (!value) return <span className="text-slate-400">-</span>;
+  const when = formatDate(value.sent_at ?? value.at ?? null);
+  if (value.status === 'sent') {
+    return (
+      <span className="text-emerald-700" title={value.trigger === 'auto' ? 'Otomatik gönderildi' : 'Elle gönderildi'}>
+        ✓ Gönderildi · {when}
+      </span>
+    );
+  }
+  return (
+    <span className={value.status === 'failed' ? 'text-rose-700' : 'text-amber-700'} title={value.detail}>
+      {value.status === 'failed' ? 'Gönderilemedi' : 'Gönderilmedi'}: {value.detail ?? '-'}
+    </span>
+  );
 }
 
 export default function HbysPage() {
@@ -90,7 +108,8 @@ export default function HbysPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-slate-950">HBYS Entegrasyonu</h1>
           <p className="mt-1 text-sm text-slate-500">
-            Muayeneleri hastane sisteminden kimliksiz olarak aktarın; AI raporunu HBYS'ye geri gönderin.
+            Muayeneleri hastane sisteminden kimliksiz olarak aktarın. AI raporu oluşturulunca HBYS'ye otomatik
+            gönderilir (hekim onayı bekleyen ön değerlendirme olarak).
           </p>
         </div>
         <button
@@ -120,13 +139,17 @@ export default function HbysPage() {
           Ad, T.C. kimlik no, telefon, adres ve doğum tarihi Medicore'a aktarılmaz; yalnızca protokol numarası, yaş,
           cinsiyet, klinik bulgular, laboratuvar ve radyoloji sonuçları gelir.
         </p>
+        <p className="mt-2 text-xs text-slate-500">
+          Durum: <b>Devam ediyor</b> = hasta hastanede, muayene/tetkikler sürüyor · <b>Tamamlandı</b> = muayene
+          kapandı, hasta taburcu oldu veya poliklinikten çıktı.
+        </p>
       </section>
 
       {error ? <div role="alert" className="rounded-2xl bg-rose-50 p-3 text-sm text-rose-700">{error}</div> : null}
       {message ? <div role="status" className="rounded-2xl bg-emerald-50 p-3 text-sm text-emerald-700">{message}</div> : null}
 
       <section className="overflow-x-auto rounded-3xl border border-slate-200 bg-white">
-        <table className="w-full min-w-[720px] text-left text-sm">
+        <table className="w-full min-w-[880px] text-left text-sm">
           <thead className="text-xs uppercase tracking-wide text-slate-400">
             <tr>
               <th className="px-4 py-3">Protokol No</th>
@@ -134,6 +157,7 @@ export default function HbysPage() {
               <th className="px-4 py-3">Kabul</th>
               <th className="px-4 py-3">Durum</th>
               <th className="px-4 py-3">Tetkik</th>
+              <th className="px-4 py-3">AI raporu</th>
               <th className="px-4 py-3 text-right">İşlem</th>
             </tr>
           </thead>
@@ -145,11 +169,14 @@ export default function HbysPage() {
                 <td className="px-4 py-3 text-slate-600">{formatDate(encounter.admitted_at)}</td>
                 <td className="px-4 py-3">
                   <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
-                    {encounter.status === 'in-progress' ? 'Açık' : 'Kapandı'}
+                    {encounter.status === 'in-progress' ? 'Devam ediyor' : 'Tamamlandı'}
                   </span>
                 </td>
                 <td className="px-4 py-3 text-slate-600">
                   {encounter.lab_count} lab{encounter.radiology_count ? ` · ${encounter.radiology_count} radyoloji` : ''}
+                </td>
+                <td className="max-w-[16rem] px-4 py-3 text-xs">
+                  <ExportState value={encounter.hbys_export} />
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex justify-end gap-2">
@@ -168,7 +195,7 @@ export default function HbysPage() {
                         onClick={() => void handleSend(encounter)}
                         className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-50"
                       >
-                        Raporu HBYS'ye gönder
+                        Raporu tekrar gönder
                       </button>
                     ) : null}
                   </div>
@@ -176,7 +203,7 @@ export default function HbysPage() {
               </tr>
             ))}
             {!loading && status?.reachable && encounters.length === 0 ? (
-              <tr><td colSpan={6} className="px-4 py-6 text-center text-slate-500">HBYS'de muayene bulunamadı.</td></tr>
+              <tr><td colSpan={7} className="px-4 py-6 text-center text-slate-500">HBYS'de muayene bulunamadı.</td></tr>
             ) : null}
           </tbody>
         </table>
