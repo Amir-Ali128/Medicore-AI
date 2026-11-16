@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # app/ -> hbys_sim package
@@ -214,7 +214,7 @@ class _Session:
         return self.patients.get(key)
 
     async def execute(self, _statement):
-        return _Result([(p.id, p.protocol_no) for p in self.patients.values()])
+        return _Result([(p.id, p.protocol_no, p.metadata_json) for p in self.patients.values()])
 
     async def commit(self):
         self.commits += 1
@@ -224,11 +224,60 @@ def _user(role=UserRole.DOCTOR):
     return SimpleNamespace(id=uuid.uuid4(), role=role)
 
 
-def test_route_rejects_non_clinical_roles() -> None:
+def _settings(monkeypatch, *, individual: bool) -> None:
+    monkeypatch.setattr(hbys_routes, "get_settings", lambda: SimpleNamespace(hbys_individual_access=individual))
+    hbys_routes._confirmed_simulators.clear()
+
+
+def test_route_allows_clinical_roles_without_any_flag(monkeypatch) -> None:
+    _settings(monkeypatch, individual=False)
+    for role in (UserRole.DOCTOR, UserRole.ADMIN, UserRole.LAB_STAFF):
+        user = _user(role)
+        assert asyncio.run(hbys_routes.hbys_user(_client(), user)) is user
+
+
+def test_route_rejects_individual_and_viewer_roles_by_default(monkeypatch) -> None:
+    _settings(monkeypatch, individual=False)
     for role in (UserRole.PATIENT, UserRole.VIEWER):
         with pytest.raises(HTTPException) as caught:
-            hbys_routes.clinical_user(_user(role))
+            asyncio.run(hbys_routes.hbys_user(_client(), _user(role)))
         assert caught.value.status_code == 403
+    assert "HBYS_INDIVIDUAL_ACCESS" in caught.value.detail
+
+
+def test_individual_access_works_only_against_the_simulator(monkeypatch) -> None:
+    _settings(monkeypatch, individual=True)
+    patient_user = _user(UserRole.PATIENT)
+    assert asyncio.run(hbys_routes.hbys_user(_client(), patient_user)) is patient_user
+    with pytest.raises(HTTPException) as viewer:
+        asyncio.run(hbys_routes.hbys_user(_client(), _user(UserRole.VIEWER)))
+    assert viewer.value.status_code == 403
+
+    real = FastAPI()
+
+    @real.get("/fhir/metadata")
+    def metadata():
+        return {"resourceType": "CapabilityStatement", "software": {"name": "Gerçek Hastane HBYS"}}
+
+    hbys_routes._confirmed_simulators.clear()
+    real_client = HbysClient("http://real-hbys", "key", transport=httpx.ASGITransport(app=real))
+    with pytest.raises(HTTPException) as caught:
+        asyncio.run(hbys_routes.hbys_user(real_client, _user(UserRole.PATIENT)))
+    assert caught.value.status_code == 403 and "kurumsal" in caught.value.detail
+
+
+def test_individual_users_only_see_their_own_linked_cases() -> None:
+    owner, other = _user(UserRole.PATIENT), _user(UserRole.PATIENT)
+    mine = SimpleNamespace(id=uuid.uuid4(), protocol_no="HBYS-2026-100201",
+                           metadata_json={"owner_user_id": str(owner.id)})
+    theirs = SimpleNamespace(id=uuid.uuid4(), protocol_no="HBYS-2026-100202",
+                             metadata_json={"owner_user_id": str(other.id)})
+    rows = asyncio.run(hbys_routes.list_encounters(_client(), _Session([mine, theirs]), owner))
+    linked = {row["protocol_no"]: row["medicore_patient_id"] for row in rows}
+    assert linked["HBYS-2026-100201"] == str(mine.id)
+    assert linked["HBYS-2026-100202"] is None
+    doctor_rows = asyncio.run(hbys_routes.list_encounters(_client(), _Session([mine, theirs]), _user()))
+    assert {row["medicore_patient_id"] for row in doctor_rows} >= {str(mine.id), str(theirs.id)}
 
 
 def test_route_import_returns_deidentified_case_and_linked_patient() -> None:

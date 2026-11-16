@@ -29,7 +29,8 @@ Medicore /hbys/encounters/{id}/report ──FHIR DiagnosticReport (preliminary)�
   kaynak referansından kendisi hesaplar.
 - Geri gönderilen rapor, istemciden gelen metin değil, hastanın kayıtlı AI raporudur ve
   `status: preliminary` + `physician-review-required: true` taşır.
-- HBYS uçları yalnızca admin, doktor ve laboratuvar personeli rolleri içindir.
+- HBYS uçları admin, doktor ve laboratuvar personeli rolleri içindir. Bireysel hesaplar
+  yalnızca `HBYS_INDIVIDUAL_ACCESS=true` iken ve yalnızca Sanal HBYS'ye karşı kullanabilir.
 
 ## Sanal HBYS'yi çalıştırma
 
@@ -59,6 +60,7 @@ Backend ortam değişkenleri:
 | `HBYS_BASE_URL` | `http://localhost:8100` | Boşsa entegrasyon kapalıdır (503) |
 | `HBYS_API_KEY` | `guclu-bir-anahtar` | HBYS'ye Bearer olarak gönderilir |
 | `HBYS_TIMEOUT_SECONDS` | `10` | İstek zaman aşımı |
+| `HBYS_INDIVIDUAL_ACCESS` | `true` | Bireysel hesapların HBYS sayfasını kullanmasına izin verir. **Yalnızca** bağlanılan sistem kendini simülasyon olarak tanıtıyorsa geçerlidir; gerçek bir HBYS'de bireysel hesaplar her zaman reddedilir. Bireysel kullanıcılar yalnızca kendi aktardıkları vakaları görür. |
 
 Arayüzde sol menüde **HBYS** sayfası: muayeneleri listeler, **Aktar** ile vakayı açar,
 AI raporu oluşturulduktan sonra **Raporu HBYS'ye gönder** ile geri yollar.

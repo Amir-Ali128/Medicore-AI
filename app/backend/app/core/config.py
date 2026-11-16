@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     hbys_base_url: str | None = None
     hbys_api_key: str | None = None
     hbys_timeout_seconds: float = 10.0
+    # Lets individual (patient-role) accounts use the HBYS page. Honoured ONLY when
+    # the connected HBYS identifies itself as the synthetic simulator; it can never
+    # open a real hospital system to individual users.
+    hbys_individual_access: bool = False
 
     # --- Render / direct database URL -----------------------------------
     # Render provides DATABASE_URL. Prefer this when present.

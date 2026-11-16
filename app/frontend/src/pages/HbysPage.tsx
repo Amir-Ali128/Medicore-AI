@@ -105,13 +105,15 @@ export default function HbysPage() {
       <section className="rounded-3xl border border-slate-200 bg-white p-4 text-sm">
         {loading && !status ? (
           <p className="text-slate-500">HBYS bağlantısı kontrol ediliyor…</p>
-        ) : status?.reachable ? (
+        ) : !status ? (
+          <p className="text-slate-500">Bağlantı durumu alınamadı; ayrıntı aşağıda.</p>
+        ) : status.reachable ? (
           <p className="text-emerald-700">
             Bağlı: <b>{status.software ?? 'HBYS'}</b> · FHIR {status.fhir_version ?? '-'}
           </p>
         ) : (
           <p className="text-amber-700">
-            HBYS'ye ulaşılamıyor. {status?.detail ?? 'Sunucu ayarlarında HBYS_BASE_URL ve HBYS_API_KEY tanımlı olmalı.'}
+            HBYS'ye ulaşılamıyor. {status.detail ?? 'Sunucu ayarlarında HBYS_BASE_URL ve HBYS_API_KEY tanımlı olmalı.'}
           </p>
         )}
         <p className="mt-2 text-xs text-slate-500">
