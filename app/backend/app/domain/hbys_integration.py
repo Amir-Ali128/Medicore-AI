@@ -203,7 +203,35 @@ def _vital_value(field: str, quantity: dict[str, Any]) -> float | None:
 
 
 def _number_text(value: float) -> str:
-    return f"{value:g}"
+    """Round-trip-safe text, so the generated reference agrees with min/max exactly."""
+    if value.is_integer() and abs(value) < 1e15:
+        return str(int(value))
+    return repr(value)
+
+
+# Age quantity units -> years. Only whole-year bounds can be represented by
+# LabReferenceRange (age in years), so finer bounds make the range unusable.
+_AGE_UNIT_YEARS = {
+    "a": 1.0, "yr": 1.0, "year": 1.0, "years": 1.0, "yıl": 1.0, "yil": 1.0,
+    "mo": 1 / 12, "month": 1 / 12, "months": 1 / 12, "ay": 1 / 12,
+    "wk": 7 / 365.25, "week": 7 / 365.25, "weeks": 7 / 365.25, "hafta": 7 / 365.25,
+    "d": 1 / 365.25, "day": 1 / 365.25, "days": 1 / 365.25, "gün": 1 / 365.25, "gun": 1 / 365.25,
+}
+_UNREPRESENTABLE = object()
+
+
+def _age_years(value: Any) -> Any:
+    """Whole years, None when absent, or _UNREPRESENTABLE when it cannot be used safely."""
+    if value is None:
+        return None
+    number, unit = _quantity(value)
+    factor = _AGE_UNIT_YEARS.get(str(unit or "").strip().lower())
+    if number is None or factor is None:
+        return _UNREPRESENTABLE
+    years = number * factor
+    if abs(years - round(years)) > 1e-9 or not 0 <= round(years) <= 130:
+        return _UNREPRESENTABLE
+    return int(round(years))
 
 
 def _quantity(value: Any) -> tuple[float | None, str | None]:
@@ -232,8 +260,11 @@ def _structured_ranges(ranges: list[Any], scrub: "_Scrubber") -> list[LabReferen
         else:
             text = f"<= {_number_text(high)}"
         age = item.get("age") if isinstance(item.get("age"), dict) else {}
-        age_min, _ = _quantity(age.get("low"))
-        age_max, _ = _quantity(age.get("high"))
+        age_min, age_max = _age_years(age.get("low")), _age_years(age.get("high"))
+        if age_min is _UNREPRESENTABLE or age_max is _UNREPRESENTABLE:
+            continue  # e.g. "0-6 months": never apply it to a patient by misread years
+        if age_min is not None and age_max is not None and age_min > age_max:
+            continue  # contradictory source row: skip it instead of aborting the import
         sexes = {
             str(coding.get("code")).lower()
             for concept in item.get("appliesTo") or [] if isinstance(concept, dict)
@@ -241,8 +272,7 @@ def _structured_ranges(ranges: list[Any], scrub: "_Scrubber") -> list[LabReferen
         } & {"male", "female"}
         result.append(LabReferenceRange(
             text=text, minimum=low, maximum=high, unit=scrub(low_unit or high_unit),
-            age_min=int(age_min) if age_min is not None else None,
-            age_max=int(age_max) if age_max is not None else None,
+            age_min=age_min, age_max=age_max,
             sex=sexes.pop() if len(sexes) == 1 else None,
         ))
     return result

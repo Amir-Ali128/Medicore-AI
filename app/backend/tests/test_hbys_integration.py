@@ -360,3 +360,48 @@ def test_structured_reference_bounds_are_kept_and_classified() -> None:
     assert statuses["Potasyum"] == "HIGH"       # 6,1 > 5,1
     assert statuses["Parathormon"] == "HIGH"    # 286 > 65
     assert statuses["Hemoglobin"] == "LOW"      # male row selected: 9,9 < 13,5
+
+
+def _potassium_with(ranges):
+    encounter = next(e for e in ENCOUNTERS if e.id == "e-2004")
+
+    def mutate(resource):
+        if resource["resourceType"] == "Observation" and resource["code"].get("text") == "Potasyum":
+            resource["referenceRange"] = ranges
+
+    imported = case_from_bundle(_bundle_with(encounter, mutate))
+    lab = next(item for item in imported.case.labs if item.test_name == "Potasyum")
+    status = next(str(item.status).split(".")[-1] for item in normalize_simple_case(imported.case).labs
+                  if item.test_name == "Potasyum")
+    return lab, status
+
+
+def test_reference_age_bounds_in_months_or_days_are_never_read_as_years() -> None:
+    # Patient is 60: an infant-only range must not be applied, and must not crash the import.
+    lab, status = _potassium_with([
+        {"low": {"value": 4.1}, "high": {"value": 5.3},
+         "age": {"low": {"value": 0, "unit": "mo"}, "high": {"value": 6, "unit": "mo"}}},
+        {"low": {"value": 3.5}, "high": {"value": 5.1},
+         "age": {"low": {"value": 180, "unit": "d"}}},
+    ])
+    assert lab.source_references == []  # neither bound is representable in whole years
+    assert status == "UNKNOWN"
+
+
+def test_reference_age_bounds_in_years_are_applied() -> None:
+    lab, status = _potassium_with([
+        {"low": {"value": 3.5}, "high": {"value": 5.1},
+         "age": {"low": {"value": 1, "unit": "a"}, "high": {"value": 24, "unit": "mo"}}},
+        {"low": {"value": 3.5}, "high": {"value": 5.1}, "age": {"low": {"value": 18, "unit": "a"}}},
+        {"low": {"value": 3.5}, "high": {"value": 5.1},  # contradictory row is skipped, not fatal
+         "age": {"low": {"value": 50, "unit": "a"}, "high": {"value": 20, "unit": "a"}}},
+    ])
+    assert [(r.age_min, r.age_max) for r in lab.source_references] == [(1, 2), (18, None)]
+    assert status == "HIGH"
+
+
+def test_high_precision_bounds_round_trip_without_conflict() -> None:
+    lab, status = _potassium_with([{"low": {"value": 3.4999999}, "high": {"value": 5.1234567}}])
+    reference = lab.source_references[0]
+    assert reference.text == "3.4999999 - 5.1234567"
+    assert status == "HIGH"
