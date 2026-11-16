@@ -15,6 +15,7 @@ export default function MobileNavigation() {
       : [
           { label: 'Ana', to: '/', icon: '⌂' },
           { label: 'Yeni Vaka', to: '/case?new=1', icon: '+' },
+          { label: 'HBYS', to: '/hbys', icon: '⇄' },
         ];
 
   return (

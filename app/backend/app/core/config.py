@@ -41,6 +41,12 @@ class Settings(BaseSettings):
     report_consistency_enabled: bool = False
     lab_cross_read_enabled: bool = False
 
+    # --- HBYS (hospital information system) integration -----------------
+    # Disabled unless a base URL is set. The key is sent as a Bearer token.
+    hbys_base_url: str | None = None
+    hbys_api_key: str | None = None
+    hbys_timeout_seconds: float = 10.0
+
     # --- Render / direct database URL -----------------------------------
     # Render provides DATABASE_URL. Prefer this when present.
     database_url: str | None = None

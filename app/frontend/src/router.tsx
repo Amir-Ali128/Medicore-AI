@@ -6,6 +6,7 @@ import AdminAiCostsPage from './pages/AdminAiCostsPage';
 import AdminAnalyticsPage from './pages/AdminAnalyticsPage';
 import AdminFeedbackPage from './pages/AdminFeedbackPage';
 import AdminLoginPage from './pages/AdminLoginPage';
+import HbysPage from './pages/HbysPage';
 import HomePage from './pages/HomePage';
 import LoginPage from './pages/LoginPage';
 import PatientHistoryPage from './pages/PatientHistoryPage';
@@ -25,6 +26,7 @@ export const router = createHashRouter([
         children: [
           { path: '/', element: <HomePage /> },
           { path: '/case', element: <SimpleCaseWorkspacePage /> },
+          { path: '/hbys', element: <HbysPage /> },
           { path: '/history', element: <Navigate to="/case?history=1" replace /> },
           { path: '/case-archive', element: <PatientHistoryPage /> },
           { path: '/patient-timeline', element: <PatientTimelinePage /> },
