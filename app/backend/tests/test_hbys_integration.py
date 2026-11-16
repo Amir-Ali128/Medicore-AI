@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # app/ -> hbys_sim package
@@ -214,7 +214,7 @@ class _Session:
         return self.patients.get(key)
 
     async def execute(self, _statement):
-        return _Result([(p.id, p.protocol_no) for p in self.patients.values()])
+        return _Result([(p.id, p.protocol_no, p.metadata_json) for p in self.patients.values()])
 
     async def commit(self):
         self.commits += 1
@@ -224,11 +224,60 @@ def _user(role=UserRole.DOCTOR):
     return SimpleNamespace(id=uuid.uuid4(), role=role)
 
 
-def test_route_rejects_non_clinical_roles() -> None:
+def _settings(monkeypatch, *, individual: bool) -> None:
+    monkeypatch.setattr(hbys_routes, "get_settings", lambda: SimpleNamespace(hbys_individual_access=individual))
+    hbys_routes._confirmed_simulators.clear()
+
+
+def test_route_allows_clinical_roles_without_any_flag(monkeypatch) -> None:
+    _settings(monkeypatch, individual=False)
+    for role in (UserRole.DOCTOR, UserRole.ADMIN, UserRole.LAB_STAFF):
+        user = _user(role)
+        assert asyncio.run(hbys_routes.hbys_user(_client(), user)) is user
+
+
+def test_route_rejects_individual_and_viewer_roles_by_default(monkeypatch) -> None:
+    _settings(monkeypatch, individual=False)
     for role in (UserRole.PATIENT, UserRole.VIEWER):
         with pytest.raises(HTTPException) as caught:
-            hbys_routes.clinical_user(_user(role))
+            asyncio.run(hbys_routes.hbys_user(_client(), _user(role)))
         assert caught.value.status_code == 403
+    assert "HBYS_INDIVIDUAL_ACCESS" in caught.value.detail
+
+
+def test_individual_access_works_only_against_the_simulator(monkeypatch) -> None:
+    _settings(monkeypatch, individual=True)
+    patient_user = _user(UserRole.PATIENT)
+    assert asyncio.run(hbys_routes.hbys_user(_client(), patient_user)) is patient_user
+    with pytest.raises(HTTPException) as viewer:
+        asyncio.run(hbys_routes.hbys_user(_client(), _user(UserRole.VIEWER)))
+    assert viewer.value.status_code == 403
+
+    real = FastAPI()
+
+    @real.get("/fhir/metadata")
+    def metadata():
+        return {"resourceType": "CapabilityStatement", "software": {"name": "Gerçek Hastane HBYS"}}
+
+    hbys_routes._confirmed_simulators.clear()
+    real_client = HbysClient("http://real-hbys", "key", transport=httpx.ASGITransport(app=real))
+    with pytest.raises(HTTPException) as caught:
+        asyncio.run(hbys_routes.hbys_user(real_client, _user(UserRole.PATIENT)))
+    assert caught.value.status_code == 403 and "kurumsal" in caught.value.detail
+
+
+def test_individual_users_only_see_their_own_linked_cases() -> None:
+    owner, other = _user(UserRole.PATIENT), _user(UserRole.PATIENT)
+    mine = SimpleNamespace(id=uuid.uuid4(), protocol_no="HBYS-2026-100201",
+                           metadata_json={"owner_user_id": str(owner.id)})
+    theirs = SimpleNamespace(id=uuid.uuid4(), protocol_no="HBYS-2026-100202",
+                             metadata_json={"owner_user_id": str(other.id)})
+    rows = asyncio.run(hbys_routes.list_encounters(_client(), _Session([mine, theirs]), owner))
+    linked = {row["protocol_no"]: row["medicore_patient_id"] for row in rows}
+    assert linked["HBYS-2026-100201"] == str(mine.id)
+    assert linked["HBYS-2026-100202"] is None
+    doctor_rows = asyncio.run(hbys_routes.list_encounters(_client(), _Session([mine, theirs]), _user()))
+    assert {row["medicore_patient_id"] for row in doctor_rows} >= {str(mine.id), str(theirs.id)}
 
 
 def test_route_import_returns_deidentified_case_and_linked_patient() -> None:
@@ -239,11 +288,18 @@ def test_route_import_returns_deidentified_case_and_linked_patient() -> None:
     assert "Denemeci" not in json.dumps(result, ensure_ascii=False)
 
 
-def test_route_sends_saved_report_and_records_export() -> None:
-    patient = SimpleNamespace(id=uuid.uuid4(), protocol_no="HBYS-2026-100201", metadata_json={
-        "simple_case_ai_report": {"report_text": "Diyabetik nefropati olabilir; hekim değerlendirmesi gerekir.",
-                                  "model": "m", "case_fingerprint": "abc"},
-    })
+def _current_report(monkeypatch, report):
+    async def fake(session, patient, current_user):
+        return report
+    monkeypatch.setattr(hbys_routes, "_current_ai_report", fake)
+
+
+def test_route_sends_saved_report_and_records_export(monkeypatch) -> None:
+    report = {"report_text": "Diyabetik nefropati olabilir; hekim değerlendirmesi gerekir.",
+              "model": "m", "case_fingerprint": "abc"}
+    _current_report(monkeypatch, report)
+    patient = SimpleNamespace(id=uuid.uuid4(), protocol_no="HBYS-2026-100201",
+                              metadata_json={"simple_case_ai_report": report})
     session = _Session([patient])
     payload = hbys_routes.HbysReportRequest(patient_id=patient.id)
     result = asyncio.run(hbys_routes.send_report("e-2001", payload, _client(), session, _user()))
@@ -252,7 +308,8 @@ def test_route_sends_saved_report_and_records_export() -> None:
     assert patient.metadata_json["hbys_export"]["encounter"] == "e-2001"
 
 
-def test_route_refuses_report_for_other_visit_or_missing_report() -> None:
+def test_route_refuses_report_for_other_visit_or_missing_report(monkeypatch) -> None:
+    _current_report(monkeypatch, None)
     patient = SimpleNamespace(id=uuid.uuid4(), protocol_no="HBYS-2026-100201", metadata_json={})
     session = _Session([patient])
     payload = hbys_routes.HbysReportRequest(patient_id=patient.id)
@@ -270,3 +327,130 @@ def test_route_reports_unconfigured_integration(monkeypatch) -> None:
     with pytest.raises(HTTPException) as caught:
         hbys_routes.get_hbys_client()
     assert caught.value.status_code == 503
+
+
+def test_route_never_exports_a_stale_report(monkeypatch) -> None:
+    """A stored report whose fingerprint no longer matches the saved case is hidden."""
+    from app.api.routes import simple_case as simple_case_routes
+
+    stored = {"report_text": "Eski vaka için rapor olabilir; hekim değerlendirmesi gerekir.", "model": "m",
+              "case_fingerprint": "eski"}
+    patient = SimpleNamespace(id=uuid.uuid4(), protocol_no="HBYS-2026-100201",
+                              metadata_json={"simple_case_ai_report": stored})
+    calls = []
+
+    async def saved_case_view(patient_id, session, current_user):
+        calls.append(patient_id)
+        return {"ai_report": None}  # what the case view returns for a stale report
+
+    monkeypatch.setattr(simple_case_routes, "get_saved_simple_case", saved_case_view)
+    payload = hbys_routes.HbysReportRequest(patient_id=patient.id)
+    with pytest.raises(HTTPException) as caught:
+        asyncio.run(hbys_routes.send_report("e-2001", payload, _client(), _Session([patient]), _user()))
+    assert caught.value.status_code == 409 and calls == [patient.id]
+    assert not sim.RECEIVED_REPORTS
+
+
+def _bundle_with(encounter, mutate):
+    bundle = encounter_bundle(encounter)
+    for entry in bundle["entry"]:
+        mutate(entry["resource"])
+    return bundle
+
+
+def test_vital_units_are_converted_or_dropped_never_mislabelled() -> None:
+    encounter = next(e for e in ENCOUNTERS if e.id == "e-2001")
+
+    def mutate(resource):
+        if resource["resourceType"] != "Observation":
+            return
+        if resource["id"].endswith("-weight_kg"):
+            resource["valueQuantity"] = {"value": 154, "unit": "[lb_av]"}
+        if resource["id"].endswith("-temperature"):
+            resource["valueQuantity"] = {"value": 98.6, "unit": "[degF]"}
+        if resource["id"].endswith("-height_cm"):
+            resource["valueQuantity"] = {"value": 64, "unit": "furlong"}
+        if resource["id"].endswith("-heart_rate"):
+            resource["valueQuantity"] = {"value": 84}
+
+    vitals = case_from_bundle(_bundle_with(encounter, mutate)).case.clinical.vital_signs
+    assert vitals.weight_kg == pytest.approx(69.85, abs=0.01)
+    assert vitals.temperature == pytest.approx(37.0, abs=0.01)
+    assert vitals.height_cm is None and vitals.heart_rate is None
+    assert vitals.systolic_bp == 148
+
+
+def test_structured_reference_bounds_are_kept_and_classified() -> None:
+    encounter = next(e for e in ENCOUNTERS if e.id == "e-2004")
+
+    def mutate(resource):
+        if resource["resourceType"] != "Observation" or "laboratory" not in json.dumps(resource["category"]):
+            return
+        name = resource["code"]["text"]
+        if name == "Potasyum":
+            resource["referenceRange"] = [{"low": {"value": 3.5, "unit": "mmol/L"},
+                                           "high": {"value": 5.1, "unit": "mmol/L"}}]
+        elif name == "Parathormon":
+            resource["referenceRange"] = [{"high": {"value": 65, "unit": "pg/mL"}}]
+        elif name == "Hemoglobin":
+            resource["referenceRange"] = [
+                {"low": {"value": 13.5}, "high": {"value": 17.5},
+                 "appliesTo": [{"coding": [{"code": "male"}]}]},
+                {"low": {"value": 12}, "high": {"value": 15.5},
+                 "appliesTo": [{"coding": [{"code": "female"}]}]},
+            ]
+
+    imported = case_from_bundle(_bundle_with(encounter, mutate))
+    potassium = next(lab for lab in imported.case.labs if lab.test_name == "Potasyum")
+    assert potassium.source_reference is None
+    assert potassium.source_references[0].minimum == 3.5 and potassium.source_references[0].maximum == 5.1
+    statuses = {lab.test_name: str(lab.status).split(".")[-1]
+                for lab in normalize_simple_case(imported.case).labs}
+    assert statuses["Potasyum"] == "HIGH"       # 6,1 > 5,1
+    assert statuses["Parathormon"] == "HIGH"    # 286 > 65
+    assert statuses["Hemoglobin"] == "LOW"      # male row selected: 9,9 < 13,5
+
+
+def _potassium_with(ranges):
+    encounter = next(e for e in ENCOUNTERS if e.id == "e-2004")
+
+    def mutate(resource):
+        if resource["resourceType"] == "Observation" and resource["code"].get("text") == "Potasyum":
+            resource["referenceRange"] = ranges
+
+    imported = case_from_bundle(_bundle_with(encounter, mutate))
+    lab = next(item for item in imported.case.labs if item.test_name == "Potasyum")
+    status = next(str(item.status).split(".")[-1] for item in normalize_simple_case(imported.case).labs
+                  if item.test_name == "Potasyum")
+    return lab, status
+
+
+def test_reference_age_bounds_in_months_or_days_are_never_read_as_years() -> None:
+    # Patient is 60: an infant-only range must not be applied, and must not crash the import.
+    lab, status = _potassium_with([
+        {"low": {"value": 4.1}, "high": {"value": 5.3},
+         "age": {"low": {"value": 0, "unit": "mo"}, "high": {"value": 6, "unit": "mo"}}},
+        {"low": {"value": 3.5}, "high": {"value": 5.1},
+         "age": {"low": {"value": 180, "unit": "d"}}},
+    ])
+    assert lab.source_references == []  # neither bound is representable in whole years
+    assert status == "UNKNOWN"
+
+
+def test_reference_age_bounds_in_years_are_applied() -> None:
+    lab, status = _potassium_with([
+        {"low": {"value": 3.5}, "high": {"value": 5.1},
+         "age": {"low": {"value": 1, "unit": "a"}, "high": {"value": 24, "unit": "mo"}}},
+        {"low": {"value": 3.5}, "high": {"value": 5.1}, "age": {"low": {"value": 18, "unit": "a"}}},
+        {"low": {"value": 3.5}, "high": {"value": 5.1},  # contradictory row is skipped, not fatal
+         "age": {"low": {"value": 50, "unit": "a"}, "high": {"value": 20, "unit": "a"}}},
+    ])
+    assert [(r.age_min, r.age_max) for r in lab.source_references] == [(1, 2), (18, None)]
+    assert status == "HIGH"
+
+
+def test_high_precision_bounds_round_trip_without_conflict() -> None:
+    lab, status = _potassium_with([{"low": {"value": 3.4999999}, "high": {"value": 5.1234567}}])
+    reference = lab.source_references[0]
+    assert reference.text == "3.4999999 - 5.1234567"
+    assert status == "HIGH"

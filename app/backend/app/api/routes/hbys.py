@@ -34,27 +34,80 @@ def get_hbys_client() -> HbysClient:
         raise HTTPException(status_code=503, detail=str(exc)) from None
 
 
-def clinical_user(current_user: Annotated[User, Depends(get_current_active_user)]) -> User:
-    if current_user.role not in _CLINICAL_ROLES:
-        raise HTTPException(status_code=403, detail="HBYS entegrasyonu yalnızca klinik kullanıcılar içindir.")
-    return current_user
+_SIMULATOR_MARKER = "simülasyon"
+# Base URLs whose capability statement confirmed the synthetic simulator.
+_confirmed_simulators: set[str] = set()
+
+
+async def _is_simulator(client: HbysClient) -> bool:
+    if client.base_url in _confirmed_simulators:
+        return True
+    try:
+        capability = await client.capability()
+    except HbysError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from None
+    software = str((capability.get("software") or {}).get("name") or "")
+    if _SIMULATOR_MARKER in software.casefold():
+        _confirmed_simulators.add(client.base_url)
+        return True
+    return False
+
+
+def _is_individual(user: User) -> bool:
+    return user.role == UserRole.PATIENT
+
+
+async def hbys_user(
+    client: Annotated[HbysClient, Depends(get_hbys_client)],
+    current_user: Annotated[User, Depends(get_current_active_user)],
+) -> User:
+    if current_user.role in _CLINICAL_ROLES:
+        return current_user
+    if _is_individual(current_user) and get_settings().hbys_individual_access:
+        if await _is_simulator(client):
+            return current_user
+        raise HTTPException(status_code=403, detail=(
+            "Bireysel hesaplar yalnızca Sanal HBYS (simülasyon) ile çalışabilir; "
+            "gerçek bir HBYS için kurumsal hesap gerekir."
+        ))
+    raise HTTPException(status_code=403, detail=(
+        "HBYS entegrasyonu kurumsal (klinik) hesaplar içindir. Sanal HBYS denemesi için "
+        "sunucuda HBYS_INDIVIDUAL_ACCESS=true ayarı açılmalı."
+    ))
 
 
 ClientDep = Annotated[HbysClient, Depends(get_hbys_client)]
-ClinicalUser = Annotated[User, Depends(clinical_user)]
+ClinicalUser = Annotated[User, Depends(hbys_user)]
 
 
 def _bad_gateway(exc: HbysError) -> HTTPException:
     return HTTPException(status_code=502, detail=str(exc))
 
 
-async def _patient_ids_by_protocol(session, protocols: list[str]) -> dict[str, str]:
+async def _patient_ids_by_protocol(session, protocols: list[str], user: User) -> dict[str, str]:
+    """Linked Medicore cases; individual users only ever see their own."""
     if not protocols:
         return {}
     rows = (await session.execute(
-        select(Patient.id, Patient.protocol_no).where(Patient.protocol_no.in_(protocols))
+        select(Patient.id, Patient.protocol_no, Patient.metadata_json).where(Patient.protocol_no.in_(protocols))
     )).all()
-    return {protocol: str(patient_id) for patient_id, protocol in rows}
+    return {
+        protocol: str(patient_id) for patient_id, protocol, metadata in rows
+        if not _is_individual(user) or (metadata or {}).get("owner_user_id") == str(user.id)
+    }
+
+
+async def _current_ai_report(session, patient, current_user) -> dict[str, Any] | None:
+    """The AI report exactly as the case view shows it: None when it is stale.
+
+    Reuses the saved-case endpoint so the fingerprint check (report vs. current
+    saved case) can never drift from what the physician sees.
+    """
+    from app.api.routes.simple_case import get_saved_simple_case
+
+    saved = await get_saved_simple_case(patient.id, session, current_user)
+    report = saved.get("ai_report")
+    return report if isinstance(report, dict) else None
 
 
 class HbysReportRequest(BaseModel):
@@ -74,25 +127,25 @@ async def hbys_status(client: ClientDep, _: ClinicalUser) -> dict[str, Any]:
 
 @router.get("/encounters")
 async def list_encounters(
-    client: ClientDep, session: SessionDep, _: ClinicalUser,
+    client: ClientDep, session: SessionDep, user: ClinicalUser,
     status: Annotated[str | None, Query(pattern="^(in-progress|finished)$")] = None,
 ) -> list[dict[str, Any]]:
     try:
         encounters = await client.encounters(status)
     except HbysError as exc:
         raise _bad_gateway(exc) from None
-    linked = await _patient_ids_by_protocol(session, [item.protocol_no for item in encounters])
+    linked = await _patient_ids_by_protocol(session, [item.protocol_no for item in encounters], user)
     return [{**item.__dict__, "medicore_patient_id": linked.get(item.protocol_no)} for item in encounters]
 
 
 @router.get("/encounters/{encounter_id}/case")
-async def import_case(encounter_id: str, client: ClientDep, session: SessionDep, _: ClinicalUser) -> dict[str, Any]:
+async def import_case(encounter_id: str, client: ClientDep, session: SessionDep, user: ClinicalUser) -> dict[str, Any]:
     """Return a de-identified case draft; the client saves it through the normal case API."""
     try:
         imported = await client.encounter_case(encounter_id)
     except HbysError as exc:
         raise _bad_gateway(exc) from None
-    linked = await _patient_ids_by_protocol(session, [imported.protocol_no])
+    linked = await _patient_ids_by_protocol(session, [imported.protocol_no], user)
     return {
         "encounter_id": imported.encounter_id,
         "protocol_no": imported.protocol_no,
@@ -118,8 +171,8 @@ async def send_report(
     if imported.protocol_no != patient.protocol_no:
         raise HTTPException(status_code=409, detail="Hasta kaydı bu HBYS muayenesine ait değil.")
 
+    report = await _current_ai_report(session, patient, current_user)
     metadata = dict(patient.metadata_json or {})
-    report = metadata.get("simple_case_ai_report")
     if not isinstance(report, dict) or not str(report.get("report_text") or "").strip():
         raise HTTPException(status_code=409, detail="Gönderilecek güncel bir AI raporu yok. Önce raporu oluşturun.")
 

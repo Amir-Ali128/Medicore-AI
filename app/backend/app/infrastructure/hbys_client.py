@@ -27,6 +27,7 @@ class HbysClient:
         if not base_url or not api_key:
             raise HbysNotConfigured("HBYS entegrasyonu yapılandırılmamış (HBYS_BASE_URL / HBYS_API_KEY).")
         self._base = base_url.rstrip("/")
+        self.base_url = self._base
         self._headers = {"Authorization": f"Bearer {api_key}", "Accept": "application/fhir+json"}
         self._timeout = timeout
         self._transport = transport
