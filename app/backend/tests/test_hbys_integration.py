@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import sys
 import uuid
@@ -213,6 +214,8 @@ class _Session:
     def __init__(self, patients=()):
         self.patients = {p.id: p for p in patients}
         self.commits = 0
+        self.refreshes = []
+        self.concurrent_save = None
 
     async def get(self, _model, key):
         return self.patients.get(key)
@@ -222,6 +225,11 @@ class _Session:
 
     async def commit(self):
         self.commits += 1
+
+    async def refresh(self, obj, attribute_names=None, with_for_update=None):
+        self.refreshes.append(with_for_update)
+        if self.concurrent_save is not None:  # a physician saved the case meanwhile
+            obj.metadata_json = {**obj.metadata_json, **self.concurrent_save}
 
 
 def _user(role=UserRole.DOCTOR):
@@ -691,3 +699,37 @@ def test_ai_report_schedules_hbys_auto_export_only_for_hbys_cases(monkeypatch) -
     plain = _hbys_patient()
     plain.metadata_json["simple_case"] = {"labs": [{"source_metadata": {"source_system": "pdf"}}]}
     assert run(plain) == []
+
+
+
+def test_export_result_never_overwrites_a_concurrent_case_save(monkeypatch) -> None:
+    patient = _hbys_patient()
+    from app.infrastructure.database import session as db_session
+
+    session = _Session([patient])
+    session.concurrent_save = {"clinical_context": {"complaints": ["hekimin yeni kaydı"]}, "simple_case_ai_report": None}
+    monkeypatch.setattr(db_session, "AsyncSessionFactory", lambda: _SessionCtx(session))
+    monkeypatch.setattr(hbys_routes, "get_hbys_client", _client)
+    _settings(monkeypatch, individual=False)
+    original_report = dict(patient.metadata_json["simple_case_ai_report"])
+
+    async def current(session_, patient_, user_):
+        return original_report
+
+    monkeypatch.setattr(hbys_routes, "_current_ai_report", current)
+    asyncio.run(hbys_routes.auto_export_ai_report(patient.id, _user()))
+    # the row was re-read under a lock and only hbys_export was added on top
+    assert session.refreshes == [True]
+    assert patient.metadata_json["clinical_context"] == {"complaints": ["hekimin yeni kaydı"]}
+    assert patient.metadata_json["simple_case_ai_report"] is None
+    assert patient.metadata_json["hbys_export"]["status"] == "sent"
+
+
+def test_ui_password_may_contain_turkish_characters(monkeypatch) -> None:
+    monkeypatch.setenv("HBYS_SIM_UI_PASSWORD", "şifreĞüç")
+    api = TestClient(sim.app)
+    token = base64.b64encode("hbys:şifreĞüç".encode("utf-8")).decode("ascii")
+    assert api.get("/", headers={"Authorization": f"Basic {token}"}).status_code == 200
+    wrong = base64.b64encode("hbys:sifre".encode("utf-8")).decode("ascii")
+    assert api.get("/", headers={"Authorization": f"Basic {wrong}"}).status_code == 401
+    assert sim._same_secret("anahtarçğ", "anahtarçğ") and not sim._same_secret("anahtarcg", "anahtarçğ")

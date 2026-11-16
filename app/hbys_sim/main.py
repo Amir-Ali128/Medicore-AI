@@ -76,10 +76,15 @@ def _api_key() -> str:
     return _DEV_KEY
 
 
+def _same_secret(supplied: str, expected: str) -> bool:
+    # compare_digest rejects non-ASCII str (e.g. "şifre"); compare UTF-8 bytes instead.
+    return hmac.compare_digest(supplied.encode("utf-8"), expected.encode("utf-8"))
+
+
 def require_api_key(authorization: Annotated[str | None, Header()] = None) -> None:
     expected = _api_key()
     scheme, _, token = (authorization or "").partition(" ")
-    if scheme.lower() != "bearer" or not hmac.compare_digest(token.strip(), expected):
+    if scheme.lower() != "bearer" or not _same_secret(token.strip(), expected):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Geçersiz HBYS API anahtarı.",
                             headers={"WWW-Authenticate": "Bearer"})
 
@@ -106,7 +111,7 @@ def require_ui_login(authorization: Annotated[str | None, Header()] = None) -> N
         _, _, supplied = base64.b64decode(encoded.strip()).decode("utf-8").partition(":")
     except Exception:
         supplied = ""
-    if scheme.lower() != "basic" or not hmac.compare_digest(supplied, expected):
+    if scheme.lower() != "basic" or not _same_secret(supplied, expected):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sanal HBYS girişi gerekli.",
                             headers={"WWW-Authenticate": 'Basic realm="Sanal HBYS", charset="UTF-8"'})
 

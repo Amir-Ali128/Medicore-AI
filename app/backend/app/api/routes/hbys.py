@@ -115,6 +115,18 @@ async def _current_ai_report(session, patient, current_user) -> dict[str, Any] |
     return report if isinstance(report, dict) else None
 
 
+async def _store_export(session, patient, export: dict[str, Any]) -> None:
+    """Write only ``hbys_export`` on top of the LATEST committed patient metadata.
+
+    The export awaits the HBYS over the network; a physician may save the case
+    meanwhile. Re-read the row under a row lock and merge just this one key, so a
+    concurrent clinical save is never overwritten with the task's stale snapshot.
+    """
+    await session.refresh(patient, attribute_names=["metadata_json"], with_for_update=True)
+    patient.metadata_json = {**(patient.metadata_json or {}), "hbys_export": export}
+    await session.commit()
+
+
 async def _export(client: HbysClient, session, patient, encounter_id: str, report: dict[str, Any],
                   *, trigger: str) -> dict[str, Any]:
     """Send one saved report and record the outcome on the patient. Raises HbysError."""
@@ -125,8 +137,7 @@ async def _export(client: HbysClient, session, patient, encounter_id: str, repor
         "status": "sent", "trigger": trigger, "encounter": encounter_id, "report": result.get("id"),
         "sent_at": datetime.now(UTC).isoformat(), "case_fingerprint": report.get("case_fingerprint"),
     }
-    patient.metadata_json = {**(patient.metadata_json or {}), "hbys_export": export}
-    await session.commit()
+    await _store_export(session, patient, export)
     return export
 
 
@@ -159,11 +170,10 @@ async def auto_export_ai_report(patient_id: uuid.UUID, user: Any) -> None:
             return
 
         async def record(status_value: str, detail: str) -> None:
-            patient.metadata_json = {**(patient.metadata_json or {}), "hbys_export": {
+            await _store_export(session, patient, {
                 "status": status_value, "trigger": "auto", "detail": detail,
                 "at": datetime.now(UTC).isoformat(),
-            }}
-            await session.commit()
+            })
 
         try:
             client = get_hbys_client()
