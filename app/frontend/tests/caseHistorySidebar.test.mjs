@@ -4,9 +4,10 @@ import React from 'react';
 import { act, create } from 'react-test-renderer';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { createServer } from 'vite';
+import { isolatedVite } from './viteIsolation.mjs';
 
 test('collapsible history reuses persisted cases without saving drafts or rerunning analysis', async (t) => {
-  const server = await createServer({ configFile: false, appType: 'custom', server: { middlewareMode: true, hmr: false, ws: false, watch: null } });
+  const server = await createServer({ ...isolatedVite(),  configFile: false, appType: 'custom', server: { middlewareMode: true, hmr: false, ws: false, watch: null } });
   const previous = { storage: globalThis.localStorage, window: globalThis.window, fetch: globalThis.fetch, act: globalThis.IS_REACT_ACT_ENVIRONMENT };
   const storage = new Map();
   const events = new EventTarget();

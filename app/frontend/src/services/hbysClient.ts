@@ -18,6 +18,15 @@ export type HbysEncounter = {
   lab_count: number;
   radiology_count: number;
   medicore_patient_id: string | null;
+  hbys_export?: HbysExport | null;
+};
+
+export type HbysExport = {
+  status: 'sent' | 'skipped' | 'failed' | string;
+  trigger?: 'auto' | 'manual' | string;
+  detail?: string;
+  sent_at?: string;
+  at?: string;
 };
 
 export type HbysImportedCase = {

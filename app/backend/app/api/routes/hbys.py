@@ -84,17 +84,22 @@ def _bad_gateway(exc: HbysError) -> HTTPException:
     return HTTPException(status_code=502, detail=str(exc))
 
 
-async def _patient_ids_by_protocol(session, protocols: list[str], user: User) -> dict[str, str]:
-    """Linked Medicore cases; individual users only ever see their own."""
+async def _linked_cases(session, protocols: list[str], user: User) -> dict[str, dict[str, Any]]:
+    """Linked Medicore cases (id + last export state); individual users only see their own."""
     if not protocols:
         return {}
     rows = (await session.execute(
         select(Patient.id, Patient.protocol_no, Patient.metadata_json).where(Patient.protocol_no.in_(protocols))
     )).all()
     return {
-        protocol: str(patient_id) for patient_id, protocol, metadata in rows
+        protocol: {"id": str(patient_id), "export": (metadata or {}).get("hbys_export")}
+        for patient_id, protocol, metadata in rows
         if not _is_individual(user) or (metadata or {}).get("owner_user_id") == str(user.id)
     }
+
+
+async def _patient_ids_by_protocol(session, protocols: list[str], user: User) -> dict[str, str]:
+    return {key: value["id"] for key, value in (await _linked_cases(session, protocols, user)).items()}
 
 
 async def _current_ai_report(session, patient, current_user) -> dict[str, Any] | None:
@@ -108,6 +113,92 @@ async def _current_ai_report(session, patient, current_user) -> dict[str, Any] |
     saved = await get_saved_simple_case(patient.id, session, current_user)
     report = saved.get("ai_report")
     return report if isinstance(report, dict) else None
+
+
+async def _store_export(session, patient, export: dict[str, Any]) -> None:
+    """Write only ``hbys_export`` on top of the LATEST committed patient metadata.
+
+    The export awaits the HBYS over the network; a physician may save the case
+    meanwhile. Re-read the row under a row lock and merge just this one key, so a
+    concurrent clinical save is never overwritten with the task's stale snapshot.
+    """
+    await session.refresh(patient, attribute_names=["metadata_json"], with_for_update=True)
+    patient.metadata_json = {**(patient.metadata_json or {}), "hbys_export": export}
+    await session.commit()
+
+
+async def _export(client: HbysClient, session, patient, encounter_id: str, report: dict[str, Any],
+                  *, trigger: str) -> dict[str, Any]:
+    """Send one saved report and record the outcome on the patient. Raises HbysError."""
+    resource = diagnostic_report(encounter_id=encounter_id, report_text=report["report_text"],
+                                 model=report.get("model"))
+    result = await client.send_report(resource)
+    export = {
+        "status": "sent", "trigger": trigger, "encounter": encounter_id, "report": result.get("id"),
+        "sent_at": datetime.now(UTC).isoformat(), "case_fingerprint": report.get("case_fingerprint"),
+    }
+    await _store_export(session, patient, export)
+    return export
+
+
+def is_hbys_case(metadata: dict[str, Any] | None) -> bool:
+    """True when the saved case was imported from the HBYS (source-tagged rows)."""
+    case = (metadata or {}).get("simple_case")
+    if not isinstance(case, dict):
+        return False
+    rows = [*(case.get("labs") or []), *(case.get("reports") or [])]
+    return any(
+        isinstance(row, dict) and "hbys" in (
+            (row.get("source_metadata") or {}).get("source_system"),
+            (row.get("metadata") or {}).get("source_system"),
+        )
+        for row in rows
+    )
+
+
+async def auto_export_ai_report(patient_id: uuid.UUID, user: Any) -> None:
+    """Background task after an AI report is saved: push it to the HBYS visit.
+
+    Never raises; the outcome (sent / skipped / failed + reason) is stored as
+    ``hbys_export`` on the patient so the HBYS page can show it.
+    """
+    from app.infrastructure.database.session import AsyncSessionFactory
+
+    async with AsyncSessionFactory() as session:
+        patient = await session.get(Patient, patient_id)
+        if patient is None or not is_hbys_case(patient.metadata_json):
+            return
+
+        async def record(status_value: str, detail: str) -> None:
+            await _store_export(session, patient, {
+                "status": status_value, "trigger": "auto", "detail": detail,
+                "at": datetime.now(UTC).isoformat(),
+            })
+
+        try:
+            client = get_hbys_client()
+            await hbys_user(client, user)
+            encounter = next((item for item in await client.encounters()
+                              if item.protocol_no == patient.protocol_no), None)
+            if encounter is None:
+                await record("skipped", "HBYS'de bu protokol numarasına ait muayene bulunamadı.")
+                return
+            report = await _current_ai_report(session, patient, user)
+            if not isinstance(report, dict) or not str(report.get("report_text") or "").strip():
+                await record("skipped", "Güncel AI raporu yok (vaka rapordan sonra değişmiş).")
+                return
+            await _export(client, session, patient, encounter.encounter_id, report, trigger="auto")
+        except HTTPException as exc:
+            await record("failed", str(exc.detail))
+        except HbysError as exc:
+            await record("failed", str(exc))
+        except Exception:
+            await record("failed", "Beklenmeyen hata; rapor HBYS'ye gönderilemedi.")
+
+
+def hbys_configured() -> bool:
+    settings = get_settings()
+    return bool(settings.hbys_base_url and settings.hbys_api_key)
 
 
 class HbysReportRequest(BaseModel):
@@ -134,8 +225,12 @@ async def list_encounters(
         encounters = await client.encounters(status)
     except HbysError as exc:
         raise _bad_gateway(exc) from None
-    linked = await _patient_ids_by_protocol(session, [item.protocol_no for item in encounters], user)
-    return [{**item.__dict__, "medicore_patient_id": linked.get(item.protocol_no)} for item in encounters]
+    linked = await _linked_cases(session, [item.protocol_no for item in encounters], user)
+    return [{
+        **item.__dict__,
+        "medicore_patient_id": (linked.get(item.protocol_no) or {}).get("id"),
+        "hbys_export": (linked.get(item.protocol_no) or {}).get("export"),
+    } for item in encounters]
 
 
 @router.get("/encounters/{encounter_id}/case")
@@ -172,22 +267,11 @@ async def send_report(
         raise HTTPException(status_code=409, detail="Hasta kaydı bu HBYS muayenesine ait değil.")
 
     report = await _current_ai_report(session, patient, current_user)
-    metadata = dict(patient.metadata_json or {})
     if not isinstance(report, dict) or not str(report.get("report_text") or "").strip():
         raise HTTPException(status_code=409, detail="Gönderilecek güncel bir AI raporu yok. Önce raporu oluşturun.")
-
-    resource = diagnostic_report(encounter_id=imported.encounter_id, report_text=report["report_text"],
-                                 model=report.get("model"))
     try:
-        result = await client.send_report(resource)
+        export = await _export(client, session, patient, imported.encounter_id, report, trigger="manual")
     except HbysError as exc:
         raise _bad_gateway(exc) from None
-
-    sent_at = datetime.now(UTC).isoformat()
-    metadata["hbys_export"] = {
-        "encounter": imported.encounter_id, "report": result.get("id"), "sent_at": sent_at,
-        "case_fingerprint": report.get("case_fingerprint"),
-    }
-    patient.metadata_json = metadata
-    await session.commit()
+    sent_at, result = export["sent_at"], {"id": export["report"]}
     return {"status": "sent", "hbys_report": result.get("id"), "sent_at": sent_at}

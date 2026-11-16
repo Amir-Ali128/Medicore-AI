@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import sys
 import uuid
@@ -17,6 +18,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # app/ -> hbys_sim package
 
 from hbys_sim import main as sim  # noqa: E402
+from hbys_sim import records as sim_records  # noqa: E402
 from hbys_sim.data import ENCOUNTERS, PATIENTS, PATIENTS_BY_ID  # noqa: E402
 
 from app.api.routes import hbys as hbys_routes  # noqa: E402
@@ -36,9 +38,12 @@ KEY = {"Authorization": "Bearer dev-hbys-key"}
 def _clean_sim(monkeypatch):
     monkeypatch.delenv("HBYS_SIM_API_KEY", raising=False)
     monkeypatch.setenv("HBYS_SIM_ENV", "development")
-    sim.RECEIVED_REPORTS.clear()
+    monkeypatch.delenv("HBYS_SIM_UI_PASSWORD", raising=False)
+    sim_records.store.clear()
+    sim_records.reset_runtime_records()
     yield
-    sim.RECEIVED_REPORTS.clear()
+    sim_records.store.clear()
+    sim_records.reset_runtime_records()
 
 
 def _client() -> HbysClient:
@@ -209,6 +214,8 @@ class _Session:
     def __init__(self, patients=()):
         self.patients = {p.id: p for p in patients}
         self.commits = 0
+        self.refreshes = []
+        self.concurrent_save = None
 
     async def get(self, _model, key):
         return self.patients.get(key)
@@ -218,6 +225,11 @@ class _Session:
 
     async def commit(self):
         self.commits += 1
+
+    async def refresh(self, obj, attribute_names=None, with_for_update=None):
+        self.refreshes.append(with_for_update)
+        if self.concurrent_save is not None:  # a physician saved the case meanwhile
+            obj.metadata_json = {**obj.metadata_json, **self.concurrent_save}
 
 
 def _user(role=UserRole.DOCTOR):
@@ -454,3 +466,270 @@ def test_high_precision_bounds_round_trip_without_conflict() -> None:
     reference = lab.source_references[0]
     assert reference.text == "3.4999999 - 5.1234567"
     assert status == "HIGH"
+
+
+
+# ------------------------------------------------------------------ simulator: add patients, status, persistence
+_FORM = {
+    "given_name": "Form", "family_name": "Hastası", "sex": "male", "birth_date": "1970-05-05",
+    "department": "Nefroloji Polikliniği", "diagnosis_code": "n18.3", "diagnosis_text": "KBH evre 3",
+    "complaints": "halsizlik, ödem", "systolic_bp": "150", "temperature": "36,8",
+    "labs": "Kreatinin | 1,8 | mg/dL | 0,67 - 1,17\nPotasyum | 5,6 | mmol/L | 3,5 - 5,1",
+    "modality": "US", "body_region": "Böbrek", "findings": "Parankim ekojenitesi artmış",
+}
+
+
+def _create(api, form=_FORM):
+    response = api.post("/ui/new", data=form, follow_redirects=False)
+    assert response.status_code == 303, response.text
+    return sim.ENCOUNTERS_BY_ID[response.headers["location"].rsplit("/", 1)[1]]
+
+
+def test_ui_creates_patient_and_visit_that_medicore_can_import() -> None:
+    api = TestClient(sim.app)
+    encounter = _create(api)
+    assert encounter.status == "in-progress" and encounter.protocol_no.startswith("HBYS-")
+    assert encounter.diagnoses == [("N18.3", "KBH evre 3")] and encounter.vitals == {"systolic_bp": 150.0, "temperature": 36.8}
+    patient = PATIENTS_BY_ID[encounter.patient_id]
+    assert not valid_tckn(patient.tckn)  # generated, never a real citizen
+    listed = api.get("/fhir/Encounter", headers=KEY).json()
+    assert any(entry["resource"]["id"] == encounter.id for entry in listed["entry"])
+    imported = case_from_bundle(encounter_bundle(encounter))
+    assert "Hastası" not in json.dumps(imported.case.model_dump(mode="json"), ensure_ascii=False)
+    statuses = [str(lab.status).split(".")[-1] for lab in normalize_simple_case(imported.case).labs]
+    assert statuses == ["HIGH", "HIGH"]
+    assert imported.case.reports[0].report_type == "Ultrasonografi"
+
+
+@pytest.mark.parametrize("change, message", [
+    ({"given_name": ""}, "Ad ve soyad"),
+    ({"birth_date": "2999-01-01"}, "Doğum tarihi"),
+    ({"diagnosis_code": "kalp"}, "ICD-10"),
+    ({"systolic_bp": "abc"}, "sayı olmalı"),
+    ({"spo2": "130"}, "aralığında"),
+    ({"labs": "sadece isim"}, "1. satır"),
+    ({"department": "Uydurma"}, "birim"),
+    ({"modality": "US", "findings": "", "impression": ""}, "Radyoloji"),
+])
+def test_ui_form_validation_keeps_input_and_explains(change, message) -> None:
+    response = TestClient(sim.app).post("/ui/new", data={**_FORM, **change})
+    assert response.status_code == 200 and message in response.text
+    assert "Nefroloji Polikliniği" in response.text  # values are kept
+
+
+def test_ui_status_toggle_and_labels() -> None:
+    api = TestClient(sim.app)
+    assert api.post("/ui/encounter/e-2001/status", data={"status": "finished"}, follow_redirects=False).status_code == 303
+    assert sim.ENCOUNTERS_BY_ID["e-2001"].status == "finished"
+    assert api.get("/fhir/Encounter?status=finished", headers=KEY).json()["total"] >= 1
+    assert api.post("/ui/encounter/e-2001/status", data={"status": "uydurma"}).status_code == 422
+    home = api.get("/").text
+    assert "Devam ediyor" in home and "Tamamlandı" in home and "taburcu" in home
+    api.post("/ui/encounter/e-2001/status", data={"status": "in-progress"})
+
+
+def test_ui_rejects_cross_site_posts() -> None:
+    api = TestClient(sim.app)
+    response = api.post("/ui/new", data=_FORM, headers={"origin": "https://kotu.example"})
+    assert response.status_code == 403
+    assert api.post("/ui/encounter/e-2001/status", data={"status": "finished"},
+                    headers={"referer": "https://kotu.example/x"}).status_code == 403
+
+
+def test_ui_requires_password_when_a_key_is_configured(monkeypatch) -> None:
+    monkeypatch.setenv("HBYS_SIM_API_KEY", "gizli-anahtar")
+    api = TestClient(sim.app)
+    assert api.get("/").status_code == 401 and api.get("/ui/new").status_code == 401
+    assert api.get("/", auth=("hbys", "yanlis")).status_code == 401
+    assert api.get("/", auth=("hbys", "gizli-anahtar")).status_code == 200
+    monkeypatch.setenv("HBYS_SIM_UI_PASSWORD", "ekran-sifresi")
+    assert api.get("/", auth=("hbys", "ekran-sifresi")).status_code == 200
+
+
+def test_ui_without_any_secret_outside_development_is_unavailable(monkeypatch) -> None:
+    monkeypatch.setenv("HBYS_SIM_ENV", "production")
+    assert TestClient(sim.app).get("/").status_code == 503
+
+
+def test_runtime_records_survive_a_restart() -> None:
+    api = TestClient(sim.app)
+    encounter = _create(api)
+    api.post(f"/ui/encounter/{encounter.id}/status", data={"status": "finished"})
+    api.post("/ui/encounter/e-2003/status", data={"status": "in-progress"})
+    api.post("/fhir/DiagnosticReport", headers=KEY, json=diagnostic_report(
+        encounter_id=encounter.id, report_text="Olabilir; hekim değerlendirmesi gerekir.", model="m"))
+    sim_records.reset_runtime_records()  # process memory gone (spin-down)
+    sim.ENCOUNTERS_BY_ID["e-2003"].status = "finished"
+    assert encounter.id not in sim.ENCOUNTERS_BY_ID
+    with TestClient(sim.app):  # startup reloads from the store
+        restored = sim.ENCOUNTERS_BY_ID[encounter.id]
+        assert restored.status == "finished" and len(restored.labs) == 2
+        assert sim.ENCOUNTERS_BY_ID["e-2003"].status == "in-progress"
+        assert len(sim.RECEIVED_REPORTS) == 1
+    sim.ENCOUNTERS_BY_ID["e-2003"].status = "finished"
+
+
+# ------------------------------------------------------------------ automatic export after an AI report
+class _SessionCtx:
+    def __init__(self, session):
+        self.session = session
+
+    async def __aenter__(self):
+        return self.session
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+def _hbys_patient(protocol="HBYS-2026-100201", report=True):
+    metadata = {"simple_case": {"labs": [{"test_name": "K", "source_metadata": {"source_system": "hbys"}}]}}
+    if report:
+        metadata["simple_case_ai_report"] = {"report_text": "Diyabetik nefropati olabilir; hekim değerlendirmesi gerekir.",
+                                             "model": "m", "case_fingerprint": "fp"}
+    return SimpleNamespace(id=uuid.uuid4(), protocol_no=protocol, metadata_json=metadata)
+
+
+def _auto(monkeypatch, patient, user, *, report="saved", individual=False):
+    from app.infrastructure.database import session as db_session
+
+    session = _Session([patient])
+    monkeypatch.setattr(db_session, "AsyncSessionFactory", lambda: _SessionCtx(session))
+    monkeypatch.setattr(hbys_routes, "get_hbys_client", _client)
+    _settings(monkeypatch, individual=individual)
+
+    async def current(session_, patient_, user_):
+        if report == "saved":
+            return patient_.metadata_json.get("simple_case_ai_report")
+        return None
+
+    monkeypatch.setattr(hbys_routes, "_current_ai_report", current)
+    asyncio.run(hbys_routes.auto_export_ai_report(patient.id, user))
+    return patient.metadata_json.get("hbys_export"), session
+
+
+def test_auto_export_sends_new_report_to_the_visit(monkeypatch) -> None:
+    patient = _hbys_patient()
+    export, session = _auto(monkeypatch, patient, _user())
+    assert export["status"] == "sent" and export["trigger"] == "auto" and export["encounter"] == "e-2001"
+    assert sim.RECEIVED_REPORTS[-1]["conclusion"].startswith("Diyabetik nefropati olabilir")
+    assert sim.RECEIVED_REPORTS[-1]["status"] == "preliminary" and session.commits == 1
+
+
+def test_auto_export_for_individual_user_needs_the_flag(monkeypatch) -> None:
+    export, _ = _auto(monkeypatch, _hbys_patient(), _user(UserRole.PATIENT), individual=False)
+    assert export["status"] == "failed" and "HBYS_INDIVIDUAL_ACCESS" in export["detail"]
+    export, _ = _auto(monkeypatch, _hbys_patient(), _user(UserRole.PATIENT), individual=True)
+    assert export["status"] == "sent"
+
+
+def test_auto_export_skips_stale_report_and_unknown_protocol(monkeypatch) -> None:
+    export, _ = _auto(monkeypatch, _hbys_patient(), _user(), report="stale")
+    assert export["status"] == "skipped" and "Güncel AI raporu yok" in export["detail"]
+    export, _ = _auto(monkeypatch, _hbys_patient(protocol="BASKA-1"), _user())
+    assert export["status"] == "skipped" and "bulunamadı" in export["detail"]
+    assert not sim.RECEIVED_REPORTS
+
+
+def test_auto_export_ignores_cases_not_imported_from_hbys(monkeypatch) -> None:
+    patient = _hbys_patient()
+    patient.metadata_json["simple_case"] = {"labs": [{"test_name": "K", "source_metadata": {}}]}
+    export, session = _auto(monkeypatch, patient, _user())
+    assert export is None and session.commits == 0 and not sim.RECEIVED_REPORTS
+
+
+def test_auto_export_records_hbys_failures(monkeypatch) -> None:
+    patient = _hbys_patient()
+    monkeypatch.setattr(hbys_routes, "get_hbys_client",
+                        lambda: HbysClient("http://hbys", "yanlis", transport=httpx.ASGITransport(app=sim.app)))
+    from app.infrastructure.database import session as db_session
+    monkeypatch.setattr(db_session, "AsyncSessionFactory", lambda: _SessionCtx(_Session([patient])))
+    _settings(monkeypatch, individual=False)
+    asyncio.run(hbys_routes.auto_export_ai_report(patient.id, _user()))
+    assert patient.metadata_json["hbys_export"]["status"] == "failed"
+    assert "anahtarı reddedildi" in patient.metadata_json["hbys_export"]["detail"]
+
+
+def test_encounter_list_shows_export_state(monkeypatch) -> None:
+    patient = _hbys_patient()
+    patient.metadata_json["hbys_export"] = {"status": "sent", "sent_at": "2026-11-16T12:00:00+00:00"}
+    rows = asyncio.run(hbys_routes.list_encounters(_client(), _Session([patient]), _user()))
+    row = next(item for item in rows if item["protocol_no"] == patient.protocol_no)
+    assert row["hbys_export"]["status"] == "sent" and row["medicore_patient_id"] == str(patient.id)
+
+
+def test_hbys_case_detection() -> None:
+    assert hbys_routes.is_hbys_case(_hbys_patient().metadata_json)
+    assert hbys_routes.is_hbys_case({"simple_case": {"reports": [{"metadata": {"source_system": "hbys"}}]}})
+    assert not hbys_routes.is_hbys_case({"simple_case": {"labs": [{"source_metadata": {"source_system": "pdf"}}]}})
+    assert not hbys_routes.is_hbys_case({})
+
+
+def test_ai_report_schedules_hbys_auto_export_only_for_hbys_cases(monkeypatch) -> None:
+    from fastapi import BackgroundTasks
+    from app.api.routes import simple_case as simple_case_routes
+    from app.schemas.simple_case import SimpleCaseRequest
+
+    async def no_validation(*args, **kwargs):
+        return None
+
+    async def fake_interpret(payload):
+        return SimpleNamespace(report_text="Bulgular olabilir; hekim değerlendirmesi gerekir.", model="m",
+                               consistency_flags=None)
+
+    class _Request:
+        async def json(self):
+            return {}
+
+    monkeypatch.setattr(simple_case_routes, "_validate_case_patient_sources", no_validation)
+    monkeypatch.setattr(simple_case_routes, "interpret_simple_case", fake_interpret)
+    monkeypatch.setattr(hbys_routes, "get_settings", lambda: SimpleNamespace(
+        hbys_base_url="http://hbys", hbys_api_key="k", hbys_individual_access=False))
+    user = SimpleNamespace(id=uuid.uuid4(), role=UserRole.DOCTOR)
+
+    def run(patient):
+        session = _Session([patient])
+        session.refresh = lambda obj: asyncio.sleep(0)
+        tasks = BackgroundTasks()
+        asyncio.run(simple_case_routes.ai_interpret_patient_case(
+            patient.id, SimpleCaseRequest(), _Request(), session, user, tasks))
+        return tasks.tasks
+
+    scheduled = run(_hbys_patient())
+    assert len(scheduled) == 1 and scheduled[0].func is hbys_routes.auto_export_ai_report
+    plain = _hbys_patient()
+    plain.metadata_json["simple_case"] = {"labs": [{"source_metadata": {"source_system": "pdf"}}]}
+    assert run(plain) == []
+
+
+
+def test_export_result_never_overwrites_a_concurrent_case_save(monkeypatch) -> None:
+    patient = _hbys_patient()
+    from app.infrastructure.database import session as db_session
+
+    session = _Session([patient])
+    session.concurrent_save = {"clinical_context": {"complaints": ["hekimin yeni kaydı"]}, "simple_case_ai_report": None}
+    monkeypatch.setattr(db_session, "AsyncSessionFactory", lambda: _SessionCtx(session))
+    monkeypatch.setattr(hbys_routes, "get_hbys_client", _client)
+    _settings(monkeypatch, individual=False)
+    original_report = dict(patient.metadata_json["simple_case_ai_report"])
+
+    async def current(session_, patient_, user_):
+        return original_report
+
+    monkeypatch.setattr(hbys_routes, "_current_ai_report", current)
+    asyncio.run(hbys_routes.auto_export_ai_report(patient.id, _user()))
+    # the row was re-read under a lock and only hbys_export was added on top
+    assert session.refreshes == [True]
+    assert patient.metadata_json["clinical_context"] == {"complaints": ["hekimin yeni kaydı"]}
+    assert patient.metadata_json["simple_case_ai_report"] is None
+    assert patient.metadata_json["hbys_export"]["status"] == "sent"
+
+
+def test_ui_password_may_contain_turkish_characters(monkeypatch) -> None:
+    monkeypatch.setenv("HBYS_SIM_UI_PASSWORD", "şifreĞüç")
+    api = TestClient(sim.app)
+    token = base64.b64encode("hbys:şifreĞüç".encode("utf-8")).decode("ascii")
+    assert api.get("/", headers={"Authorization": f"Basic {token}"}).status_code == 200
+    wrong = base64.b64encode("hbys:sifre".encode("utf-8")).decode("ascii")
+    assert api.get("/", headers={"Authorization": f"Basic {wrong}"}).status_code == 401
+    assert sim._same_secret("anahtarçğ", "anahtarçğ") and not sim._same_secret("anahtarcg", "anahtarçğ")

@@ -3,12 +3,13 @@ import test from 'node:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createServer } from 'vite';
+import { isolatedVite } from './viteIsolation.mjs';
 import { normalizeClinical, vitalDraft } from '../src/services/clinicalRecord.ts';
 
 // Vite applies the application's TSX/env transforms. Components render as HTML,
 // and storage/fetch are isolated doubles; this test never contacts a backend.
 test('clinical cards, numeric inputs and archive draft synchronization', async (t) => {
-  const server = await createServer({ configFile: false, appType: 'custom', server: { middlewareMode: true, hmr: false, watch: null } });
+  const server = await createServer({ ...isolatedVite(),  configFile: false, appType: 'custom', server: { middlewareMode: true, hmr: false, watch: null } });
   const originalStorage = globalThis.localStorage;
   const originalFetch = globalThis.fetch;
   const originalWindow = globalThis.window;

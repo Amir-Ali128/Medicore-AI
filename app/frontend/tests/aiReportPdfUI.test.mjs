@@ -3,9 +3,10 @@ import test from 'node:test';
 import React from 'react';
 import { act, create } from 'react-test-renderer';
 import { createServer } from 'vite';
+import { isolatedVite } from './viteIsolation.mjs';
 
 test('PDF button exports the displayed report without AI calls, handles failures and patient changes', async (t) => {
-  const server = await createServer({ configFile: false, appType: 'custom', server: { middlewareMode: true, hmr: false, ws: false, watch: null } });
+  const server = await createServer({ ...isolatedVite(),  configFile: false, appType: 'custom', server: { middlewareMode: true, hmr: false, ws: false, watch: null } });
   const previous = { storage: globalThis.localStorage, fetch: globalThis.fetch, document: globalThis.document, act: globalThis.IS_REACT_ACT_ENVIRONMENT, url: URL.createObjectURL, revoke: URL.revokeObjectURL };
   const storage = new Map();
   let clicks = [], requests = 0;

@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createServer } from 'vite';
+import { isolatedVite } from './viteIsolation.mjs';
 
 test('privacy block is shown in Turkish for structured API errors',async()=>{
- const server=await createServer({configFile:false,appType:'custom',server:{middlewareMode:true,hmr:false,ws:false,watch:null}});
+ const server=await createServer({ ...isolatedVite(), configFile:false,appType:'custom',server:{middlewareMode:true,hmr:false,ws:false,watch:null}});
  const originals={fetch:globalThis.fetch,window:globalThis.window,localStorage:globalThis.localStorage};
  globalThis.window={location:{hash:'#/case'}};
  globalThis.localStorage={getItem:()=>null,setItem:()=>{},removeItem:()=>{}};

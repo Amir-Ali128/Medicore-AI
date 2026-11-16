@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createServer } from 'vite';
+import { isolatedVite } from './viteIsolation.mjs';
 
 test('patient switches isolate drafts, reports, late responses and AI context', async (t) => {
-  const server = await createServer({ configFile: false, appType: 'custom', server: { middlewareMode: true, hmr: false, watch: null } });
+  const server = await createServer({ ...isolatedVite(),  configFile: false, appType: 'custom', server: { middlewareMode: true, hmr: false, watch: null } });
   const originals = { storage: globalThis.localStorage, window: globalThis.window, fetch: globalThis.fetch };
   const storage = new Map();
   const events = [];

@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createServer } from 'vite';
+import { isolatedVite } from './viteIsolation.mjs';
 
 test('Turkish voice extraction creates reviewable drafts without inference or writes', async (t) => {
-  const server = await createServer({ configFile: false, appType: 'custom', server: { middlewareMode: true, hmr: false, ws: false, watch: null } });
+  const server = await createServer({ ...isolatedVite(),  configFile: false, appType: 'custom', server: { middlewareMode: true, hmr: false, ws: false, watch: null } });
   try {
     const { turkishNumber, extractVoiceDraft, approvedVoicePatch, VOICE_LABELS } = await server.ssrLoadModule('/src/services/voiceClinicalDraft.ts');
     const values = (text) => Object.fromEntries(extractVoiceDraft(text).candidates.map((item) => [item.field, item.value]));
