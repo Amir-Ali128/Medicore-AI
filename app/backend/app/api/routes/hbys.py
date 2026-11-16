@@ -57,6 +57,19 @@ async def _patient_ids_by_protocol(session, protocols: list[str]) -> dict[str, s
     return {protocol: str(patient_id) for patient_id, protocol in rows}
 
 
+async def _current_ai_report(session, patient, current_user) -> dict[str, Any] | None:
+    """The AI report exactly as the case view shows it: None when it is stale.
+
+    Reuses the saved-case endpoint so the fingerprint check (report vs. current
+    saved case) can never drift from what the physician sees.
+    """
+    from app.api.routes.simple_case import get_saved_simple_case
+
+    saved = await get_saved_simple_case(patient.id, session, current_user)
+    report = saved.get("ai_report")
+    return report if isinstance(report, dict) else None
+
+
 class HbysReportRequest(BaseModel):
     patient_id: uuid.UUID
 
@@ -118,8 +131,8 @@ async def send_report(
     if imported.protocol_no != patient.protocol_no:
         raise HTTPException(status_code=409, detail="Hasta kaydı bu HBYS muayenesine ait değil.")
 
+    report = await _current_ai_report(session, patient, current_user)
     metadata = dict(patient.metadata_json or {})
-    report = metadata.get("simple_case_ai_report")
     if not isinstance(report, dict) or not str(report.get("report_text") or "").strip():
         raise HTTPException(status_code=409, detail="Gönderilecek güncel bir AI raporu yok. Önce raporu oluşturun.")
 

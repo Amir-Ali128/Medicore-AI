@@ -20,6 +20,7 @@ from typing import Any
 from app.domain.privacy_gateway import KnownIdentifier, sanitize_text
 from app.schemas.simple_case import (
     ClinicalContext,
+    LabReferenceRange,
     LabResultInput,
     MedicalReportInput,
     SimpleCaseRequest,
@@ -31,6 +32,19 @@ _VITAL_BY_LOINC = {
     "8480-6": "systolic_bp", "8462-4": "diastolic_bp", "8867-4": "heart_rate",
     "9279-1": "respiratory_rate", "8310-5": "temperature", "59408-5": "spo2",
     "8302-2": "height_cm", "29463-7": "weight_kg",
+}
+# Accepted units per vital field (UCUM and common spellings) -> factor/offset into
+# the field's fixed unit. Anything else is dropped rather than silently mislabelled.
+_VITAL_UNITS: dict[str, dict[str, tuple[float, float]]] = {
+    "systolic_bp": {"mm[hg]": (1, 0), "mmhg": (1, 0)},
+    "diastolic_bp": {"mm[hg]": (1, 0), "mmhg": (1, 0)},
+    "heart_rate": {"/min": (1, 0), "{beats}/min": (1, 0), "bpm": (1, 0), "/dk": (1, 0)},
+    "respiratory_rate": {"/min": (1, 0), "{breaths}/min": (1, 0), "/dk": (1, 0)},
+    "temperature": {"cel": (1, 0), "°c": (1, 0), "[degf]": (5 / 9, -32 * 5 / 9), "°f": (5 / 9, -32 * 5 / 9)},
+    "spo2": {"%": (1, 0)},
+    "height_cm": {"cm": (1, 0), "m": (100, 0), "mm": (0.1, 0), "[in_i]": (2.54, 0), "in": (2.54, 0)},
+    "weight_kg": {"kg": (1, 0), "g": (0.001, 0), "[lb_av]": (0.45359237, 0), "lb": (0.45359237, 0),
+                  "lbs": (0.45359237, 0)},
 }
 _REPORT_TYPE_BY_MODALITY = {
     "DX": "Röntgen", "CR": "Röntgen", "US": "Ultrasonografi", "CT": "BT", "MR": "MR",
@@ -176,6 +190,64 @@ class _Scrubber:
         return result.text
 
 
+def _vital_value(field: str, quantity: dict[str, Any]) -> float | None:
+    value = quantity.get("value")
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return None
+    unit = str(quantity.get("code") or quantity.get("unit") or "").strip().lower()
+    factor_offset = _VITAL_UNITS[field].get(unit)
+    if factor_offset is None:
+        return None  # unknown or missing unit: never guess the measurement scale
+    factor, offset = factor_offset
+    return round(float(value) * factor + offset, 2)
+
+
+def _number_text(value: float) -> str:
+    return f"{value:g}"
+
+
+def _quantity(value: Any) -> tuple[float | None, str | None]:
+    if not isinstance(value, dict):
+        return None, None
+    number = value.get("value")
+    if not isinstance(number, (int, float)) or isinstance(number, bool):
+        return None, None
+    return float(number), value.get("unit") or value.get("code")
+
+
+def _structured_ranges(ranges: list[Any], scrub: "_Scrubber") -> list[LabReferenceRange]:
+    """FHIR low/high (inclusive) bounds, with their unit and age/sex applicability."""
+    result: list[LabReferenceRange] = []
+    for item in ranges:
+        if not isinstance(item, dict):
+            continue
+        low, low_unit = _quantity(item.get("low"))
+        high, high_unit = _quantity(item.get("high"))
+        if low is None and high is None:
+            continue
+        if low is not None and high is not None:
+            text = f"{_number_text(low)} - {_number_text(high)}"
+        elif low is not None:
+            text = f">= {_number_text(low)}"
+        else:
+            text = f"<= {_number_text(high)}"
+        age = item.get("age") if isinstance(item.get("age"), dict) else {}
+        age_min, _ = _quantity(age.get("low"))
+        age_max, _ = _quantity(age.get("high"))
+        sexes = {
+            str(coding.get("code")).lower()
+            for concept in item.get("appliesTo") or [] if isinstance(concept, dict)
+            for coding in concept.get("coding") or [] if isinstance(coding, dict)
+        } & {"male", "female"}
+        result.append(LabReferenceRange(
+            text=text, minimum=low, maximum=high, unit=scrub(low_unit or high_unit),
+            age_min=int(age_min) if age_min is not None else None,
+            age_max=int(age_max) if age_max is not None else None,
+            sex=sexes.pop() if len(sexes) == 1 else None,
+        ))
+    return result
+
+
 # ----------------------------------------------------------------- mapping
 def encounter_summaries(bundle: dict[str, Any]) -> list[EncounterSummary]:
     summaries = []
@@ -225,9 +297,10 @@ def case_from_bundle(bundle: dict[str, Any]) -> ImportedCase:
         category = {c.get("code") for cat in observation.get("category") or [] for c in cat.get("coding") or []}
         code = _code(observation)
         if "vital-signs" in category and code in _VITAL_BY_LOINC:
-            quantity = observation.get("valueQuantity") or {}
-            if isinstance(quantity.get("value"), (int, float)) and not isinstance(quantity.get("value"), bool):
-                vitals[_VITAL_BY_LOINC[code]] = float(quantity["value"])
+            field = _VITAL_BY_LOINC[code]
+            converted = _vital_value(field, observation.get("valueQuantity") or {})
+            if converted is not None:
+                vitals[field] = converted
             continue
         if "laboratory" not in category:
             continue
@@ -237,7 +310,9 @@ def case_from_bundle(bundle: dict[str, Any]) -> ImportedCase:
         quantity = observation.get("valueQuantity") or {}
         value = observation.get("valueString", quantity.get("value"))
         unit = _extension(observation, "unit") or quantity.get("unit")
-        reference = next((r.get("text") for r in observation.get("referenceRange") or [] if r.get("text")), None)
+        ranges = observation.get("referenceRange") or []
+        reference = next((r.get("text") for r in ranges if isinstance(r, dict) and r.get("text")), None)
+        structured = [] if reference else _structured_ranges(ranges, scrub)
         flag = next((c.get("code") for i in observation.get("interpretation") or [] for c in i.get("coding") or []), None)
         effective = _parse_datetime(observation.get("effectiveDateTime"))
         labs.append(LabResultInput(
@@ -245,6 +320,7 @@ def case_from_bundle(bundle: dict[str, Any]) -> ImportedCase:
             value=scrub(value) if isinstance(value, str) else value,
             unit=scrub(unit),
             source_reference=scrub(reference),
+            source_references=structured,
             specimen_date=effective,
             measured_at=effective,
             # HBYS flags are informative only; Medicore re-classifies from the
