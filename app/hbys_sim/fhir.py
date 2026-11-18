@@ -37,8 +37,7 @@ def patient_resource(patient: SimPatient) -> dict[str, Any]:
         "name": [{"family": patient.family_name, "given": [patient.given_name]}],
         "gender": patient.sex,
         "birthDate": _iso(patient.birth_date),
-        "telecom": [{"system": "phone", "value": patient.phone}],
-        "address": [{"text": patient.address}],
+        "telecom": [{"system": "phone", "value": patient.phone}] if patient.phone else [],
     }
 
 
@@ -49,9 +48,8 @@ def encounter_resource(encounter: SimEncounter) -> dict[str, Any]:
         "status": encounter.status,
         "identifier": [{"system": PROTOCOL_SYSTEM, "value": encounter.protocol_no}],
         "class": {"code": "EMER" if "Acil" in encounter.department else "AMB"},
-        "serviceType": {"text": encounter.department},
+        "serviceType": {"text": encounter.department},  # HBYS-internal; Medicore drops it
         "subject": {"reference": f"Patient/{encounter.patient_id}"},
-        "participant": [{"individual": {"display": encounter.doctor}}],
         "period": {"start": _iso(encounter.admitted_at)},
         "reasonCode": [{"text": complaint} for complaint in encounter.complaints],
     }

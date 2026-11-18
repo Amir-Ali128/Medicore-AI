@@ -137,7 +137,8 @@ export default function HbysPage() {
         )}
         <p className="mt-2 text-xs text-slate-500">
           Ad, T.C. kimlik no, telefon, adres ve doğum tarihi Medicore'a aktarılmaz; yalnızca protokol numarası, yaş,
-          cinsiyet, klinik bulgular, laboratuvar ve radyoloji sonuçları gelir.
+          cinsiyet, klinik bulgular, laboratuvar ve radyoloji sonuçları gelir. Hastane, hekim ve bölüm adları, ev
+          adresi ve aile (anne/baba) bilgileri hiçbir zaman aktarılmaz.
         </p>
         <p className="mt-2 text-xs text-slate-500">
           Durum: <b>Devam ediyor</b> = hasta hastanede, muayene/tetkikler sürüyor · <b>Tamamlandı</b> = muayene
@@ -153,7 +154,6 @@ export default function HbysPage() {
           <thead className="text-xs uppercase tracking-wide text-slate-400">
             <tr>
               <th className="px-4 py-3">Protokol No</th>
-              <th className="px-4 py-3">Birim</th>
               <th className="px-4 py-3">Kabul</th>
               <th className="px-4 py-3">Durum</th>
               <th className="px-4 py-3">Tetkik</th>
@@ -165,7 +165,6 @@ export default function HbysPage() {
             {encounters.map((encounter) => (
               <tr key={encounter.encounter_id} className="border-t border-slate-100">
                 <td className="px-4 py-3 font-medium text-slate-900">{encounter.protocol_no}</td>
-                <td className="px-4 py-3 text-slate-600">{encounter.department ?? '-'}</td>
                 <td className="px-4 py-3 text-slate-600">{formatDate(encounter.admitted_at)}</td>
                 <td className="px-4 py-3">
                   <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
@@ -203,7 +202,7 @@ export default function HbysPage() {
               </tr>
             ))}
             {!loading && status?.reachable && encounters.length === 0 ? (
-              <tr><td colSpan={7} className="px-4 py-6 text-center text-slate-500">HBYS'de muayene bulunamadı.</td></tr>
+              <tr><td colSpan={6} className="px-4 py-6 text-center text-slate-500">HBYS'de muayene bulunamadı.</td></tr>
             ) : null}
           </tbody>
         </table>

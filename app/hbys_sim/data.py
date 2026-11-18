@@ -2,7 +2,9 @@
 
 Every person here is fictional. National ID numbers deliberately FAIL the
 T.C. kimlik checksum so they can never belong to a real citizen, phone numbers
-use a reserved-looking 0555 000 xx xx block, and addresses are invented.
+use a reserved-looking 0555 000 xx xx block. Home addresses, family members,
+clinician, hospital and department names are deliberately NOT kept for patients:
+only what the clinical exchange needs.
 """
 
 from __future__ import annotations
@@ -20,7 +22,6 @@ class SimPatient:
     sex: str  # FHIR administrative gender: male | female | other | unknown
     birth_date: date
     phone: str
-    address: str
 
 
 @dataclass
@@ -46,8 +47,7 @@ class SimEncounter:
     id: str
     protocol_no: str
     patient_id: str
-    department: str
-    doctor: str
+    department: str  # routing only inside the HBYS; never exported to Medicore
     admitted_at: datetime
     status: str  # in-progress | finished
     complaints: list[str]
@@ -70,17 +70,17 @@ def _invalid_tckn(prefix: str) -> str:
 
 PATIENTS: list[SimPatient] = [
     SimPatient("p-1001", _invalid_tckn("100000001"), "Deniz", "Örnekoğlu", "female",
-               date(1958, 4, 12), "0555 000 10 01", "Sentetik Mah. Deneme Sok. No:1 Çankaya/Ankara"),
+               date(1958, 4, 12), "0555 000 10 01"),
     SimPatient("p-1002", _invalid_tckn("100000002"), "Kerem", "Testoğlu", "male",
-               date(1979, 9, 3), "0555 000 10 02", "Örnek Mah. Simülasyon Cad. No:7 Yenimahalle/Ankara"),
+               date(1979, 9, 3), "0555 000 10 02"),
     SimPatient("p-1003", _invalid_tckn("100000003"), "Elif", "Sanalkaya", "female",
-               date(1991, 1, 27), "0555 000 10 03", "Hayal Mah. Prova Sok. No:3 Keçiören/Ankara"),
+               date(1991, 1, 27), "0555 000 10 03"),
     SimPatient("p-1004", _invalid_tckn("100000004"), "Murat", "Demoğlu", "male",
-               date(1965, 11, 30), "0555 000 10 04", "Model Mah. Taslak Sok. No:12 Etimesgut/Ankara"),
+               date(1965, 11, 30), "0555 000 10 04"),
     SimPatient("p-1005", _invalid_tckn("100000005"), "Zeynep", "Kurmacaer", "female",
-               date(1948, 6, 18), "0555 000 10 05", "Kurgu Mah. Örnek Cad. No:9 Mamak/Ankara"),
+               date(1948, 6, 18), "0555 000 10 05"),
     SimPatient("p-1006", _invalid_tckn("100000006"), "Ali", "Denemeci", "male",
-               date(2001, 3, 8), "0555 000 10 06", "Sentez Mah. Pilot Sok. No:4 Gölbaşı/Ankara"),
+               date(2001, 3, 8), "0555 000 10 06"),
 ]
 
 
@@ -91,7 +91,7 @@ def _lab(loinc, name, value, unit, reference, flag=None) -> SimLab:
 ENCOUNTERS: list[SimEncounter] = [
     SimEncounter(
         id="e-2001", protocol_no="HBYS-2026-100201", patient_id="p-1001",
-        department="Dahiliye Polikliniği", doctor="Uzm. Dr. Sentetik Hekim",
+        department="Dahiliye Polikliniği",
         admitted_at=datetime(2026, 11, 14, 9, 20), status="in-progress",
         complaints=["halsizlik", "sık idrara çıkma", "ağız kuruluğu"],
         history=["tip 2 diyabet", "hipertansiyon"], medications=["metformin 1000 mg", "ramipril 5 mg"],
@@ -113,7 +113,7 @@ ENCOUNTERS: list[SimEncounter] = [
     ),
     SimEncounter(
         id="e-2002", protocol_no="HBYS-2026-100202", patient_id="p-1002",
-        department="Acil Servis", doctor="Dr. Sentetik Acil",
+        department="Acil Servis",
         admitted_at=datetime(2026, 11, 14, 23, 5), status="in-progress",
         complaints=["göğüs ağrısı", "terleme", "sol kola yayılan ağrı"],
         history=["sigara kullanımı"], medications=[],
@@ -137,7 +137,7 @@ ENCOUNTERS: list[SimEncounter] = [
     ),
     SimEncounter(
         id="e-2003", protocol_no="HBYS-2026-100203", patient_id="p-1003",
-        department="Kadın Hastalıkları ve Doğum Polikliniği", doctor="Op. Dr. Sentetik Jinekolog",
+        department="Kadın Hastalıkları ve Doğum Polikliniği",
         admitted_at=datetime(2026, 11, 13, 14, 10), status="finished",
         complaints=["yorgunluk", "baş dönmesi", "saç dökülmesi"],
         history=[], medications=[],
@@ -156,7 +156,7 @@ ENCOUNTERS: list[SimEncounter] = [
     ),
     SimEncounter(
         id="e-2004", protocol_no="HBYS-2026-100204", patient_id="p-1004",
-        department="Nefroloji Polikliniği", doctor="Doç. Dr. Sentetik Nefrolog",
+        department="Nefroloji Polikliniği",
         admitted_at=datetime(2026, 11, 14, 11, 0), status="in-progress",
         complaints=["bacaklarda şişlik", "idrar miktarında azalma"],
         history=["kronik böbrek hastalığı", "hipertansiyon"], medications=["amlodipin 10 mg", "furosemid 40 mg"],
@@ -183,7 +183,7 @@ ENCOUNTERS: list[SimEncounter] = [
     ),
     SimEncounter(
         id="e-2005", protocol_no="HBYS-2026-100205", patient_id="p-1005",
-        department="Endokrinoloji Polikliniği", doctor="Prof. Dr. Sentetik Endokrinolog",
+        department="Endokrinoloji Polikliniği",
         admitted_at=datetime(2026, 11, 12, 10, 30), status="finished",
         complaints=["kilo alımı", "üşüme", "kabızlık"],
         history=["osteoporoz"], medications=["kalsiyum + D vitamini"],
@@ -200,7 +200,7 @@ ENCOUNTERS: list[SimEncounter] = [
     ),
     SimEncounter(
         id="e-2006", protocol_no="HBYS-2026-100206", patient_id="p-1006",
-        department="Göğüs Hastalıkları Polikliniği", doctor="Uzm. Dr. Sentetik Göğüsçü",
+        department="Göğüs Hastalıkları Polikliniği",
         admitted_at=datetime(2026, 11, 15, 8, 40), status="in-progress",
         complaints=["öksürük", "ateş", "balgam"],
         history=[], medications=[],

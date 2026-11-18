@@ -288,9 +288,9 @@ def ui_encounter(encounter_id: str, _: UiLogin) -> HTMLResponse:
         f"<input type='hidden' name='status' value='{target}'><button class='btn ghost'>{toggle}</button></form></div></div>"
         f"<div class='card'><h2>Hasta Kimlik (HBYS'de kalır, Medicore'a gönderilmez)</h2>"
         f"<p>{esc(patient.given_name)} {esc(patient.family_name)} · T.C. {esc(patient.tckn)} · "
-        f"{patient.birth_date:%d.%m.%Y} · {esc(patient.phone or '-')}<br><span class='muted'>{esc(patient.address or '-')}</span></p></div>"
+        f"{patient.birth_date:%d.%m.%Y} · {esc(patient.phone or '-')}</p></div>"
         f"<div class='card'><h2>Poliklinik · {esc(encounter.department)}</h2>"
-        f"<p><b>Hekim:</b> {esc(encounter.doctor)}<br><b>Şikâyet:</b> {esc(', '.join(encounter.complaints) or '-')}<br>"
+        f"<p><b>Şikâyet:</b> {esc(', '.join(encounter.complaints) or '-')}<br>"
         f"<b>Özgeçmiş:</b> {esc(', '.join(encounter.history) or '-')}<br>"
         f"<b>İlaçlar:</b> {esc(', '.join(encounter.medications) or '-')}<br>"
         f"<b>Tanı (ICD-10):</b> {esc('; '.join(f'{c} {t}'.strip() for c, t in encounter.diagnoses) or '-')}<br>"
@@ -336,11 +336,9 @@ def _form_page(values: dict[str, str], error: str | None = None) -> HTMLResponse
         + f"<label>Cinsiyet *<select name='sex'>{options('sex', {'female': 'Kadın', 'male': 'Erkek'})}</select></label>"
         + field("birth_date", "Doğum tarihi *", "date", "required")
         + field("phone", "Telefon", extra="maxlength='20'")
-        + field("address", "Adres", extra="maxlength='200'")
-        + "</div><p class='muted'>T.C. kimlik no sistem tarafından sentetik olarak üretilir.</p></fieldset>"
+        + "</div><p class='muted'>T.C. kimlik no sistem tarafından sentetik olarak üretilir. Ev adresi, aile (anne/baba) bilgisi, hekim ve hastane adı tutulmaz.</p></fieldset>"
         "<fieldset><legend>Muayene</legend><div class='grid'>"
         f"<label>Birim<select name='department'>{departments}</select></label>"
-        + field("doctor", "Hekim", extra="maxlength='80' placeholder='Dr. Sentetik Hekim'")
         + field("diagnosis_code", "Ön tanı ICD-10 kodu", extra="maxlength='8' placeholder='N18.4'")
         + field("diagnosis_text", "Ön tanı", extra="maxlength='120'")
         + "</div>"
@@ -431,8 +429,8 @@ def _parse_form(values: dict[str, str]) -> dict[str, Any]:
                                       findings[:3000], impression[:1000]))
     return {
         "given_name": given, "family_name": family, "sex": sex, "birth_date": born,
-        "phone": values.get("phone", "").strip()[:20], "address": values.get("address", "").strip()[:200],
-        "department": department, "doctor": values.get("doctor", "").strip()[:80] or "Dr. Sentetik Hekim",
+        "phone": values.get("phone", "").strip()[:20],
+        "department": department,
         "complaints": _split(values.get("complaints", "")), "history": _split(values.get("history", "")),
         "medications": _split(values.get("medications", "")),
         "diagnoses": [(code, diagnosis_text)] if code or diagnosis_text else [],

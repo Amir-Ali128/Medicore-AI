@@ -66,7 +66,6 @@ class HbysNotConfigured(HbysError):
 class EncounterSummary:
     encounter_id: str
     protocol_no: str
-    department: str | None
     admitted_at: str | None
     status: str | None
     lab_count: int
@@ -163,6 +162,16 @@ def _identifiers(patient: dict[str, Any]) -> list[KnownIdentifier]:
     for address in patient.get("address") or []:
         if address.get("text"):
             found.append(KnownIdentifier(str(address["text"]), "ADRES"))
+    for contact in patient.get("contact") or []:  # family members / next of kin
+        name = contact.get("name") or {}
+        full = " ".join(str(part) for part in [*(name.get("given") or []), name.get("family") or ""] if part).strip()
+        if full:
+            found.append(KnownIdentifier(full, "HASTA_ADI"))
+        if (contact.get("address") or {}).get("text"):
+            found.append(KnownIdentifier(str(contact["address"]["text"]), "ADRES"))
+        for telecom in contact.get("telecom") or []:
+            if telecom.get("value"):
+                found.append(KnownIdentifier(str(telecom["value"]), "TELEFON"))
     if patient.get("birthDate"):
         try:
             born = date.fromisoformat(str(patient["birthDate"]))
@@ -285,13 +294,36 @@ def encounter_summaries(bundle: dict[str, Any]) -> list[EncounterSummary]:
         summaries.append(EncounterSummary(
             encounter_id=str(encounter.get("id")),
             protocol_no=_protocol(encounter),
-            department=_text(encounter.get("serviceType")),
             admitted_at=(encounter.get("period") or {}).get("start"),
             status=encounter.get("status"),
             lab_count=int(_extension(encounter, "lab-count") or 0),
             radiology_count=int(_extension(encounter, "radiology-count") or 0),
         ))
     return summaries
+
+
+def _care_identifiers(encounter: dict[str, Any], bundle: dict[str, Any]) -> list[KnownIdentifier]:
+    """Clinician, unit and institution names of the visit: scrubbed from free text."""
+    found: list[KnownIdentifier] = []
+    for participant in encounter.get("participant") or []:
+        display = (participant.get("individual") or {}).get("display")
+        if display:
+            found.append(KnownIdentifier(str(display), "HEKIM"))
+    for value, category in ((_text(encounter.get("serviceType")), "BIRIM"),
+                            ((encounter.get("serviceProvider") or {}).get("display"), "KURUM")):
+        if value:
+            found.append(KnownIdentifier(str(value), category))
+    for resource_type, category in (("Practitioner", "HEKIM"), ("Organization", "KURUM")):
+        for resource in _resources(bundle, resource_type):
+            names = resource.get("name")
+            if isinstance(names, str):
+                found.append(KnownIdentifier(names, category))
+            for name in names if isinstance(names, list) else []:
+                text = name.get("text") or " ".join(
+                    str(part) for part in [*(name.get("prefix") or []), *(name.get("given") or []), name.get("family") or ""] if part)
+                if text.strip():
+                    found.append(KnownIdentifier(text.strip(), category))
+    return found
 
 
 def case_from_bundle(bundle: dict[str, Any]) -> ImportedCase:
@@ -303,7 +335,7 @@ def case_from_bundle(bundle: dict[str, Any]) -> ImportedCase:
     if (encounter.get("subject") or {}).get("reference") != f"Patient/{patient.get('id')}":
         raise HbysError("HBYS muayenesi farklı bir hastaya ait görünüyor.")
 
-    scrub = _Scrubber(_identifiers(patient))
+    scrub = _Scrubber([*_identifiers(patient), *_care_identifiers(encounter, bundle)])
     started = _parse_datetime((encounter.get("period") or {}).get("start"))
     age = _age(patient.get("birthDate"), started)
     sex = _SEX.get(str(patient.get("gender")), "unknown")
@@ -379,11 +411,8 @@ def case_from_bundle(bundle: dict[str, Any]) -> ImportedCase:
                           for item in _resources(bundle, "MedicationStatement")) if text
     ]
     complaints = [text for text in (scrub(_text(reason)) for reason in encounter.get("reasonCode") or []) if text]
-    department = scrub(_text(encounter.get("serviceType")))
-    notes = "; ".join(filter(None, [
-        f"HBYS birimi: {department}" if department else None,
-        f"HBYS ön tanı (ICD-10): {', '.join(diagnoses)}" if diagnoses else None,
-    ])) or None
+    # Policy: hospital, clinician and department names never leave the HBYS.
+    notes = f"HBYS ön tanı (ICD-10): {', '.join(diagnoses)}" if diagnoses else None
 
     clinical = ClinicalContext(
         age=age, sex=sex, complaints=complaints, history=history, medications=medications,

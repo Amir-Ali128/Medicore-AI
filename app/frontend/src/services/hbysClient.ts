@@ -12,7 +12,6 @@ export type HbysStatus = {
 export type HbysEncounter = {
   encounter_id: string;
   protocol_no: string;
-  department: string | null;
   admitted_at: string | null;
   status: 'in-progress' | 'finished' | string | null;
   lab_count: number;
