@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any
 
-from app.domain.privacy_gateway import KnownIdentifier, sanitize_text
+from app.domain.privacy_gateway import KnownIdentifier, sanitize_text, strip_clinician_title
 from app.schemas.simple_case import (
     ClinicalContext,
     LabReferenceRange,
@@ -305,10 +305,16 @@ def encounter_summaries(bundle: dict[str, Any]) -> list[EncounterSummary]:
 def _care_identifiers(encounter: dict[str, Any], bundle: dict[str, Any]) -> list[KnownIdentifier]:
     """Clinician, unit and institution names of the visit: scrubbed from free text."""
     found: list[KnownIdentifier] = []
+    def clinician(name: str) -> None:
+        # Register both "Uzm. Dr. Ahmet Yılmaz" and the untitled "Ahmet Yılmaz".
+        for variant in {name.strip(), strip_clinician_title(name)}:
+            if variant:
+                found.append(KnownIdentifier(variant, "HEKIM"))
+
     for participant in encounter.get("participant") or []:
         display = (participant.get("individual") or {}).get("display")
         if display:
-            found.append(KnownIdentifier(str(display), "HEKIM"))
+            clinician(str(display))
     for value, category in ((_text(encounter.get("serviceType")), "BIRIM"),
                             ((encounter.get("serviceProvider") or {}).get("display"), "KURUM")):
         if value:
@@ -317,12 +323,17 @@ def _care_identifiers(encounter: dict[str, Any], bundle: dict[str, Any]) -> list
         for resource in _resources(bundle, resource_type):
             names = resource.get("name")
             if isinstance(names, str):
-                found.append(KnownIdentifier(names, category))
+                (clinician if category == "HEKIM" else lambda v: found.append(KnownIdentifier(v, category)))(names)
             for name in names if isinstance(names, list) else []:
-                text = name.get("text") or " ".join(
-                    str(part) for part in [*(name.get("prefix") or []), *(name.get("given") or []), name.get("family") or ""] if part)
-                if text.strip():
-                    found.append(KnownIdentifier(text.strip(), category))
+                plain = " ".join(str(part) for part in [*(name.get("given") or []), name.get("family") or ""] if part)
+                for text in {name.get("text") or "", plain,
+                             " ".join(str(part) for part in [*(name.get("prefix") or []), plain] if part)}:
+                    if not text.strip():
+                        continue
+                    if category == "HEKIM":
+                        clinician(text)
+                    else:
+                        found.append(KnownIdentifier(text.strip(), category))
     return found
 
 

@@ -819,3 +819,14 @@ def test_ai_payload_masks_clinician_hospital_unit_and_family_keys() -> None:
                                 "mother_name": "Fatma", "father_name": "Mehmet", "home_address": "Kızılay"}, counts, ())
     assert result == {"doctor_name": "[HEKIM]", "hospital": "[KURUM]", "department": "[BIRIM]",
                       "mother_name": "[HASTA_ADI]", "father_name": "[HASTA_ADI]", "home_address": "[ADRES]"}
+
+
+
+def test_untitled_mentions_of_known_clinicians_are_scrubbed() -> None:
+    bundle = _bundle_with_care_identities()
+    for entry in bundle["entry"]:
+        if entry["resource"]["resourceType"] == "Encounter":
+            entry["resource"]["reasonCode"] += [{"text": "Ahmet Hekimoğlu tarafından değerlendirildi"},
+                                                {"text": "Ayşe Kardiyolog önerisiyle geldi"}]
+    serialized = json.dumps(case_from_bundle(bundle).case.model_dump(mode="json"), ensure_ascii=False)
+    assert "Hekimoğlu" not in serialized and "Kardiyolog" not in serialized

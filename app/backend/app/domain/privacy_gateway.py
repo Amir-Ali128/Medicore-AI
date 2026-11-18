@@ -123,9 +123,19 @@ _DOCTOR = re.compile(
 # Unlabelled Turkish street addresses: "Kızılay Mah. Atatürk Bulv. No:5 Çankaya/Ankara".
 _ADDRESS = re.compile(
     r"(?<![\w])(?:(?:[A-ZÇĞİÖŞÜ0-9][\w'’.-]*[ \t]+){1,4}"
-    r"(?:Mahallesi|Mah\.|Mh\.|Caddesi|Cadde|Cad\.|Cd\.|Sokağı|Sokak|Sok\.|Sk\.|Bulvarı|Bulvar|Bulv\.|Blv\.|Mevkii|Köyü|Sitesi)[ \t,]*)+"
-    r"(?:(?:No|Kat|Daire|D|Apt|Blok)[ \t.:]*\d+[\w/-]*[ \t,]*|\d+[\w/-]*[ \t,]*|[A-ZÇĞİÖŞÜ]\w+/[A-ZÇĞİÖŞÜ]\w+[ \t,]*)*"
+    r"(?i:Mahallesi|Mah\.|Mh\.|Caddesi|Cadde|Cad\.|Cd\.|Sokağı|Sokak|Sok\.|Sk\.|Bulvarı|Bulvar|Bulv\.|Blv\.|Mevkii|Köyü|Sitesi)[ \t,]*)+"
+    r"(?:(?i:No|Kat|Daire|D|Apt|Blok)[ \t.:]*\d+[\w/-]*[ \t,]*|\d+[\w/-]*[ \t,]*|[A-ZÇĞİÖŞÜ]\w+/[A-ZÇĞİÖŞÜ]\w+[ \t,]*)*"
 )
+_TITLE_CHAIN = re.compile(
+    r"^(?:(?i:prof|doç|doc|yrd|uzm|op|asist|asst|öğr|ogr|başhekim|üyesi|gör|dr|dt|dyt)\.?[ \t]*)+"
+)
+
+
+def strip_clinician_title(name: str) -> str:
+    """'Uzm. Dr. Ahmet Yılmaz' -> 'Ahmet Yılmaz' (used to register untitled variants)."""
+    return _TITLE_CHAIN.sub('', name.strip()).strip()
+
+
 # Unlabelled institution names: capitalised words + an institution suffix
 # ("Ankara Şehir Hastanesi'nde", "GAZİ ÜNİVERSİTESİ TIP FAKÜLTESİ").
 _INSTITUTION_SUFFIX = (r"(?:Eğitim[ \t]+ve[ \t]+Araştırma[ \t]+Hastanesi|Devlet[ \t]+Hastanesi|Şehir[ \t]+Hastanesi|Hastanesi|Hastaneleri|"

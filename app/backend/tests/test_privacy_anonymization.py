@@ -399,6 +399,8 @@ def test_static_provider_prompts_are_not_altered_by_label_rules():
     ('Baba adı: Mehmet', 'Mehmet', '[HASTA_ADI]'),
     ('ev adresi Kızılay Mah. 5', 'Kızılay', '[ADRES]'),
     ('Çayyolu Mahallesi 2432. Cadde No: 7 Daire 3', 'Çayyolu', '[ADRES]'),
+    ('KIZILAY MAH. ATATÜRK BULV. NO:5 ÇANKAYA/ANKARA', 'KIZILAY', '[ADRES]'),
+    ('ÇAYYOLU MAHALLESİ 2432. CADDE NO: 7 DAİRE 3', 'ÇAYYOLU', '[ADRES]'),
 ])
 def test_care_identities_addresses_and_family_names_are_removed(text, gone, placeholder):
     result = _text(text)
