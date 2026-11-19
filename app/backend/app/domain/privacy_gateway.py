@@ -126,6 +126,25 @@ _ADDRESS = re.compile(
     r"(?i:Mahallesi|Mah\.|Mh\.|Caddesi|Cadde|Cad\.|Cd\.|Sokağı|Sokak|Sok\.|Sk\.|Bulvarı|Bulvar|Bulv\.|Blv\.|Mevkii|Köyü|Sitesi)[ \t,]*)+"
     r"(?:(?i:No|Kat|Daire|D|Apt|Blok)[ \t.:]*\d+[\w/-]*[ \t,]*|\d+[\w/-]*[ \t,]*|[A-ZÇĞİÖŞÜ]\w+/[A-ZÇĞİÖŞÜ]\w+[ \t,]*)*"
 )
+# Unlabelled unit/department proper names: "Nefroloji Polikliniği", "Acil Servisi",
+# "İç Hastalıkları Anabilim Dalı". Lower-case usage in prose ("acil servise
+# başvurdu", "kardiyoloji polikliniğine yönlendirildi") is clinical text and kept.
+_UNIT = re.compile(
+    r"(?<![\w])(?:[A-ZÇĞİÖŞÜ][\w'’-]*[ \t]+){1,5}"
+    r"(?:Polikliniği|Polikliniğine|Polikliniğinde|Polikliniğinden|Kliniği|Kliniğine|Kliniğinde|Servisi|Servisine|Servisinde|"
+    r"Anabilim[ \t]+Dalı|Bilim[ \t]+Dalı|Ünitesi|Birimi|POLİKLİNİĞİ|KLİNİĞİ|SERVİSİ|ANABİLİM[ \t]+DALI)(?![\w])"
+)
+# Relatives named in prose: "Hasta eşi Zeynep Demir", "kızı Elif ile geldi". Only
+# Title-case words count as a name, so "Annesi diyabetik", "babası MI geçirmiş",
+# "Annesi KOAH hastası" stay clinical history.
+_RELATIVE_NAME = re.compile(
+    r"(?<![\w])(?i:eşi|esi|annesi|anası|babası|kızı|oğlu|kardeşi|ablası|ağabeyi|abisi|amcası|dayısı|teyzesi|halası|"
+    r"torunu|yeğeni|refakatçisi|refakatçi|yakını|vasisi|veli(?:si)?)[ \t:]+"
+    r"(?!(?:Doktor|Hekim|Hemşire|Öğretmen|Mühendis|Emekli|Hasta|Diyabet|Hipertansiyon|Kanser|Astım|Koah|Alzheimer|Parkinson)(?![\w]))"
+    r"(?P<name>[A-ZÇĞİÖŞÜ][a-zçğıöşü]+(?:[ \t]+[A-ZÇĞİÖŞÜ][a-zçğıöşü]+){0,2})"
+)
+
+
 _TITLE_CHAIN = re.compile(
     r"^(?:(?i:prof|doç|doc|yrd|uzm|op|asist|asst|öğr|ogr|başhekim|üyesi|gör|dr|dt|dyt)\.?[ \t]*)+"
 )
@@ -426,9 +445,12 @@ def _spans(text: str, known_identifiers: Sequence[str]) -> list[_Span]:
     folded, positions = _fold_map(text)
     spans: list[_Span] = []
     for category, regex in (('TCKN',_TCKN),('TELEFON',_PHONE),('EPOSTA',_EMAIL),('KAYIT_NO',_IBAN),
-                            ('HEKIM',_DOCTOR),('KURUM',_INSTITUTION),('KURUM',_INSTITUTION_CAPS),('ADRES',_ADDRESS)):
+                            ('HEKIM',_DOCTOR),('KURUM',_INSTITUTION),('KURUM',_INSTITUTION_CAPS),('ADRES',_ADDRESS),
+                            ('BIRIM',_UNIT)):
         for match in regex.finditer(text):
             if category != 'TCKN' or valid_tckn(match.group()): spans.append(_Span(*match.span(),category))
+    for match in _RELATIVE_NAME.finditer(text):
+        spans.append(_Span(*match.span('name'),'HASTA_ADI'))
     for start, end, category in [*_known_spans(folded,known_identifiers),*_label_spans(folded)]:
         if end > start: spans.append(_Span(positions[start],positions[end-1]+1,category))
     # Prefer the complete labelled value/full identifier, avoiding overlapping replacements.
