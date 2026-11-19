@@ -263,9 +263,12 @@ def test_labelled_tc_number_is_redacted_even_without_valid_checksum_and_final_ch
     final_leak_check('Referans 12345678900')  # unlabelled lab/accession numbers stay allowed
 
 
-def test_doctor_names_and_clinical_text_are_kept():
+def test_doctor_names_are_removed_but_clinical_text_is_kept():
+    # Policy: clinician, institution and unit names never reach the AI provider.
     text = 'İsteyen Dr: Ali Veli\nOnaylayan: Uzm. Dr. Zeynep Kaya\nHasta: 45 yaşında erkek, ateş yüksek'
-    assert _text(text) == text
+    result = _text(text)
+    assert 'Ali Veli' not in result and 'Zeynep' not in result and 'Kaya' not in result
+    assert result.endswith('Hasta: 45 yaşında erkek, ateş yüksek')
 
 
 @pytest.mark.parametrize('text', [
@@ -380,3 +383,38 @@ def test_static_provider_prompts_are_not_altered_by_label_rules():
                 if sanitize_text(node.value).text != node.value:
                     changed.append((site, node.value[:80]))
     assert not changed, changed
+
+
+# Policy: hospital, clinician and unit names, home addresses and family names never reach AI.
+@pytest.mark.parametrize('text, gone, placeholder', [
+    ('Dr. Ahmet Yılmaz tarafından değerlendirildi', 'Ahmet', '[HEKIM]'),
+    ('PROF. DR. ALİ VELİ', 'VELİ', '[HEKIM]'),
+    ('Sorumlu hekim: Op. Dr. Can Er', 'Can Er', '[HEKIM]'),
+    ("Hasta Ankara Şehir Hastanesi'ne sevk edildi", 'Ankara', '[KURUM]'),
+    ('HACETTEPE ÜNİVERSİTESİ TIP FAKÜLTESİ', 'HACETTEPE', '[KURUM]'),
+    ('Kurum: Özel Medicana Hastanesi', 'Medicana', '[KURUM]'),
+    ('Bölüm: Nefroloji Polikliniği', 'Nefroloji', '[BIRIM]'),
+    ('Birim: Acil Servis', 'Acil', '[BIRIM]'),
+    ('Anne Adı: Fatma', 'Fatma', '[HASTA_ADI]'),
+    ('Baba adı: Mehmet', 'Mehmet', '[HASTA_ADI]'),
+    ('ev adresi Kızılay Mah. 5', 'Kızılay', '[ADRES]'),
+    ('Çayyolu Mahallesi 2432. Cadde No: 7 Daire 3', 'Çayyolu', '[ADRES]'),
+    ('KIZILAY MAH. ATATÜRK BULV. NO:5 ÇANKAYA/ANKARA', 'KIZILAY', '[ADRES]'),
+    ('ÇAYYOLU MAHALLESİ 2432. CADDE NO: 7 DAİRE 3', 'ÇAYYOLU', '[ADRES]'),
+])
+def test_care_identities_addresses_and_family_names_are_removed(text, gone, placeholder):
+    result = _text(text)
+    assert gone not in result and placeholder in result
+
+
+@pytest.mark.parametrize('text', [
+    'Annesi diyabetik, babası MI geçirmiş',             # family medical history is clinical data
+    'Kreatinin 1,8 mg/dL; Kardiyoloji konsültasyonu önerildi',
+    'Acil servise başvurdu, poliklinik kontrolü önerildi',
+    'Doktor: Göğüs ağrınız var mı?',                     # voice speaker label
+    'Klinik bilgi: Pulmoner emboli şüphesi',
+    'Hasta Mahalle maçında düştü',
+    'Demir eksikliği anemisi',
+])
+def test_clinical_text_survives_the_care_identity_rules(text):
+    assert _text(text) == text

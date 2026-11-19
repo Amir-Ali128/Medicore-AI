@@ -22,10 +22,10 @@ def oru_r01(encounter: SimEncounter, *, now: datetime | None = None) -> str:
     sent = now or datetime(2026, 11, 15, 12, 0)
     sex = {"female": "F", "male": "M"}.get(patient.sex, "U")
     segments = [
-        f"MSH|^~\\&|SANAL_HBYS|SANAL_HASTANE|MEDICORE|MEDICORE|{_ts(sent)}||ORU^R01^ORU_R01|"
+        f"MSH|^~\\&|SANAL_HBYS|SANAL_HBYS|MEDICORE|MEDICORE|{_ts(sent)}||ORU^R01^ORU_R01|"
         f"{encounter.id}|P|2.5|||AL|NE||UNICODE UTF-8",
         f"PID|1||{patient.tckn}^^^SANAL_HBYS^NI||{_escape(patient.family_name)}^{_escape(patient.given_name)}"
-        f"||{patient.birth_date.strftime('%Y%m%d')}|{sex}|||{_escape(patient.address)}||{patient.phone}",
+        f"||{patient.birth_date.strftime('%Y%m%d')}|{sex}|||||{patient.phone}",
         f"PV1|1|{'E' if 'Acil' in encounter.department else 'O'}|{_escape(encounter.department)}"
         f"||||||||||||||||{encounter.protocol_no}",
         f"OBR|1|{encounter.protocol_no}||LAB^Laboratuvar paneli|||{_ts(encounter.specimen_at)}",

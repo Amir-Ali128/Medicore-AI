@@ -49,7 +49,18 @@ def private_media(content: bytes, media_type: str, *, data_url: bool = False) ->
 
 
 _DOB_KEYS={'date_of_birth','birth_date','dob','dogum_tarihi'}
-_ID_KEYS={'patient_name','full_name','first_name','last_name','surname','national_id','tckn','phone','telephone','email','address','external_ref','protocol_no'}
+_ID_KEYS={'patient_name','full_name','first_name','last_name','surname','national_id','tckn','phone','telephone','email','address','external_ref','protocol_no',
+          'mother_name','father_name','next_of_kin','home_address',
+          'doctor','doctor_name','physician','physician_name','practitioner','attending_physician','referring_physician',
+          'hospital','hospital_name','institution','institution_name','facility','facility_name','organization',
+          'department','department_name','ward','clinic_name','service_unit'}
+_ID_KEY_CATEGORY={'phone':'TELEFON','telephone':'TELEFON','email':'EPOSTA','address':'ADRES','home_address':'ADRES',
+                  'national_id':'TCKN','tckn':'TCKN',
+                  'doctor':'HEKIM','doctor_name':'HEKIM','physician':'HEKIM','physician_name':'HEKIM','practitioner':'HEKIM',
+                  'attending_physician':'HEKIM','referring_physician':'HEKIM',
+                  'hospital':'KURUM','hospital_name':'KURUM','institution':'KURUM','institution_name':'KURUM',
+                  'facility':'KURUM','facility_name':'KURUM','organization':'KURUM',
+                  'department':'BIRIM','department_name':'BIRIM','ward':'BIRIM','clinic_name':'BIRIM','service_unit':'BIRIM'}
 _FILE_KEYS={'filename','file_name','source_file_name'}
 
 
@@ -83,7 +94,7 @@ def _sanitize_payload(value: Any, counts: Counter, identifiers: Sequence[str], *
                 if age is not None and 'age' not in value: result['age']=age
                 continue
             if lowered in _ID_KEYS and isinstance(item,(str,int)) and str(item).strip():
-                category={'phone':'TELEFON','telephone':'TELEFON','email':'EPOSTA','address':'ADRES','national_id':'TCKN','tckn':'TCKN'}.get(lowered,'HASTA_ADI' if 'name' in lowered else 'KAYIT_NO')
+                category=_ID_KEY_CATEGORY.get(lowered,'HASTA_ADI' if 'name' in lowered or lowered=='next_of_kin' else 'KAYIT_NO')
                 counts[category]+=1; result[field]=f'[{category}]'
             elif lowered in _FILE_KEYS:
                 # Filenames can contain identifiers without labels or patient context.

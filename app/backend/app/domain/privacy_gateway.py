@@ -76,6 +76,13 @@ _LABEL_SPECS: tuple[tuple[str, str, str], ...] = (
     ('DOGUM_TARIHI', r'dogum\s+tarihi|dogum\s+t\.|d\.\s*tarihi|d\.tarihi|dogum[_ ]tarihi|date[_ ]of[_ ]birth|birth[_ ]?date|dob', 'strong'),
     ('KAYIT_NO', r'(?:dosya|protokol|kayit|hasta|basvuru|sicil|sigorta|sgk|ssk|bagkur|pasaport|passport|provizyon|takip|arsiv|barkod|barcode)'
                  r'\s*(?:no|numarasi|number|nr)\.?|sgk\s+sicil\s+no\.?|barkod|barcode|pasaport|passport', 'strong'),
+    ('HEKIM', r'(?:sorumlu|isteyen|istem\s+yapan|onaylayan|raporlayan|tedavi\s+eden|muayene\s+eden|takip\s+eden|'
+              r'yorumlayan|degerlendiren|konsulte\s+eden)\s+(?:hekim|doktor|dr\.?|uzman)|(?:hekim|doktor)\s+(?:adi|bilgisi)|'
+              r'referring[_ ]physician|attending[_ ]physician|physician[_ ]name|doctor[_ ]name', 'weak'),
+    ('KURUM', r'hastane(?:\s+adi)?|kurum(?:\s+adi)?|saglik\s+tesisi|tesis(?:\s+adi)?|gonderen\s+kurum|'
+              r'hospital(?:[_ ]name)?|institution(?:[_ ]name)?|facility(?:[_ ]name)?', 'weak'),
+    ('BIRIM', r'bolum(?:\s+adi)?|birim(?:\s+adi)?|poliklinik(?:\s+adi)?|servis(?:\s+adi)?|anabilim\s+dali|bilim\s+dali|'
+              r'klinik\s+adi|department|ward', 'weak'),
     ('ADRES', r'ev\s+adresi|ikamet(?:gah)?(?:\s+adresi)?|adresi?|address|dogum\s+yeri', 'weak'),
     ('KAYIT_NO', r'filename|file_name|source_file_name|protokol', 'weak'),
     ('HASTA_ADI', r'soyadi|soyad|soyisim|adi|ad|isim|surname|hasta', 'weak'),
@@ -84,9 +91,11 @@ _LABEL_SPECS: tuple[tuple[str, str, str], ...] = (
 LABELS: dict[str, str] = {}
 for _category, _pattern, _kind in _LABEL_SPECS:
     LABELS[_category] = f'{LABELS[_category]}|{_pattern}' if _category in LABELS else _pattern
+_CONTEXT_LABELS = frozenset({'HEKIM', 'KURUM', 'BIRIM'})
 _LABEL_KIND: list[tuple[re.Pattern, str, str]] = [(re.compile(p), c, k) for c, p, k in _LABEL_SPECS]
 _LABEL_WORD = re.compile(r'(?<![\w\[])(?P<label>' + '|'.join(f'(?:{p})' for _, p, _ in _LABEL_SPECS) + r')(?!\w)')
-_PLACEHOLDER = re.compile(r'\[(?:HASTA_ADI|TCKN|TELEFON|EPOSTA|ADRES|DOGUM_TARIHI|KAYIT_NO)\]')
+_CATEGORIES = ('HASTA_ADI', 'TCKN', 'TELEFON', 'EPOSTA', 'ADRES', 'DOGUM_TARIHI', 'KAYIT_NO', 'HEKIM', 'KURUM', 'BIRIM')
+_PLACEHOLDER = re.compile(r'\[(?:' + '|'.join(_CATEGORIES) + r')\]')
 
 _TCKN = re.compile(r'(?<!\d)[1-9]\d{10}(?!\d)')
 _LABELLED_TCKN_VALUE = re.compile(r'\d{3}[ ]?\d{3}[ ]?\d{3}[ ]?\d{2}(?!\d)')
@@ -104,6 +113,42 @@ _LAB_RESULT = re.compile(
     r'uiu/ml|µiu/ml|mmhg|g/l|mg/l|µmol/l|umol/l|%|10\^\d+/[µu]l|x?10e\d+/l|/mm3|/µl|/ul)'
     r'|\b(?:normal|negatif|pozitif|reaktif|non-reaktif|yuksek|dusuk|negative|positive|high|low)\b',re.I)
 _IBAN = re.compile(r'(?<!\w)TR(?:\s*\d){24}(?!\d)',re.I)
+# Unlabelled clinician names: an academic/clinical title chain ending in "Dr"
+# followed by 1-4 capitalised words ("Uzm. Dr. Ayşe Kaya", "PROF. DR. ALİ VELİ").
+_NAME_WORD = r"(?:[A-ZÇĞİÖŞÜ][a-zçğıöşü]+(?:-[A-ZÇĞİÖŞÜ][a-zçğıöşü]+)?|[A-ZÇĞİÖŞÜ]{2,})"
+_DOCTOR = re.compile(
+    r"(?<![\w.])(?:(?i:prof|doç|doc|yrd|uzm|op|asist|asst|öğr|ogr|başhekim)\.?[ \t]*(?:(?i:üyesi|gör)\.?[ \t]*)?)*"
+    r"(?i:dr|dt|dyt)\.?[ \t]+" + _NAME_WORD + r"(?:[ \t]+" + _NAME_WORD + r"){0,3}"
+)
+# Unlabelled Turkish street addresses: "Kızılay Mah. Atatürk Bulv. No:5 Çankaya/Ankara".
+_ADDRESS = re.compile(
+    r"(?<![\w])(?:(?:[A-ZÇĞİÖŞÜ0-9][\w'’.-]*[ \t]+){1,4}"
+    r"(?i:Mahallesi|Mah\.|Mh\.|Caddesi|Cadde|Cad\.|Cd\.|Sokağı|Sokak|Sok\.|Sk\.|Bulvarı|Bulvar|Bulv\.|Blv\.|Mevkii|Köyü|Sitesi)[ \t,]*)+"
+    r"(?:(?i:No|Kat|Daire|D|Apt|Blok)[ \t.:]*\d+[\w/-]*[ \t,]*|\d+[\w/-]*[ \t,]*|[A-ZÇĞİÖŞÜ]\w+/[A-ZÇĞİÖŞÜ]\w+[ \t,]*)*"
+)
+_TITLE_CHAIN = re.compile(
+    r"^(?:(?i:prof|doç|doc|yrd|uzm|op|asist|asst|öğr|ogr|başhekim|üyesi|gör|dr|dt|dyt)\.?[ \t]*)+"
+)
+
+
+def strip_clinician_title(name: str) -> str:
+    """'Uzm. Dr. Ahmet Yılmaz' -> 'Ahmet Yılmaz' (used to register untitled variants)."""
+    return _TITLE_CHAIN.sub('', name.strip()).strip()
+
+
+# Unlabelled institution names: capitalised words + an institution suffix
+# ("Ankara Şehir Hastanesi'nde", "GAZİ ÜNİVERSİTESİ TIP FAKÜLTESİ").
+_INSTITUTION_SUFFIX = (r"(?:Eğitim[ \t]+ve[ \t]+Araştırma[ \t]+Hastanesi|Devlet[ \t]+Hastanesi|Şehir[ \t]+Hastanesi|Hastanesi|Hastaneleri|"
+                       r"Tıp[ \t]+Fakültesi(?:[ \t]+Hastanesi)?|Üniversitesi|Sağlık[ \t]+Merkezi|Tıp[ \t]+Merkezi|Sağlık[ \t]+Kampüsü|"
+                       r"Hospital|Medical[ \t]+Center)")
+_INSTITUTION = re.compile(
+    r"(?<![\w])(?:[A-ZÇĞİÖŞÜ][\w'’.&-]*[ \t]+){1,7}" + _INSTITUTION_SUFFIX + r"(?:['’][a-zçğıöşü]+)?"
+)
+_INSTITUTION_CAPS = re.compile(
+    r"(?<![\w])(?:[A-ZÇĞİÖŞÜ0-9][A-ZÇĞİÖŞÜ0-9'’.&-]+[ \t]+){1,7}"
+    r"(?:EĞİTİM[ \t]+VE[ \t]+ARAŞTIRMA[ \t]+HASTANESİ|HASTANESİ|HASTANELERİ|TIP[ \t]+FAKÜLTESİ(?:[ \t]+HASTANESİ)?|ÜNİVERSİTESİ|"
+    r"SAĞLIK[ \t]+MERKEZİ|TIP[ \t]+MERKEZİ|HOSPITAL|MEDICAL[ \t]+CENTER)(?:['’][A-ZÇĞİÖŞÜa-zçğıöşü]+)?"
+)
 _NAME_VALUE = re.compile(r"[^\W\d_]+(?:[-'.][^\W\d_]+)*\.?(?:[ \t]+[^\W\d_]+(?:[-'.][^\W\d_]+)*\.?){0,3}")
 _ID_VALUE = re.compile(r'[\w./-]*\d[\w./-]*')
 _VALUE_SHAPE = {
@@ -273,7 +318,7 @@ def _value_fits(category: str, value: str) -> bool:
     return bool(shape.search(value))
 
 
-_FOLDED_PLACEHOLDER = re.compile(r'\[(?:hasta_adi|tckn|telefon|eposta|adres|dogum_tarihi|kayit_no)\]')
+_FOLDED_PLACEHOLDER = re.compile(r'\[(?:' + '|'.join(c.lower() for c in _CATEGORIES) + r')\]')
 _CELL = re.compile(r'\S+(?:[ ]\S+)*')
 
 
@@ -299,7 +344,16 @@ def _label_spans(folded: str) -> list[tuple[int,int,str]]:
     for raw_line in folded.split('\n'):
         line_start, offset = offset, offset+len(raw_line)+1
         body = raw_line.rstrip('\r')
-        labels = list(_LABEL_WORD.finditer(body))
+        all_labels = list(_LABEL_WORD.finditer(body))
+        label_line = bool(all_labels) and re.fullmatch(r'[\s:=.|/-]*',_LABEL_WORD.sub('',body)) is not None
+        labels = [
+            match for match in all_labels
+            # Clinician/institution/unit words are ordinary words inside values
+            # ("Acil Servis", "Kardiyoloji Poliklinik"): they act as labels only
+            # when a separator follows them or the line holds nothing but labels.
+            if label_line or _label_category(match)[0] not in _CONTEXT_LABELS
+            or re.match(r'["\']?[ \t]*[:=]|[ \t]{2,}\S|\t', body[match.end():])
+        ]
         header_row = bool(labels) and re.fullmatch(r'[\s:=.|/-]*',_LABEL_WORD.sub('',body)) is not None
         values: list[tuple[int,int,str]] = []   # inline (start, end, category)
         label_only: list[str] = []
@@ -371,7 +425,8 @@ def _label_spans(folded: str) -> list[tuple[int,int,str]]:
 def _spans(text: str, known_identifiers: Sequence[str]) -> list[_Span]:
     folded, positions = _fold_map(text)
     spans: list[_Span] = []
-    for category, regex in (('TCKN',_TCKN),('TELEFON',_PHONE),('EPOSTA',_EMAIL),('KAYIT_NO',_IBAN)):
+    for category, regex in (('TCKN',_TCKN),('TELEFON',_PHONE),('EPOSTA',_EMAIL),('KAYIT_NO',_IBAN),
+                            ('HEKIM',_DOCTOR),('KURUM',_INSTITUTION),('KURUM',_INSTITUTION_CAPS),('ADRES',_ADDRESS)):
         for match in regex.finditer(text):
             if category != 'TCKN' or valid_tckn(match.group()): spans.append(_Span(*match.span(),category))
     for start, end, category in [*_known_spans(folded,known_identifiers),*_label_spans(folded)]:

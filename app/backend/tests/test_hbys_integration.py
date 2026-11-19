@@ -51,7 +51,7 @@ def _client() -> HbysClient:
 
 
 def _identity_values(patient) -> list[str]:
-    return [patient.given_name, patient.family_name, patient.tckn, patient.phone, patient.address,
+    return [patient.given_name, patient.family_name, patient.tckn, patient.phone,
             patient.birth_date.isoformat(), patient.birth_date.strftime("%d.%m.%Y")]
 
 
@@ -141,7 +141,7 @@ def test_imported_clinical_context_maps_age_sex_vitals_and_reports() -> None:
     assert (imported.age, imported.sex) == (47, "male")
     assert clinical.complaints == encounter.complaints
     assert clinical.vital_signs.systolic_bp == 162 and clinical.vital_signs.spo2 == 94
-    assert "R07.4" in clinical.notes and "Acil Servis" in clinical.notes
+    assert "R07.4" in clinical.notes and "Acil Servis" not in clinical.notes  # no unit names
     assert imported.case.reports[0].report_type == "Röntgen"
     assert imported.case.labs[0].source_reference == "< 34"
 
@@ -733,3 +733,100 @@ def test_ui_password_may_contain_turkish_characters(monkeypatch) -> None:
     wrong = base64.b64encode("hbys:sifre".encode("utf-8")).decode("ascii")
     assert api.get("/", headers={"Authorization": f"Basic {wrong}"}).status_code == 401
     assert sim._same_secret("anahtarçğ", "anahtarçğ") and not sim._same_secret("anahtarcg", "anahtarçğ")
+
+
+
+# ------------------------------------------------------------------ policy: no hospital / clinician / unit / address / family
+_FORBIDDEN = ["Ankara Şehir Hastanesi", "Gazi Üniversitesi", "Ahmet Hekimoğlu", "Ayşe Kardiyolog",
+              "Nefroloji Polikliniği", "Kızılay Mah", "Fatma Annesi", "Mehmet Babası"]
+
+
+def _bundle_with_care_identities():
+    encounter = next(e for e in ENCOUNTERS if e.id == "e-2004")
+    bundle = encounter_bundle(encounter)
+    for entry in bundle["entry"]:
+        resource = entry["resource"]
+        if resource["resourceType"] == "Encounter":
+            resource["participant"] = [{"individual": {"display": "Uzm. Dr. Ahmet Hekimoğlu"}}]
+            resource["serviceProvider"] = {"display": "Ankara Şehir Hastanesi"}
+            resource["reasonCode"] += [
+                {"text": "Dr. Ayşe Kardiyolog yönlendirdi"},
+                {"text": "Gazi Üniversitesi Tıp Fakültesi'nden sevkli"},
+                {"text": "Bölüm: Nefroloji Polikliniği"},
+                {"text": "annesi Fatma Annesi refakatçi, ev adresi Kızılay Mah. 5"},
+            ]
+        if resource["resourceType"] == "Patient":
+            resource["contact"] = [
+                {"relationship": [{"text": "anne"}], "name": {"given": ["Fatma"], "family": "Annesi"},
+                 "address": {"text": "Kızılay Mah. Atatürk Bulv. No:5"}},
+                {"relationship": [{"text": "baba"}], "name": {"given": ["Mehmet"], "family": "Babası"}},
+            ]
+            resource["address"] = [{"text": "Kızılay Mah. Atatürk Bulv. No:5 Çankaya/Ankara"}]
+    bundle["entry"].append({"resource": {"resourceType": "Organization", "id": "o1", "name": "Gazi Üniversitesi"}})
+    bundle["entry"].append({"resource": {"resourceType": "Practitioner", "id": "pr1",
+                                         "name": [{"prefix": ["Dr."], "given": ["Ayşe"], "family": "Kardiyolog"}]}})
+    return bundle
+
+
+def test_import_never_carries_hospital_clinician_unit_address_or_family_names() -> None:
+    imported = case_from_bundle(_bundle_with_care_identities())
+    serialized = json.dumps(imported.case.model_dump(mode="json"), ensure_ascii=False)
+    for value in _FORBIDDEN:
+        assert value not in serialized, value
+    for placeholder in ("[HEKIM]", "[KURUM]", "[BIRIM]", "[ADRES]", "[HASTA_ADI]"):
+        assert placeholder in serialized, placeholder
+    # clinical content of the same visit is untouched
+    assert "bacaklarda şişlik" in imported.case.clinical.complaints
+    assert any(lab.test_name == "Kreatinin" for lab in imported.case.labs)
+
+
+def test_encounter_list_has_no_unit_names() -> None:
+    rows = asyncio.run(hbys_routes.list_encounters(_client(), _Session([]), _user()))
+    assert rows and all("department" not in row for row in rows)
+    assert "Polikliniği" not in json.dumps(rows, ensure_ascii=False)
+
+
+def test_simulator_does_not_keep_address_doctor_or_family() -> None:
+    api = TestClient(sim.app)
+    form_page = api.get("/ui/new").text
+    assert "name='address'" not in form_page and "name='doctor'" not in form_page
+    assert "aile (anne/baba) bilgisi" in form_page
+    bundle = api.get("/fhir/Encounter/e-2004/$everything", headers=KEY).json()
+    patient = next(e["resource"] for e in bundle["entry"] if e["resource"]["resourceType"] == "Patient")
+    encounter = next(e["resource"] for e in bundle["entry"] if e["resource"]["resourceType"] == "Encounter")
+    assert "address" not in patient and "contact" not in patient and "participant" not in encounter
+    assert "Hekim:" not in api.get("/ui/encounter/e-2004").text
+    assert "SANAL_HASTANE" not in api.get("/hl7/oru/e-2004", headers=KEY).text
+
+
+def test_older_stored_records_with_address_or_doctor_still_load() -> None:
+    sim_records.store.put("patient", "p-old", {"id": "p-old", "tckn": "10000000999", "given_name": "Eski", "family_name": "Kayıt",
+                                               "sex": "female", "birth_date": "1970-01-01", "phone": "", "address": "Eski adres"})
+    sim_records.store.put("encounter", "e-old", {
+        "id": "e-old", "protocol_no": "HBYS-2026-109999", "patient_id": "p-old", "department": "Acil Servis",
+        "doctor": "Dr. Eski", "admitted_at": "2026-11-10T10:00:00", "status": "finished", "complaints": [], "history": [],
+        "medications": [], "diagnoses": [], "vitals": {}, "labs": [], "specimen_at": "2026-11-10T10:00:00", "radiology": []})
+    with TestClient(sim.app):
+        assert "e-old" in sim.ENCOUNTERS_BY_ID and not hasattr(sim.ENCOUNTERS_BY_ID["e-old"], "doctor")
+
+
+def test_ai_payload_masks_clinician_hospital_unit_and_family_keys() -> None:
+    from collections import Counter
+    from app.infrastructure.ai_privacy_client import _sanitize_payload
+
+    counts = Counter()
+    result = _sanitize_payload({"doctor_name": "Dr. Ali", "hospital": "Gazi Hastanesi", "department": "Nefroloji",
+                                "mother_name": "Fatma", "father_name": "Mehmet", "home_address": "Kızılay"}, counts, ())
+    assert result == {"doctor_name": "[HEKIM]", "hospital": "[KURUM]", "department": "[BIRIM]",
+                      "mother_name": "[HASTA_ADI]", "father_name": "[HASTA_ADI]", "home_address": "[ADRES]"}
+
+
+
+def test_untitled_mentions_of_known_clinicians_are_scrubbed() -> None:
+    bundle = _bundle_with_care_identities()
+    for entry in bundle["entry"]:
+        if entry["resource"]["resourceType"] == "Encounter":
+            entry["resource"]["reasonCode"] += [{"text": "Ahmet Hekimoğlu tarafından değerlendirildi"},
+                                                {"text": "Ayşe Kardiyolog önerisiyle geldi"}]
+    serialized = json.dumps(case_from_bundle(bundle).case.model_dump(mode="json"), ensure_ascii=False)
+    assert "Hekimoğlu" not in serialized and "Kardiyolog" not in serialized

@@ -23,6 +23,13 @@ Medicore /hbys/encounters/{id}/report ──FHIR DiagnosticReport (preliminary)�
 - Medicore'a yalnızca **protokol numarası, yaş, cinsiyet, şikâyet, özgeçmiş, ilaçlar,
   vital bulgular, ICD-10 ön tanı, laboratuvar ve radyoloji** gelir.
 - Ad, T.C. kimlik no, telefon, adres ve tam doğum tarihi HBYS'de kalır.
+- **Hastane adı, hekim adı, bölüm/birim adı, ev adresi ve aile (anne/baba/yakın) bilgileri
+  hiçbir zaman Medicore'a ve AI'ya geçmez.** Aktarımda bölüm adı vakaya yazılmaz ve listede
+  gösterilmez; ziyaretin hekim/bölüm/kurum/yakın adları serbest metinden de temizlenir.
+  Genel gizlilik katmanı etiketli (`Hastane:`, `Bölüm:`, `Sorumlu hekim:` …) ve etiketsiz
+  (`Uzm. Dr. …`, `… Hastanesi`, `… Mah. … No:5`) biçimleri `[HEKIM]`, `[KURUM]`, `[BIRIM]`,
+  `[ADRES]` ile maskeler. Aile **sağlık öyküsü** ("annesi diyabetik") klinik veri olduğu için korunur.
+- Sanal HBYS ev adresi, aile bilgisi ve hekim adı tutmaz; bölüm yalnızca HBYS içinde kullanılır.
 - HBYS kullanıcısı serbest metne kimlik yazmışsa, ziyaretin kendi kimlik bilgileriyle
   yerel gizlilik katmanı (`privacy_gateway`) metni temizler (`[HASTA_ADI]` vb.).
 - HBYS'nin H/L bayrakları yalnızca bilgi amaçlı saklanır; Medicore durumu değer ve

@@ -22,11 +22,17 @@ store = make_store()
 RECEIVED_REPORTS: list[dict[str, Any]] = []
 
 
+# Fields older records may still carry; they are no longer kept (privacy policy).
+_DROPPED = {"address", "doctor"}
+
+
 def _patient_from(data: dict[str, Any]) -> SimPatient:
+    data = {key: value for key, value in data.items() if key not in _DROPPED}
     return SimPatient(**{**data, "birth_date": date.fromisoformat(data["birth_date"])})
 
 
 def _encounter_from(data: dict[str, Any]) -> SimEncounter:
+    data = {key: value for key, value in data.items() if key not in _DROPPED}
     return SimEncounter(**{
         **data,
         "admitted_at": datetime.fromisoformat(data["admitted_at"]),
@@ -90,8 +96,8 @@ def _next_protocol() -> str:
 
 
 def add_patient_with_encounter(
-    *, given_name: str, family_name: str, sex: str, birth_date: date, phone: str, address: str,
-    department: str, doctor: str, complaints: list[str], history: list[str], medications: list[str],
+    *, given_name: str, family_name: str, sex: str, birth_date: date, phone: str,
+    department: str, complaints: list[str], history: list[str], medications: list[str],
     diagnoses: list[tuple[str, str]], vitals: dict[str, float], labs: list[SimLab],
     radiology: list[SimRadiology],
 ) -> SimEncounter:
@@ -100,10 +106,10 @@ def add_patient_with_encounter(
         patient_id = f"p-{uuid.uuid4().hex[:8]}"
         # Synthetic, checksum-invalid national ID: never a real citizen's number.
         tckn = _invalid_tckn(str(uuid.uuid4().int)[1:10].replace("0", "1"))
-        patient = SimPatient(patient_id, tckn, given_name, family_name, sex, birth_date, phone, address)
+        patient = SimPatient(patient_id, tckn, given_name, family_name, sex, birth_date, phone)
         encounter = SimEncounter(
             id=f"e-{uuid.uuid4().hex[:8]}", protocol_no=_next_protocol(), patient_id=patient_id,
-            department=department, doctor=doctor, admitted_at=now, status="in-progress",
+            department=department, admitted_at=now, status="in-progress",
             complaints=complaints, history=history, medications=medications, diagnoses=diagnoses,
             vitals=vitals, labs=labs, specimen_at=now, radiology=radiology,
         )
