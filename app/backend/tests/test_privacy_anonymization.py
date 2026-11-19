@@ -456,12 +456,19 @@ def test_realistic_hospital_report_end_to_end():
     ('Nefroloji Polikliniği', 'Nefroloji'), ('İç Hastalıkları Anabilim Dalı', 'Hastalıkları'), ('ACİL SERVİSİ', 'ACİL'),
     ('Yoğun Bakım Ünitesi', 'Yoğun'), ('Kardiyoloji Polikliniğine yönlendirildi', 'Kardiyoloji'),
     ('Hasta eşi Zeynep Demir ile birlikte geldi', 'Zeynep'), ('kızı Elif ile geldi', 'Elif'), ('Refakatçi: Ali Can', 'Ali'),
+    ('Babası Mehmet vefat etti', 'Mehmet'), ('Annesi Selin Hanım tedavisi sırasında refakat etti', 'Selin'),
+    # names that begin like a medical abbreviation/word must still be removed
+    ('kızı Mine ile geldi', 'Mine'), ('oğlu Derin geldi', 'Derin'), ('Babası Rahim refakat etti', 'Rahim'),
+    ('eşi Ateş Bey geldi', 'Ateş'), ('kızı Kalpana ile geldi', 'Kalpana'),
 ])
 def test_unlabelled_units_and_relatives_names_are_removed(text, gone):
     assert gone not in _text(text)
 
 
 @pytest.mark.parametrize('text', [
+    'Annesi Meme Kanseri nedeniyle tedavi görüyor.', 'Babası Kalp Yetmezliği nedeniyle vefat etmiş.',
+    'Annesi Diyabetik', 'Babası Hipertansiyon hastası', 'Annesi Alzheimer tanılı', 'Kardeşi Tip Bir Diyabet',
+    'Babası Akut Miyokard İnfarktüsü geçirmiş', 'Annesi Tiroid ameliyatı olmuş',
     'Annesi KOAH hastası', 'Oğlu Doktor olarak çalışıyor', 'eşi ile geldi',
     'kardiyoloji polikliniğine yönlendirildi', 'acil servise başvurdu',
 ])
