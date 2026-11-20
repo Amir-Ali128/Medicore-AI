@@ -1,4 +1,12 @@
-"""Explicit synthetic OCR fixture for pre-existing mocked provider tests."""
+"""Test defaults.
+
+Most provider tests exercise the (mocked) external-AI code paths, so the suite runs
+with AI_LOCAL_ONLY=false unless a test opts in; production defaults to local-only.
+"""
+import os
+
+os.environ.setdefault("AI_LOCAL_ONLY", "false")
+
 import pytest
 
 @pytest.fixture

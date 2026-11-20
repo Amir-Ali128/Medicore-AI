@@ -192,13 +192,21 @@ def _build_case_payload(payload: SimpleCaseRequest) -> dict[str, Any]:
 
 async def interpret_simple_case(payload: SimpleCaseRequest) -> CaseAIInterpretation:
     settings = get_settings()
-    model = (
-        settings.claude_hypothesis_model
-        or settings.claude_extraction_model
-        or settings.claude_vision_model
-    )
-    if not settings.anthropic_api_key or not model:
-        raise RuntimeError("Anthropic klinik rapor modeli yapılandırılmamış.")
+    from app.infrastructure.local_llm import LOCAL_PROVIDER, local_client, local_mode
+
+    use_local = local_mode()
+    if use_local:
+        # Self-hosted model: the case never leaves the operator's infrastructure.
+        model = settings.local_llm_model
+        client = local_client()  # raises a safe RuntimeError when misconfigured
+    else:
+        model = (
+            settings.claude_hypothesis_model
+            or settings.claude_extraction_model
+            or settings.claude_vision_model
+        )
+        if not settings.anthropic_api_key or not model:
+            raise RuntimeError("Anthropic klinik rapor modeli yapılandırılmamış.")
 
     if getattr(settings, 'report_consistency_enabled', False):
         from app.domain.report_consistency import apply_report_consistency
@@ -214,7 +222,8 @@ async def interpret_simple_case(payload: SimpleCaseRequest) -> CaseAIInterpretat
     prompt = json.dumps(case_payload, ensure_ascii=False, separators=(",", ":"))
     if len(prompt) > 160_000:
         raise RuntimeError("Vaka tek AI çağrısı sınırını aşıyor; sonuçlar sessizce kırpılmadı.")
-    client = AsyncAnthropic(api_key=settings.anthropic_api_key)
+    if not use_local:
+        client = AsyncAnthropic(api_key=settings.anthropic_api_key)
 
     required_headings = (
         "KLİNİK ÖZET",
@@ -232,10 +241,26 @@ async def interpret_simple_case(payload: SimpleCaseRequest) -> CaseAIInterpretat
         if extra_instruction:
             user_text += "\n\n" + extra_instruction
 
+        system_prompt = _SYSTEM_PROMPT + ("\nconsistency_flags bayraklarını yorumunda dikkate al; işaretli değerleri kesin kabul etme. VERİ TUTARLILIK UYARILARI bölümünü yazma; bu bölüm sunucu tarafından eklenecek." if flags is not None else "")
+        if use_local:
+            local_response = await privacy_call(client.chat.completions.create, provider=LOCAL_PROVIDER, call_site=__name__,
+                model=model,
+                max_tokens=min(token_budget, int(getattr(settings, "local_llm_max_tokens", 6000))),
+                temperature=0.2,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_text},
+                ],
+            )
+            choice = (getattr(local_response, "choices", None) or [None])[0]
+            local_text = str(getattr(getattr(choice, "message", None), "content", None) or "").strip()
+            finish = getattr(choice, "finish_reason", None)
+            return local_text, ("max_tokens" if finish == "length" else "end_turn")
+
         response = await privacy_call(client.messages.create, provider='Anthropic', call_site=__name__,
             model=model,
             max_tokens=token_budget,
-            system=_SYSTEM_PROMPT + ("\nconsistency_flags bayraklarını yorumunda dikkate al; işaretli değerleri kesin kabul etme. VERİ TUTARLILIK UYARILARI bölümünü yazma; bu bölüm sunucu tarafından eklenecek." if flags is not None else ""),
+            system=system_prompt,
             messages=[
                 {
                     "role": "user",
@@ -265,7 +290,10 @@ async def interpret_simple_case(payload: SimpleCaseRequest) -> CaseAIInterpretat
     except Exception as exc:
         status = getattr(exc, "status_code", None)
         logger.warning("clinical_report_provider_failed type=%s status=%s", type(exc).__name__, status)
-        if status in (401, 403):
+        if use_local and status is None and "timeout" not in type(exc).__name__.lower():
+            message = ("Yerel AI sunucusuna ulaşılamadı. LM Studio/Ollama çalışıyor mu ve LOCAL_LLM_BASE_URL "
+                       "doğru mu kontrol edin. Veri dışarı gönderilmedi.")
+        elif status in (401, 403):
             message = "AI rapor hizmetine erişim reddedildi. Sunucudaki sağlayıcı erişimi kontrol edilmeli."
         elif status == 429:
             message = "AI rapor hizmetinin istek veya kullanım sınırına ulaşıldı. Kısa süre sonra tekrar deneyin."

@@ -32,8 +32,24 @@ from app.infrastructure.runtime_health import (
 )
 
 
+def _log_ai_mode() -> None:
+    """One startup line that states where clinical AI runs (never logs secrets)."""
+    from app.core.config import get_settings
+    from app.infrastructure.local_llm import LocalLLMNotConfigured, validated_base_url
+
+    settings = get_settings()
+    if not settings.ai_local_only:
+        print("AI mode: EXTERNAL providers allowed (AI_LOCAL_ONLY=false).")
+        return
+    try:
+        print(f"AI mode: local-only; clinical reports by '{settings.local_llm_model}' at {validated_base_url()}.")
+    except LocalLLMNotConfigured as exc:
+        print(f"AI mode: local-only; NO local model configured - AI reports are disabled. {exc}")
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    _log_ai_mode()
     user_backfilled = await ensure_user_nicknames(engine)
     if user_backfilled:
         print(
@@ -77,6 +93,12 @@ async def lifespan(_: FastAPI):
     yield
 
 
+def _extra_cors_origins() -> list[str]:
+    from app.core.config import get_settings
+
+    return [item.strip().rstrip("/") for item in get_settings().cors_origins.split(",") if item.strip()]
+
+
 app = FastAPI(title="MediCore AI API", version="1.0.0-simple", lifespan=lifespan, dependencies=[Depends(privacy_request_context)])
 
 app.add_middleware(
@@ -85,6 +107,7 @@ app.add_middleware(
         "http://localhost:5173",
         "http://127.0.0.1:5173",
         "https://medicore-ai-web.onrender.com",
+        *_extra_cors_origins(),
     ],
     allow_credentials=True,
     allow_methods=["*"],

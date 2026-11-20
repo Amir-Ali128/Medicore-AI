@@ -185,7 +185,7 @@ def test_ast_guard_has_no_unprotected_sdk_calls_or_binary_encoding():
             if path.name=='claude_usage_runtime.py':
                 assert 'self._messages.create(*args, **kwargs)' in path.read_text()
     assert not violations,violations
-    assert calls==13
+    assert calls==14  # +1: the local (self-hosted) clinical report call
     # Infrastructure may hold HTTP transports only in reviewed, single-purpose modules.
     approved_http={'hbys_client.py'}
     for path in (root/'infrastructure').rglob('*.py'):

@@ -135,6 +135,13 @@ def _sanitize_payload(value: Any, counts: Counter, identifiers: Sequence[str], *
 
 async def privacy_call(operation: Callable[..., Awaitable[Any]], *, provider: str, call_site: str, **payload: Any) -> Any:
     privacy=context.get(); counts=Counter(); blocked=True
+    from app.infrastructure.local_llm import LOCAL_PROVIDER, ExternalAIBlocked, local_only
+    if provider != LOCAL_PROVIDER and local_only():
+        # Single enforcement point: with AI_LOCAL_ONLY nothing reaches an external provider.
+        logger.warning('ai_privacy_audit %s',json.dumps({'timestamp':datetime.now(UTC).isoformat(),'provider':provider,
+                       'call_site':call_site,'patient_id':privacy.patient_id,'redaction_counts':{},'blocked':True,
+                       'reason':'local_only'},ensure_ascii=True,sort_keys=True))
+        raise ExternalAIBlocked(provider)
     try:
         if privacy.loader is not None:
             privacy=await privacy.loader()

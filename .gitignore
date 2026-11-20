@@ -44,3 +44,6 @@ temp/
 
 # Prepared public ASR weights stay out of Git.
 .voice_models/
+
+# offline bundle secrets
+offline.env

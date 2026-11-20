@@ -1,0 +1,84 @@
+# Medicore - fully offline bundle.
+#
+# Build ONCE while online:   docker compose -f docker-compose.offline.yml --env-file offline.env up -d --build
+# Afterwards (no internet):  docker compose -f docker-compose.offline.yml --env-file offline.env up -d
+#
+# The clinical report is written by a local model (LM Studio / Ollama) on this
+# computer; AI_LOCAL_ONLY blocks every external AI provider. See docs/offline.md.
+name: medicore-offline
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: medicore
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?offline.env içinde POSTGRES_PASSWORD gerekli}
+      POSTGRES_DB: medicore
+    volumes:
+      - medicore_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U medicore -d medicore"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  backend:
+    build: ./app/backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_USER: medicore
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: medicore
+      SECRET_KEY: ${SECRET_KEY:?offline.env içinde SECRET_KEY gerekli}
+      AUTH_SECRET_KEY: ${SECRET_KEY}
+      CORS_ORIGINS: http://localhost:8080,http://127.0.0.1:8080
+      # --- no data leaves this computer ---
+      AI_LOCAL_ONLY: "true"
+      LOCAL_LLM_BASE_URL: ${LOCAL_LLM_BASE_URL:-http://host.docker.internal:1234/v1}
+      LOCAL_LLM_MODEL: ${LOCAL_LLM_MODEL:?offline.env içinde LOCAL_LLM_MODEL gerekli}
+      LOCAL_LLM_TIMEOUT_SECONDS: ${LOCAL_LLM_TIMEOUT_SECONDS:-600}
+      ANALYTICS_GEOLOOKUP_ENABLED: "false"
+      # --- local virtual HBYS ---
+      HBYS_BASE_URL: http://hbys:8100
+      HBYS_API_KEY: ${HBYS_API_KEY:?offline.env içinde HBYS_API_KEY gerekli}
+      HBYS_INDIVIDUAL_ACCESS: "true"
+      MEDICORE_ADMIN_NICKNAME: ${MEDICORE_ADMIN_NICKNAME:-}
+      MEDICORE_ADMIN_PASSWORD: ${MEDICORE_ADMIN_PASSWORD:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # reach LM Studio/Ollama on this computer (Linux too)
+    ports:
+      - "127.0.0.1:8000:8000"
+
+  frontend:
+    build:
+      context: ./app/frontend
+      args:
+        VITE_API_BASE_URL: http://localhost:8000
+    restart: unless-stopped
+    depends_on: [backend]
+    ports:
+      - "127.0.0.1:8080:80"
+
+  hbys:
+    build:
+      context: ./app
+      dockerfile: hbys_sim/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      HBYS_SIM_ENV: production
+      HBYS_SIM_API_KEY: ${HBYS_API_KEY}
+      HBYS_SIM_UI_PASSWORD: ${HBYS_UI_PASSWORD:?offline.env içinde HBYS_UI_PASSWORD gerekli}
+      HBYS_SIM_DATABASE_URL: postgresql://medicore:${POSTGRES_PASSWORD}@db:5432/medicore
+    ports:
+      - "127.0.0.1:8100:8100"
+
+volumes:
+  medicore_db:

@@ -31,6 +31,25 @@ class Settings(BaseSettings):
     environment: str = "development"
     debug: bool = False
     ai_privacy_mode: Literal["strict"] = "strict"
+
+    # --- Local-only AI (default) ---------------------------------------------
+    # AI_LOCAL_ONLY=true (default): no request may reach an external AI provider (Claude,
+    # OpenAI, Gemini); clinical reports are written by a self-hosted model that
+    # speaks the OpenAI-compatible API (LM Studio, Ollama, vLLM, llama.cpp).
+    # Default ON: no data reaches an external AI provider unless an operator sets
+    # AI_LOCAL_ONLY=false explicitly. Clinical reports use LOCAL_LLM_* below.
+    ai_local_only: bool = True
+    # Extra browser origins allowed to call the API (comma separated), e.g. the
+    # offline bundle's frontend at http://localhost:8080.
+    cors_origins: str = ""
+    local_llm_base_url: str | None = None      # e.g. http://127.0.0.1:1234/v1 (LM Studio)
+    local_llm_model: str | None = None         # e.g. qwen2.5-14b-instruct
+    local_llm_api_key: str | None = None       # most local servers ignore it
+    local_llm_timeout_seconds: float = 300.0
+    local_llm_max_tokens: int = 6000
+    # Hosts the operator certifies as their own infrastructure (comma separated),
+    # for a GPU server that is not on a private/loopback address.
+    local_llm_trusted_hosts: str = ""
     api_v1_prefix: str = "/api/v1"
 
     # Optional operator override; otherwise verified local assets prepared at startup.
