@@ -8,11 +8,14 @@ refused, so a typo cannot quietly turn "local" into an external provider.
 from __future__ import annotations
 
 import ipaddress
+import re
+import socket
 from urllib.parse import urlparse
 
 from app.core.config import get_settings
 
 LOCAL_PROVIDER = "Local"
+_SERVICE_NAME = re.compile(r"[a-z][a-z0-9-]*")
 _INTERNAL_SUFFIXES = (".internal", ".local", ".lan", ".home.arpa", ".svc", ".cluster.local")
 
 
@@ -40,6 +43,19 @@ def local_mode() -> bool:
     return local_only() or bool(getattr(settings, "local_llm_base_url", None) and getattr(settings, "local_llm_model", None))
 
 
+def _private_address(address: ipaddress._BaseAddress) -> bool:
+    return address.is_loopback or address.is_private or address.is_link_local
+
+
+def _numeric_ipv4(host: str) -> ipaddress.IPv4Address | None:
+    """Any form the system resolver accepts as an IPv4 literal: "134744072",
+    "0x08080808", "127.1", "0177.0.0.1" ... (inet_aton semantics)."""
+    try:
+        return ipaddress.IPv4Address(socket.inet_aton(host))
+    except (OSError, ValueError):
+        return None
+
+
 def is_private_host(host: str, trusted: set[str] | None = None) -> bool:
     host = (host or "").strip().lower().rstrip(".")
     if not host:
@@ -49,10 +65,41 @@ def is_private_host(host: str, trusted: set[str] | None = None) -> bool:
     if host in {"localhost", "host.docker.internal"}:
         return True
     try:
-        address = ipaddress.ip_address(host.strip("[]"))
+        return _private_address(ipaddress.ip_address(host.strip("[]")))
     except ValueError:
-        return "." not in host or host.endswith(_INTERNAL_SUFFIXES)
-    return address.is_loopback or address.is_private or address.is_link_local
+        pass
+    numeric = _numeric_ipv4(host)
+    if numeric is not None:
+        # Alternative numeric spellings are addresses, never service names.
+        return _private_address(numeric)
+    if "." not in host:
+        return bool(_SERVICE_NAME.fullmatch(host))  # an internal service name starts with a letter
+    return host.endswith(_INTERNAL_SUFFIXES)
+
+
+def _resolves_outside(host: str) -> bool:
+    """True when a name resolves to any public address (fail open on no answer:
+    an offline local server simply fails the request later)."""
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except OSError:
+        return False
+    for info in infos:
+        try:
+            address = ipaddress.ip_address(info[4][0].split("%", 1)[0])
+        except ValueError:
+            return True
+        if not _private_address(address):
+            return True
+    return False
+
+
+def _is_ip_literal(host: str) -> bool:
+    try:
+        ipaddress.ip_address(host.strip("[]"))
+        return True
+    except ValueError:
+        return False
 
 
 def validated_base_url() -> str:
@@ -64,7 +111,10 @@ def validated_base_url() -> str:
         )
     parsed = urlparse(base_url)
     trusted = {item.strip().lower() for item in getattr(settings, "local_llm_trusted_hosts", "").split(",") if item.strip()}
-    if parsed.scheme not in {"http", "https"} or not is_private_host(parsed.hostname or "", trusted):
+    host = (parsed.hostname or "").lower()
+    named = host not in trusted and _numeric_ipv4(host) is None and not _is_ip_literal(host)
+    if (parsed.scheme not in {"http", "https"} or not is_private_host(host, trusted)
+            or (named and host != "localhost" and _resolves_outside(host))):
         raise LocalLLMNotConfigured(
             "LOCAL_LLM_BASE_URL yerel/özel bir adres olmalı (localhost, iç ağ IP'si veya iç servis adı). "
             "Kendi sunucunuzsa LOCAL_LLM_TRUSTED_HOSTS ile açıkça belirtin."

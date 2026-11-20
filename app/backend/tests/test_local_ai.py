@@ -70,12 +70,15 @@ def _case():
 
 # ---------------------------------------------------------------- endpoint policy
 @pytest.mark.parametrize("host", ["localhost", "127.0.0.1", "10.0.0.5", "192.168.1.20", "172.16.3.4", "::1",
-                                  "ollama", "llm-server", "gpu.internal", "box.local", "host.docker.internal"])
+                                  "ollama", "llm-server", "gpu.internal", "box.local", "host.docker.internal",
+                                  "127.1", "2130706433", "0x7f000001", "10.1"])
 def test_private_hosts_are_accepted(host):
     assert local_llm.is_private_host(host)
 
 
-@pytest.mark.parametrize("host", ["api.openai.com", "api.anthropic.com", "8.8.8.8", "my-llm.onrender.com", ""])
+@pytest.mark.parametrize("host", ["api.openai.com", "api.anthropic.com", "8.8.8.8", "my-llm.onrender.com", "",
+                                  # alternative numeric spellings of the public 8.8.8.8
+                                  "134744072", "0x08080808", "8.8.2056", "0x8.0x8.0x8.0x8", "1-public"])
 def test_public_hosts_are_refused(host):
     assert not local_llm.is_private_host(host)
 
@@ -171,3 +174,19 @@ def test_local_only_without_a_local_model_fails_closed(settings, monkeypatch):
     settings.local_llm_base_url = None
     with pytest.raises(RuntimeError, match="Yerel AI modeli yapılandırılmamış"):
         asyncio.run(simple_case_ai.interpret_simple_case(_case()))
+
+
+
+def test_internal_looking_name_that_resolves_to_a_public_address_is_refused(settings, monkeypatch):
+    settings.local_llm_base_url = "http://ollama:11434/v1"
+    monkeypatch.setattr(local_llm.socket, "getaddrinfo", lambda host, port: [(2, 1, 6, "", ("8.8.8.8", 0))])
+    with pytest.raises(local_llm.LocalLLMNotConfigured, match="yerel/özel"):
+        local_llm.validated_base_url()
+    monkeypatch.setattr(local_llm.socket, "getaddrinfo", lambda host, port: [(2, 1, 6, "", ("10.0.0.7", 0))])
+    assert local_llm.validated_base_url() == "http://ollama:11434/v1"
+
+
+def test_numeric_public_base_url_is_refused(settings):
+    settings.local_llm_base_url = "http://134744072:1234/v1"
+    with pytest.raises(local_llm.LocalLLMNotConfigured, match="yerel/özel"):
+        local_llm.validated_base_url()
