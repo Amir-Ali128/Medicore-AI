@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     # OpenAI, Gemini); clinical reports are written by a self-hosted model that
     # speaks the OpenAI-compatible API (LM Studio, Ollama, vLLM, llama.cpp).
     ai_local_only: bool = False
+    # Extra browser origins allowed to call the API (comma separated), e.g. the
+    # offline bundle's frontend at http://localhost:8080.
+    cors_origins: str = ""
     local_llm_base_url: str | None = None      # e.g. http://127.0.0.1:1234/v1 (LM Studio)
     local_llm_model: str | None = None         # e.g. qwen2.5-14b-instruct
     local_llm_api_key: str | None = None       # most local servers ignore it
