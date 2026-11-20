@@ -190,3 +190,26 @@ def test_numeric_public_base_url_is_refused(settings):
     settings.local_llm_base_url = "http://134744072:1234/v1"
     with pytest.raises(local_llm.LocalLLMNotConfigured, match="yerel/özel"):
         local_llm.validated_base_url()
+
+
+def test_production_default_is_local_only(monkeypatch):
+    from app.core.config import Settings
+
+    monkeypatch.delenv("AI_LOCAL_ONLY", raising=False)
+    assert Settings(_env_file=None).ai_local_only is True
+
+
+def test_model_evaluation_scores_a_good_and_a_bad_report():
+    import importlib.util
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location(
+        "evaluate_local_model", Path(__file__).resolve().parents[1] / "scripts" / "evaluate_local_model.py")
+    evaluation = importlib.util.module_from_spec(spec)
+    import sys
+    sys.modules[spec.name] = evaluation
+    spec.loader.exec_module(evaluation)
+    good = evaluation.score_report("A", FULL_REPORT + "\nKreatinin ve Potasyum yüksek.", ["Kreatinin", "Potasyum"], 1.0)
+    assert good.score == 100.0
+    bad = evaluation.score_report("B", "KLİNİK ÖZET\nKesin tanı: böbrek yetmezliği.", ["Kreatinin", "Potasyum"], 1.0)
+    assert bad.sections == 1 and bad.forbidden == ["kesin tanı"] and bad.score < 20

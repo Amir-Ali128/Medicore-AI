@@ -32,8 +32,24 @@ from app.infrastructure.runtime_health import (
 )
 
 
+def _log_ai_mode() -> None:
+    """One startup line that states where clinical AI runs (never logs secrets)."""
+    from app.core.config import get_settings
+    from app.infrastructure.local_llm import LocalLLMNotConfigured, validated_base_url
+
+    settings = get_settings()
+    if not settings.ai_local_only:
+        print("AI mode: EXTERNAL providers allowed (AI_LOCAL_ONLY=false).")
+        return
+    try:
+        print(f"AI mode: local-only; clinical reports by '{settings.local_llm_model}' at {validated_base_url()}.")
+    except LocalLLMNotConfigured as exc:
+        print(f"AI mode: local-only; NO local model configured - AI reports are disabled. {exc}")
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    _log_ai_mode()
     user_backfilled = await ensure_user_nicknames(engine)
     if user_backfilled:
         print(

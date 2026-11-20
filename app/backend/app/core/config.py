@@ -32,11 +32,13 @@ class Settings(BaseSettings):
     debug: bool = False
     ai_privacy_mode: Literal["strict"] = "strict"
 
-    # --- Local-only AI ----------------------------------------------------
-    # AI_LOCAL_ONLY=true: no request may reach an external AI provider (Claude,
+    # --- Local-only AI (default) ---------------------------------------------
+    # AI_LOCAL_ONLY=true (default): no request may reach an external AI provider (Claude,
     # OpenAI, Gemini); clinical reports are written by a self-hosted model that
     # speaks the OpenAI-compatible API (LM Studio, Ollama, vLLM, llama.cpp).
-    ai_local_only: bool = False
+    # Default ON: no data reaches an external AI provider unless an operator sets
+    # AI_LOCAL_ONLY=false explicitly. Clinical reports use LOCAL_LLM_* below.
+    ai_local_only: bool = True
     # Extra browser origins allowed to call the API (comma separated), e.g. the
     # offline bundle's frontend at http://localhost:8080.
     cors_origins: str = ""

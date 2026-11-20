@@ -1,7 +1,8 @@
 # Yerel AI: veriyi dışarı göndermeden klinik yorum
 
 Medicore'un klinik raporu, kendi bilgisayarınızda veya kendi sunucunuzda çalışan bir
-dil modeliyle yazılabilir. `AI_LOCAL_ONLY=true` iken **hiçbir istek dış AI servislerine
+dil modeliyle yazılır. **Varsayılan olarak `AI_LOCAL_ONLY=true`'dur**: dış AI servisleri
+yalnızca bir operatör açıkça `AI_LOCAL_ONLY=false` verirse kullanılabilir. Bu modda **hiçbir istek dış AI servislerine
 (Claude, OpenAI, Gemini) gidemez**: tüm AI çağrılarının geçmek zorunda olduğu tek kapı
 (`privacy_call`) yerel model dışındaki her sağlayıcıyı reddeder ve bunu denetim loguna yazar.
 
@@ -75,3 +76,39 @@ Bugün yalnızca **klinik rapor** yerel modelle yazılır. `AI_LOCAL_ONLY=true` 
 özellikleri bilinçli olarak kapanır ve açık bir hata mesajı verir (veri dışarı gitmez):
 taranmış/fotoğraf lab belgelerinin AI ile okunması (metin tabanlı PDF'ler ve e-Nabız yerel
 okunur), radyoloji görüntüsü/raporu AI özeti, ikinci/üçüncü okuyucu.
+
+## Kendi ince ayarlı (fine-tune) modelinizi kullanmak
+
+Medicore modelden yalnızca OpenAI uyumlu bir sohbet API'si bekler; ince ayar yaptığınız
+model LM Studio, Ollama, vLLM veya llama.cpp ile sunulduğu anda `LOCAL_LLM_MODEL` ile
+kullanılabilir.
+
+**Modelin öğrenmesi gerekenler** (sistem istemi zaten bunları ister, ince ayar pekiştirir):
+- Türkçe ve şu 8 başlık, bu sırayla: KLİNİK ÖZET · ÖNE ÇIKAN LABORATUVAR BULGULARI ·
+  TETKİK / RAPOR BULGULARI · ENTEGRE KLİNİK DEĞERLENDİRME · OLASI KLİNİK DURUMLAR / AYIRICI TANI ·
+  ÖNERİLEN İLERİ TETKİK / İZLEM · SONUÇ / KANAAT · HEKİM NOTU
+- Kesin tanı yerine olasılık dili ("… ile uyumlu olabilir"), her zaman hekim değerlendirmesi.
+- Tedavi/ilaç talimatı vermemek; raporda olmayan referans aralığı veya değer uydurmamak.
+- Girdideki yüksek/düşük laboratuvar sonuçlarının hepsini anmak (durum Medicore tarafından
+  deterministik hesaplanır; model yalnızca yorumlar).
+
+**Veri:** Gerçek hasta verisiyle eğitim KVKK açısından açık rıza/anonimleştirme ve etik kurul
+onayı gerektirir. Öneri: sentetik vakalar, kamuya açık ve anonim Türkçe tıbbi metinler ve
+hekimlerin düzelttiği örnek raporlar. Eğitim verisine kimlik bilgisi girmemeli.
+
+**Yöntem (tek GPU):** Türkçe'yi iyi bilen bir instruct taban modeli (lisansının tıbbi kullanıma
+izin verdiğini kontrol edin) üzerinde QLoRA/LoRA (ör. Unsloth, LLaMA-Factory, Axolotl).
+Sonrasında: birleştir → GGUF'a dönüştür (llama.cpp) → LM Studio/Ollama'ya yükle; veya vLLM ile
+LoRA adaptörünü doğrudan sunun.
+
+**Ölçmeden geçmeyin:** Her yeni modeli taban modelle karşılaştırın:
+
+```bash
+LOCAL_LLM_BASE_URL=http://127.0.0.1:1234/v1 LOCAL_LLM_MODEL=benim-tip-modelim \
+  python scripts/evaluate_local_model.py --out degerlendirme.md
+```
+
+Betik Sanal HBYS'deki sentetik vakaları gerçek rapor hattından (gizlilik katmanı + yerel model)
+geçirir ve her vakayı puanlar: zorunlu bölümler (30), anormal lab kapsamı (30), olasılık dili ve
+hekim notu (20), yasaklı ifade yokluğu (20), ayrıca süre. Ortalama puanı ve tablo halinde rapor
+üretir. Gerçek hasta verisi kullanılmaz.
