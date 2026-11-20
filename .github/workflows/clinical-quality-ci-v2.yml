@@ -66,6 +66,7 @@ jobs:
             tests/test_report_type_inference.py \
             tests/test_clinical_runtime_startup.py \
             tests/test_hbys_integration.py \
+            tests/test_local_ai.py \
             tests/test_radiology_report_safety.py \
             tests/test_structured_report_contract_runtime.py \
             tests/test_lab_result_classification.py \
