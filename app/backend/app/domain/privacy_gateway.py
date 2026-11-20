@@ -126,6 +126,67 @@ _ADDRESS = re.compile(
     r"(?i:Mahallesi|Mah\.|Mh\.|Caddesi|Cadde|Cad\.|Cd\.|Sokağı|Sokak|Sok\.|Sk\.|Bulvarı|Bulvar|Bulv\.|Blv\.|Mevkii|Köyü|Sitesi)[ \t,]*)+"
     r"(?:(?i:No|Kat|Daire|D|Apt|Blok)[ \t.:]*\d+[\w/-]*[ \t,]*|\d+[\w/-]*[ \t,]*|[A-ZÇĞİÖŞÜ]\w+/[A-ZÇĞİÖŞÜ]\w+[ \t,]*)*"
 )
+# Unlabelled unit/department proper names: "Nefroloji Polikliniği", "Acil Servisi",
+# "İç Hastalıkları Anabilim Dalı". Lower-case usage in prose ("acil servise
+# başvurdu", "kardiyoloji polikliniğine yönlendirildi") is clinical text and kept.
+_UNIT = re.compile(
+    r"(?<![\w])(?:[A-ZÇĞİÖŞÜ][\w'’-]*[ \t]+){1,5}"
+    r"(?:Polikliniği|Polikliniğine|Polikliniğinde|Polikliniğinden|Kliniği|Kliniğine|Kliniğinde|Servisi|Servisine|Servisinde|"
+    r"Anabilim[ \t]+Dalı|Bilim[ \t]+Dalı|Ünitesi|Birimi|POLİKLİNİĞİ|KLİNİĞİ|SERVİSİ|ANABİLİM[ \t]+DALI)(?![\w])"
+)
+# Relatives named in prose: "Hasta eşi Zeynep Demir", "kızı Elif ile geldi". Only
+# Title-case words count as a name, so "Annesi diyabetik", "babası MI geçirmiş",
+# "Annesi KOAH hastası" stay clinical history.
+_RELATIVE_NAME = re.compile(
+    r"(?<![\w])(?i:eşi|esi|annesi|anası|babası|kızı|oğlu|kardeşi|ablası|ağabeyi|abisi|amcası|dayısı|teyzesi|halası|"
+    r"torunu|yeğeni|refakatçisi|refakatçi|yakını|vasisi|veli(?:si)?)[ \t:]+"
+    r"(?!(?:Doktor|Hekim|Hemşire|Öğretmen|Mühendis|Emekli|Hasta|Diyabet|Hipertansiyon|Kanser|Astım|Koah|Alzheimer|Parkinson)(?![\w]))"
+    r"(?P<name>[A-ZÇĞİÖŞÜ][a-zçğıöşü]+(?:[ \t]+[A-ZÇĞİÖŞÜ][a-zçğıöşü]+){0,2})"
+)
+
+
+# Family history written with capitals ("Annesi Meme Kanseri nedeniyle tedavi
+# görüyor", "Babası Kalp Yetmezliği nedeniyle vefat etmiş", "Annesi Diyabetik") is
+# clinical evidence, not a relative's name: keep it when a word carries a medical
+# root or a clinical connector follows.
+# Prefix roots: long, unambiguous medical stems (never a Turkish given name).
+_MEDICAL_ROOTS = (
+    'kanser', 'karsinom', 'tümör', 'tumor', 'lösemi', 'losemi', 'lenfoma', 'malign', 'metastaz', 'yetmezli', 'diyabet',
+    'diabet', 'hipertansiyon', 'tansiyon', 'koroner', 'enfarkt', 'infarkt', 'böbrek', 'bobrek', 'karaciğer',
+    'karaciger', 'siroz', 'hepatit', 'tiroid', 'guatr', 'epilepsi', 'demans', 'alzheimer', 'parkinson', 'migren',
+    'depresyon', 'şizofreni', 'sizofreni', 'bipolar', 'otizm', 'tüberküloz', 'tuberkuloz', 'anemi', 'talasemi',
+    'hemofili', 'romatizma', 'romatoid', 'obezite', 'kolesterol', 'hiperlipidemi', 'osteoporoz', 'gastrit', 'çölyak',
+    'colyak', 'prostat', 'akciğer', 'akciger', 'pankreas', 'serviks', 'melanom', 'anevrizma', 'aritmi', 'atriyal',
+    'fibrilasyon', 'emboli', 'tromboz', 'polikist', 'nefrit', 'nefropati', 'nöropati', 'noropati', 'retinopati',
+    'glokom', 'katarakt', 'sendrom', 'hastalı', 'hastali', 'miyokard', 'skleroz', 'psoriazis', 'astım', 'astim',
+    # eponymous diseases: capitalised like names
+    'behçet', 'behcet', 'hashimoto', 'addison', 'cushing', 'huntington', 'hodgkin', 'kawasaki', 'raynaud', 'sjögren',
+    'sjogren', 'guillain', 'tourette', 'gaucher', 'akdeniz',
+)
+# Whole-word matches only: short abbreviations and words that could start a name
+# (a prefix "mi" would also match "Mine", "deri" would match "Derin").
+_MEDICAL_WORDS = frozenset({
+    'mi', 'kah', 'kbh', 'kky', 'dm', 'ht', 'ms', 'als', 'sma', 'fmf', 'koah', 'kalp', 'inme', 'felç', 'felc', 'şeker',
+    'seker', 'ülser', 'ulser', 'gut', 'down', 'marfan', 'wilson', 'graves', 'crohn', 'lupus', 'verem', 'kist', 'kolit',
+    'sedef', 'stroke', 'aort', 'fabry', 'pompe',
+})
+_CLINICAL_CONNECTOR = re.compile(
+    r"^[ \t,;:]*(?i:nedeniyle|nedenli|sebebiyle|hastası|hastasi|hastalığı|hastaligi|tanılı|tanili|tanısı|tanisi|"
+    r"öyküsü|oykusu|geçirmiş|gecirmis|tedavisi|ameliyatı|ameliyati|operasyonu|tanısıyla|tanisiyla|şüphesi|suphesi)(?![\w])"
+)
+
+
+def _clinical_history_phrase(name: str, following: str) -> bool:
+    """Privacy first: only a medical root, or a multi-word phrase followed by a
+    diagnostic connector, keeps the words. An honorific always means a person."""
+    words = [word.casefold() for word in name.split()]
+    if any(word in ('hanım', 'hanim', 'bey', 'beyefendi', 'hanımefendi') for word in words):
+        return False
+    if any(word in _MEDICAL_WORDS or word.startswith(_MEDICAL_ROOTS) for word in words):
+        return True
+    return len(words) > 1 and bool(_CLINICAL_CONNECTOR.match(following))
+
+
 _TITLE_CHAIN = re.compile(
     r"^(?:(?i:prof|doç|doc|yrd|uzm|op|asist|asst|öğr|ogr|başhekim|üyesi|gör|dr|dt|dyt)\.?[ \t]*)+"
 )
@@ -426,9 +487,13 @@ def _spans(text: str, known_identifiers: Sequence[str]) -> list[_Span]:
     folded, positions = _fold_map(text)
     spans: list[_Span] = []
     for category, regex in (('TCKN',_TCKN),('TELEFON',_PHONE),('EPOSTA',_EMAIL),('KAYIT_NO',_IBAN),
-                            ('HEKIM',_DOCTOR),('KURUM',_INSTITUTION),('KURUM',_INSTITUTION_CAPS),('ADRES',_ADDRESS)):
+                            ('HEKIM',_DOCTOR),('KURUM',_INSTITUTION),('KURUM',_INSTITUTION_CAPS),('ADRES',_ADDRESS),
+                            ('BIRIM',_UNIT)):
         for match in regex.finditer(text):
             if category != 'TCKN' or valid_tckn(match.group()): spans.append(_Span(*match.span(),category))
+    for match in _RELATIVE_NAME.finditer(text):
+        if not _clinical_history_phrase(match['name'], text[match.end('name'):]):
+            spans.append(_Span(*match.span('name'),'HASTA_ADI'))
     for start, end, category in [*_known_spans(folded,known_identifiers),*_label_spans(folded)]:
         if end > start: spans.append(_Span(positions[start],positions[end-1]+1,category))
     # Prefer the complete labelled value/full identifier, avoiding overlapping replacements.

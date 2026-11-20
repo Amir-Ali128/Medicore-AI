@@ -418,3 +418,59 @@ def test_care_identities_addresses_and_family_names_are_removed(text, gone, plac
 ])
 def test_clinical_text_survives_the_care_identity_rules(text):
     assert _text(text) == text
+
+
+_REALISTIC_REPORT = """ANKARA ŞEHİR HASTANESİ
+Nefroloji Polikliniği
+Hasta Adı Soyadı: Mehmet Demir
+T.C. Kimlik No: 12345678950
+Doğum Tarihi: 12.03.1961
+Tel: 0532 123 45 67
+Adres: Kızılay Mah. Atatürk Bulv. No:5 Çankaya/Ankara
+Anne Adı: Fatma   Baba Adı: Hüseyin
+Protokol No: 2026-778899
+Sorumlu Hekim: Uzm. Dr. Ayşe Kaya
+Bölüm: Nefroloji Polikliniği
+Şikayet: Hasta 2 gündür bacaklarda şişlik tarifliyor. Annesi diyabetik, babası MI geçirmiş. Oğlu Doktor olarak çalışıyor.
+Serum Demir 45 ug/dL (60-170). Kreatinin 3,9 mg/dL (0,67-1,17). Potasyum 6,1 mmol/L.
+Dr. Ahmet Yılmaz ile konsülte edildi; Gazi Üniversitesi Tıp Fakültesi'ne sevk önerildi.
+Hasta eşi Zeynep Demir ile birlikte geldi, ev adresi Çayyolu Mahallesi 2432. Cadde No: 7.
+Sonuç: Kronik böbrek hastalığı ile uyumlu olabilir; hekim değerlendirmesi gerekir."""
+
+
+def test_realistic_hospital_report_end_to_end():
+    known = [gateway.KnownIdentifier('Mehmet Demir', 'HASTA_ADI'), gateway.KnownIdentifier('12345678950', 'TCKN'),
+             gateway.KnownIdentifier('0532 123 45 67', 'TELEFON')]
+    result = gateway.sanitize_text(_REALISTIC_REPORT, known_identifiers=known).text
+    gateway.final_leak_check(result, known)
+    for gone in ['Mehmet', '12345678950', '12.03.1961', '0532', 'Kızılay', 'Atatürk', 'Fatma', 'Hüseyin', '778899',
+                 'Ayşe Kaya', 'Ahmet Yılmaz', 'ANKARA ŞEHİR', 'Gazi Üniversitesi', 'Zeynep', 'Çayyolu',
+                 'Nefroloji Polikliniği']:
+        assert gone not in result, gone
+    for kept in ['Serum Demir 45', 'Kreatinin 3,9', 'Potasyum 6,1', 'bacaklarda şişlik', 'Annesi diyabetik',
+                 'babası MI', 'Oğlu Doktor', 'Kronik böbrek hastalığı', 'hekim değerlendirmesi gerekir']:
+        assert kept in result, kept
+
+
+@pytest.mark.parametrize('text, gone', [
+    ('Nefroloji Polikliniği', 'Nefroloji'), ('İç Hastalıkları Anabilim Dalı', 'Hastalıkları'), ('ACİL SERVİSİ', 'ACİL'),
+    ('Yoğun Bakım Ünitesi', 'Yoğun'), ('Kardiyoloji Polikliniğine yönlendirildi', 'Kardiyoloji'),
+    ('Hasta eşi Zeynep Demir ile birlikte geldi', 'Zeynep'), ('kızı Elif ile geldi', 'Elif'), ('Refakatçi: Ali Can', 'Ali'),
+    ('Babası Mehmet vefat etti', 'Mehmet'), ('Annesi Selin Hanım tedavisi sırasında refakat etti', 'Selin'),
+    # names that begin like a medical abbreviation/word must still be removed
+    ('kızı Mine ile geldi', 'Mine'), ('oğlu Derin geldi', 'Derin'), ('Babası Rahim refakat etti', 'Rahim'),
+    ('eşi Ateş Bey geldi', 'Ateş'), ('kızı Kalpana ile geldi', 'Kalpana'),
+])
+def test_unlabelled_units_and_relatives_names_are_removed(text, gone):
+    assert gone not in _text(text)
+
+
+@pytest.mark.parametrize('text', [
+    'Annesi Meme Kanseri nedeniyle tedavi görüyor.', 'Babası Kalp Yetmezliği nedeniyle vefat etmiş.',
+    'Annesi Diyabetik', 'Babası Hipertansiyon hastası', 'Annesi Alzheimer tanılı', 'Kardeşi Tip Bir Diyabet',
+    'Babası Akut Miyokard İnfarktüsü geçirmiş', 'Annesi Tiroid ameliyatı olmuş',
+    'Annesi KOAH hastası', 'Oğlu Doktor olarak çalışıyor', 'eşi ile geldi',
+    'kardiyoloji polikliniğine yönlendirildi', 'acil servise başvurdu',
+])
+def test_relatives_and_units_rules_keep_clinical_prose(text):
+    assert _text(text) == text
